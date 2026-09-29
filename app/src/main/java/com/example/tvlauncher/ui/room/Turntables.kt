@@ -282,14 +282,20 @@ class TurntableModule(private val context: Context, val person: Person, accent: 
 
     fun bind(newState: PersonalListeningState, artwork: Bitmap?, nowMs: Long) {
         val changedTrack = state?.trackTitle != newState.trackTitle || state?.artistName != newState.artistName
+        // A new record (not the first reading, and not the same one re-polled) is swapped in rather than cut to.
+        val animate = changedTrack && state != null
         state = newState
         deck.render(newState.status)
         val has = newState.status != ListeningStatus.NOTHING_AVAILABLE && newState.trackTitle != null
-        title.text = if (has) newState.trackTitle else "Nothing on the platter"
+        val newTitle = if (has) newState.trackTitle!! else "Nothing on the platter"
+        val newArtist = if (has) (newState.artistName ?: "") else ""
+        if (animate) { com.example.tvlauncher.design.Motion.swapText(title, newTitle); com.example.tvlauncher.design.Motion.swapText(artist, newArtist) }
+        else { title.text = newTitle; artist.text = newArtist }
         title.typeface = Typeface.create(if (has) "sans-serif-medium" else "serif", if (has) Typeface.NORMAL else Typeface.ITALIC)
-        artist.text = if (has) (newState.artistName ?: "") else ""
         artist.visibility = if (has) View.VISIBLE else View.GONE
-        if (changedTrack || artwork != null) sleeve.show(if (has) "${newState.trackTitle}|${newState.artistName}" else null, artwork)
+        val seed = if (has) "${newState.trackTitle}|${newState.artistName}" else null
+        if (animate) com.example.tvlauncher.design.Motion.swapImage(sleeve) { sleeve.show(seed, artwork) }
+        else if (changedTrack || artwork != null) sleeve.show(seed, artwork)
         tick(nowMs)
         view.contentDescription = "${person.displayName}. ${status.text}. ${title.text}, ${artist.text}"
     }

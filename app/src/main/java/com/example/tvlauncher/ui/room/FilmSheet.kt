@@ -63,7 +63,8 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
     val isVisible: Boolean get() = sheet.isVisible
 
-    fun show(title: String, ratingLabel: String?, poster: Bitmap?, page: FilmPage?, whereLines: List<String>, actions: FilmActions) {
+    /** [from] is the poster on the page: when given, it lifts off the page and becomes the sheet's poster. */
+    fun show(title: String, ratingLabel: String?, poster: Bitmap?, page: FilmPage?, whereLines: List<String>, actions: FilmActions, from: View? = null) {
         this.page = page; this.whereLines = whereLines; this.rating = ratingLabel; selected = Tab.OVERVIEW
         tabViews.clear()
 
@@ -78,22 +79,26 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
         // ---- left: poster and rating ----
         val left = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false }
-        left.addView(ImageView(context).apply {
+        val posterView = ImageView(context)
+        left.addView(posterView.apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             setBackgroundColor(0xFF3A2C1E.toInt())
             poster?.let { setImageBitmap(it) }
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dimen(R.dimen.radius_small).toFloat()) } }
         }, LinearLayout.LayoutParams(context.px(160), context.px(240)))
+        val reveal = mutableListOf<View>()
         ratingLabel?.let { label ->
             val badge = com.example.tvlauncher.ui.LetterboxdBadge(context).apply { set(label) }
             left.addView(badge.view, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dimen(R.dimen.space_3) })
+            reveal += badge.view
         }
         card.addView(left, LinearLayout.LayoutParams(context.px(160), -2).apply { marginEnd = dimen(R.dimen.space_5) })
 
         // ---- right: header, tabs, content, actions ----
         val right = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         card.addView(right, LinearLayout.LayoutParams(context.px(610), -2))
+        reveal += right
 
         right.addView(Type.text(context, "Eva's pick for tonight", Type.Style.EYEBROW))
         right.addView(Type.text(context, title, Type.Style.TITLE).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) })
@@ -156,7 +161,8 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
         select(Tab.OVERVIEW)
         styleAllTabs()
-        sheet.showCustom(card, tabViews[Tab.OVERVIEW] ?: play)
+        val flight = if (from != null && poster != null) InfoSheet.Flight(from, posterView, reveal) else null
+        sheet.showCustom(card, tabViews[Tab.OVERVIEW] ?: play, flight)
     }
 
     /** PLAY's second line and whether Versions is offered. Safe to call while the sheet is open. */

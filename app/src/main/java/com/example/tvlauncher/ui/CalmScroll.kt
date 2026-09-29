@@ -24,7 +24,20 @@ import com.example.tvlauncher.R
 class CalmScrollView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : ScrollView(context, attrs) {
     private val fade = EdgeFade(resources.getDimensionPixelSize(R.dimen.edge_fade).toFloat())
 
+    /** Called with the scroll position on every scroll frame and after every layout. */
+    var onScrolled: ((Int) -> Unit)? = null
+
     override fun computeScrollDeltaToGetChildRectOnScreen(rect: Rect?): Int = 0
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        onScrolled?.invoke(t)
+    }
+
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        super.onLayout(changed, l, t, r, b)
+        onScrolled?.invoke(scrollY)
+    }
 
     override fun dispatchDraw(canvas: Canvas) {
         val top = scrollY > 0

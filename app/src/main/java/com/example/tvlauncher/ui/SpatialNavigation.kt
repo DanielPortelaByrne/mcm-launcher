@@ -1,89 +1,63 @@
 package com.example.tvlauncher.ui
 
 import android.view.View
+import android.view.ViewGroup
+import android.widget.TextView
+import com.example.tvlauncher.R
 import com.example.tvlauncher.design.Motion
-import kotlin.math.abs
 
 /**
- * Utilities for implementing micro-parallax spatial navigation:
- * - Outgoing section opacity reduces subtly
- * - Outgoing section scale approaches 0.985
- * - Incoming section settles from a small vertical offset
- * - Section heading moves fractionally differently from content
- * - Backdrop/painting moves at different velocity from foreground
- *
- * Creates the sensation of navigating through one designed space rather than
- * independent flying content.
- *
- * Apply these to a CalmScrollView via onScrollChanged listener.
+ * Micro-depth for the home page as it pans: rows leaving over the top edge recede very slightly (a little
+ * smaller and dimmer, as if further away), rows arriving from below settle up the last few dp into place,
+ * and headings arrive a touch later than their content. Everything is a pure function of the scroll
+ * position, so rapid presses, retargeted pans and cancelled glides can never leave a row in between.
  */
 object SpatialNavigation {
-    /**
-     * Update parallax effects based on vertical scroll position.
-     * Call from the ScrollView's onScrollChanged override or a scroll listener.
-     */
-    fun updateParallax(
-        scrollY: Int,
-        viewHeight: Int,
-        parallaxBackdrop: View?,
-        sections: List<View>
-    ) {
-        if (parallaxBackdrop != null && !Motion.animationsOn(parallaxBackdrop)) return
+    private const val OUT_SCALE = 0.015f
+    private const val OUT_ALPHA = 0.3f
+    private const val IN_OFFSET_DP = 14f
+    private const val HEADING_LAG = 1.5f
 
-        // Backdrop parallax: moves at ~0.4x foreground speed (slower for depth)
-        parallaxBackdrop?.translationY = scrollY * -0.4f
-
-        // Update each section's micro-parallax
-        for (section in sections) {
-            val sectionTop = section.top.toFloat()
-            val sectionBottom = section.bottom.toFloat()
-            val sectionCenter = (sectionTop + sectionBottom) / 2
-
-            // Calculate how "off-screen" this section is (-1 = fully above, 0 = centered, 1 = fully below)
-            val viewportCenter = scrollY + viewHeight / 2f
-            val distanceFromCenter = (sectionCenter - viewportCenter) / (viewHeight / 2f)
-            val absDistance = abs(distanceFromCenter)
-
-            // Incoming section settles from slight vertical offset
-            if (distanceFromCenter > 0) {
-                // Section below current view: slight downward offset that eases as it enters
-                section.translationY = (distanceFromCenter * 8f).coerceIn(0f, 8f)
-            } else {
-                // Section above current view: slight upward offset
-                section.translationY = (distanceFromCenter * 8f).coerceIn(-8f, 0f)
-            }
-
-            // Outgoing section fades and slightly shrinks
-            if (absDistance > 1f) {
-                val fadeOutFraction = (absDistance - 1f).coerceIn(0f, 0.3f)  // Max 30% fade over scroll
-                section.alpha = 1f - (fadeOutFraction * 0.25f)
-                section.scaleY = 1f - (fadeOutFraction * 0.01f)
-            } else {
-                section.alpha = 1f
-                section.scaleY = 1f
-            }
+    /** Re-derives every layer's transform from [scrollY]. [page] is the scroll view's single child. */
+    fun update(page: ViewGroup, scrollY: Int, viewport: Int) {
+        if (viewport <= 0) return
+        val on = Motion.animationsOn(page)
+        val d = page.resources.displayMetrics.density
+        forEachLayer(page) { layer, top ->
+            if (layer.visibility != View.VISIBLE || layer.height == 0) return@forEachLayer
+            if (!on) { reset(layer); return@forEachLayer }
+            val center = top + layer.height / 2f
+            val out = ((scrollY + viewport * 0.15f - center) / (viewport * 0.3f)).coerceIn(0f, 1f)
+            val incoming = ((center - (scrollY + viewport * 0.85f)) / (viewport * 0.3f)).coerceIn(0f, 1f)
+            val heading = layer is TextView || layer.getTag(R.id.section_heading) == true
+            val scale = 1f - OUT_SCALE * out
+            layer.pivotX = layer.width / 2f; layer.pivotY = layer.height.toFloat()
+            layer.scaleX = scale; layer.scaleY = scale
+            layer.translationY = incoming * IN_OFFSET_DP * d * (if (heading) HEADING_LAG else 1f)
+            setAlpha(layer, 1f - OUT_ALPHA * out)
         }
     }
 
-    /**
-     * Subtle parallax for horizontal scroll rails: content settles from offset as it enters view.
-     */
-    fun updateHorizontalParallax(
-        scrollX: Int,
-        viewWidth: Int,
-        items: List<View>
-    ) {
-        // Subtle horizontal parallax: items offset slightly based on horizontal position
-        for (item in items) {
-            val itemLeft = item.left.toFloat()
-            val itemRight = item.right.toFloat()
-            val itemCenter = (itemLeft + itemRight) / 2
-
-            val viewportCenter = scrollX + viewWidth / 2f
-            val distanceFromCenter = (itemCenter - viewportCenter) / (viewWidth / 2f)
-
-            // Slight horizontal offset as items enter
-            item.translationX = (distanceFromCenter * 4f).coerceIn(-6f, 6f)
+    /** Direct children of the page, with the discover column's sections treated as layers of their own. */
+    private inline fun forEachLayer(page: ViewGroup, block: (View, Float) -> Unit) {
+        for (i in 0 until page.childCount) {
+            val child = page.getChildAt(i)
+            if (child.id == R.id.discoverSections && child is ViewGroup) {
+                for (j in 0 until child.childCount) block(child.getChildAt(j), (child.top + child.getChildAt(j).top).toFloat())
+            } else block(child, child.top.toFloat())
         }
+    }
+
+    /** Dimmed rows get a cached GPU layer (their content is still while they recede), others draw directly. */
+    private fun setAlpha(layer: View, alpha: Float) {
+        if (layer.alpha == alpha) return
+        layer.alpha = alpha
+        val want = if (alpha < 1f && layer is ViewGroup) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_NONE
+        if (layer.layerType != want) layer.setLayerType(want, null)
+    }
+
+    private fun reset(layer: View) {
+        layer.scaleX = 1f; layer.scaleY = 1f; layer.translationY = 0f
+        setAlpha(layer, 1f)
     }
 }

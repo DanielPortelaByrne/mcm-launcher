@@ -183,6 +183,7 @@ class ShelfLayoutBuilder(private val context: Context) {
             }
             LauncherTheme.fadeDrawable(ring, mat, hasFocus || v.tag == PICKED)
             LauncherTheme.animateFocus(ring, hasFocus, 1.08f)
+            if (v.tag != PICKED) com.example.tvlauncher.design.Motion.liftIcon(ring, hasFocus)
             tile.onFocus?.invoke(hasFocus)
         }
         view.setOnClickListener { com.example.tvlauncher.design.Motion.press(ring, 1.08f); tile.onSelect() }

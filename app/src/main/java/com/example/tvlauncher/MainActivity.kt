@@ -186,7 +186,10 @@ class MainActivity : AppCompatActivity() {
         }
         // Remember the last thing focused on the page itself, so closing any overlay returns exactly there.
         window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener { _, focused ->
-            if (focused != null && !anyOverlayVisible()) lastMainFocus = focused
+            if (focused != null && !anyOverlayVisible()) {
+                lastMainFocus = focused
+                if (::backdrop.isInitialized) backdrop.setMood(com.example.tvlauncher.design.SectionTheme.moodOf(focused) ?: com.example.tvlauncher.design.SectionTheme.Mood.NEUTRAL)
+            }
             // Runs before the new item's own focus listener, which sets the hint again if it has one.
             if (organiseIndex == null) com.example.tvlauncher.ui.PageHint.show(null)
         }
@@ -251,6 +254,12 @@ class MainActivity : AppCompatActivity() {
         bootMark("room")
         backdrop = HomeBackdrop(findViewById(R.id.homePainting), artModeOverlay.library)
         backdrop.showCurrent()
+        val homeScroll = findViewById<com.example.tvlauncher.ui.CalmScrollView>(R.id.homeScroll)
+        homeScroll.onScrolled = { y ->
+            backdrop.onPageScrolled(y)
+            com.example.tvlauncher.ui.SpatialNavigation.update(homeScroll.getChildAt(0) as android.view.ViewGroup, y, homeScroll.height)
+        }
+        com.example.tvlauncher.design.SectionTheme.tag(findViewById(R.id.continueSection), com.example.tvlauncher.design.SectionTheme.Mood.FILM)
 
         findViewById<ImageView>(R.id.iconSearch).setOnClickListener { searchPanel.show(currentApps) }
         findViewById<ImageView>(R.id.iconInputs).setOnClickListener { handleCapability(systemActions.openInputs()) }
@@ -385,7 +394,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (event.action == KeyEvent.ACTION_DOWN && direction != 0 && ::allAppsPanel.isInitialized) {
             val overlayId = when {
-                infoSheet.isVisible -> R.id.infoSheet
+                infoSheet.isVisible && !infoSheet.isClosing -> R.id.infoSheet
                 whoPicker.isVisible -> R.id.whoPicker
                 accountMenu.isVisible -> R.id.accountMenu
                 searchPanel.isVisible -> R.id.searchOverlay
@@ -414,18 +423,24 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun anyOverlayVisible(): Boolean =
-        allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || infoSheet.isVisible
+        allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
 
     private var obscured = false
 
     private fun syncObscured() {
         if (!::backdrop.isInitialized) return
-        val cover = allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || whoPicker.isVisible || infoSheet.isVisible
+        val cover = allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
         if (cover == obscured) return
         obscured = cover
         // Alpha, not visibility: the page stays focusable, so closing a sheet can hand focus straight back to it.
-        findViewById<android.view.View>(R.id.homeScroll).animate().alpha(if (cover) 0f else 1f)
-            .setDuration(com.example.tvlauncher.design.Motion.FADE_MS).start()
+        // The page also steps back a little as a layer arrives on top of it, and comes forward again after.
+        val page = findViewById<android.view.View>(R.id.homeScroll)
+        val on = com.example.tvlauncher.design.Motion.animationsOn(page)
+        page.pivotX = page.width / 2f; page.pivotY = page.height / 2f
+        val scale = if (cover) com.example.tvlauncher.design.Motion.PAGE_RECEDE else 1f
+        page.animate().alpha(if (cover) 0f else 1f).scaleX(scale).scaleY(scale)
+            .setDuration(if (!on) 0 else if (cover) com.example.tvlauncher.design.Motion.FADE_MS else com.example.tvlauncher.design.Motion.SHEET_OUT_MS + 60)
+            .setInterpolator(com.example.tvlauncher.design.Motion.SETTLE).start()
         backdrop.setBlurred(cover)
     }
 

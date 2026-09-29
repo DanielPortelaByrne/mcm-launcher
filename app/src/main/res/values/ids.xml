@@ -4,4 +4,7 @@
     <item name="motion_pan" type="id" />
     <item name="motion_fade" type="id" />
     <item name="motion_text" type="id" />
+    <item name="motion_swap" type="id" />
+    <item name="section_mood" type="id" />
+    <item name="section_heading" type="id" />
 </resources>

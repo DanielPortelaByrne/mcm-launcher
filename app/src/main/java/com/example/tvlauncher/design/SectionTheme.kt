@@ -1,63 +1,61 @@
 package com.example.tvlauncher.design
 
+import android.animation.ArgbEvaluator
+import android.animation.ValueAnimator
 import android.graphics.Color
 import android.view.View
-import android.view.animation.PathInterpolator
-import androidx.core.content.ContextCompat
 import com.example.tvlauncher.R
-import kotlin.math.abs
 
 /**
- * Section-aware backdrop theme: the launcher subtly shifts atmospheric tone based on the
- * currently focused/active section. Transitions are slow (350–650ms) and atmospheric,
- * meant to be noticed subconsciously rather than as obvious colour changes.
- *
- * This centralizes theme state rather than embedding colours into individual sections.
+ * The room's light shifts a little with where you are on the page: a single full-screen wash over the
+ * painting (under the page and its vignette), tinted by the focused section. It is meant to be felt more
+ * than seen, so every tint is low alpha and text contrast is untouched (text sits on its own scrims).
  */
 object SectionTheme {
-    private val transitionCurve = PathInterpolator(0f, 0f, 0.2f, 1f)  // Same as Motion.SETTLE
-    private const val BASE_TRANSITION_MS = 500L
-
-    enum class Section {
-        APPS,                    // Neutral warm walnut
-        CONTINUE_WATCHING,       // Slightly darker/cooler
-        TONIGHT,                 // Slightly warmer amber
-        NOW_SPINNING,            // Restrained teal/rust influence
-        PROJECTS,                // Olive/walnut
-        ART_MODE                 // Art-focused
+    enum class Mood(val tint: Int) {
+        /** Apps, header, greeting: the painting as it is. */
+        NEUTRAL(Color.argb(0, 0, 0, 0)),
+        /** Films and Continue watching: the lights dimmed a touch, slightly cooler. */
+        FILM(Color.argb(58, 10, 16, 30)),
+        /** This evening (Tonight, recipes): warm lamp light. */
+        EVENING(Color.argb(34, 176, 96, 30)),
+        /** Now spinning: a little teal in the shadows. */
+        SPINNING(Color.argb(38, 18, 78, 74)),
+        /** The sideboard of projects: olive and walnut. */
+        MAKING(Color.argb(40, 60, 62, 30)),
+        /** The painting shelf and settings: a faint darkening so the thumbnails read. */
+        GALLERY(Color.argb(30, 20, 14, 8))
     }
 
-    /**
-     * Get the accent colour overlay tint for a section (very subtle, meant to influence backdrop).
-     * Returns a 32-bit ARGB colour with low alpha (15-25%) for a subconscious effect.
-     */
-    fun getAccentTint(section: Section): Int = when (section) {
-        Section.APPS -> Color.argb(0, 0, 0, 0)                      // Neutral, no tint
-        Section.CONTINUE_WATCHING -> Color.argb(20, 20, 30, 60)     // Cool blue-grey
-        Section.TONIGHT -> Color.argb(25, 180, 120, 60)             // Warm amber
-        Section.NOW_SPINNING -> Color.argb(20, 80, 100, 90)         // Teal influence
-        Section.PROJECTS -> Color.argb(15, 60, 70, 40)              // Olive
-        Section.ART_MODE -> Color.argb(0, 0, 0, 0)                  // Art is the theme
-    }
+    const val TRANSITION_MS = 560L
 
-    /**
-     * Transitions a view's background or tint colour to match the new section.
-     * [view] should typically be the backdrop or a scrim/overlay layer.
-     * This operates independently of the launcher's content animations.
-     */
-    fun transitionToSection(view: View, newSection: Section) {
-        val from = (view.tag as? Int) ?: Color.argb(0, 0, 0, 0)
-        val to = getAccentTint(newSection)
-        view.tag = newSection
+    /** Marks [section] (and so everything inside it) as belonging to [mood]. */
+    fun tag(section: View, mood: Mood) = section.setTag(R.id.section_mood, mood)
 
-        if (from == to) return
-        if (!Motion.animationsOn(view)) { view.setBackgroundColor(to); return }
-
-        android.animation.ValueAnimator.ofObject(android.animation.ArgbEvaluator(), from, to).apply {
-            duration = BASE_TRANSITION_MS
-            interpolator = transitionCurve
-            addUpdateListener { view.setBackgroundColor(it.animatedValue as Int) }
-            start()
+    /** The mood of the nearest tagged ancestor of [view], or null if nothing on the way up is tagged. */
+    fun moodOf(view: View?): Mood? {
+        var v: Any? = view
+        while (v is View) {
+            (v.getTag(R.id.section_mood) as? Mood)?.let { return it }
+            v = v.parent
         }
+        return null
+    }
+
+    /** Glides [wash] to [mood]'s tint. Retargets smoothly if called mid-transition. */
+    fun apply(wash: View, mood: Mood) {
+        val running = wash.getTag(R.id.motion_fade) as? ValueAnimator
+        if (wash.getTag(R.id.section_mood) == mood) return
+        wash.setTag(R.id.section_mood, mood)
+        running?.cancel()
+        val from = (wash.background as? android.graphics.drawable.ColorDrawable)?.color ?: Color.TRANSPARENT
+        if (!Motion.animationsOn(wash)) { wash.setBackgroundColor(mood.tint); return }
+        val a = ValueAnimator.ofObject(ArgbEvaluator(), from, mood.tint).apply {
+            duration = TRANSITION_MS
+            interpolator = Motion.SETTLE
+            addUpdateListener { wash.setBackgroundColor(it.animatedValue as Int) }
+        }
+        wash.setTag(R.id.motion_fade, a)
+        a.start()
     }
 }

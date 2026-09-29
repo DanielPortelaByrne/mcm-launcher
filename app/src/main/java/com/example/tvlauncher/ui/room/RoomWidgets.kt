@@ -23,6 +23,7 @@ import com.example.tvlauncher.data.home.RecipeDeck
 import com.example.tvlauncher.data.home.TonightFilm
 import com.example.tvlauncher.data.home.TonightPlan
 import com.example.tvlauncher.design.LauncherTheme
+import com.example.tvlauncher.design.Motion
 import com.example.tvlauncher.design.Type
 import com.example.tvlauncher.ui.scrollFocusIntoView
 import java.text.SimpleDateFormat
@@ -104,8 +105,8 @@ class ProjectShelf(private val context: Context, projects: List<Project>, privat
     }
 
     private fun show(project: Project) {
-        title.text = project.title
-        sub.text = listOfNotNull("Next: ${project.nextAction}".takeIf { project.nextAction.isNotBlank() }, project.status).joinToString("   ·   ")
+        Motion.swapText(title, project.title)
+        Motion.swapText(sub, listOfNotNull("Next: ${project.nextAction}".takeIf { project.nextAction.isNotBlank() }, project.status).joinToString("   ·   "))
     }
 }
 
@@ -126,7 +127,22 @@ class InfoSheet(private val container: FrameLayout) {
     private val context = container.context
     private var previousFocus: View? = null
     private var lastButtons: List<View> = emptyList()
+    private var card: View? = null
+    private var flight: Flight? = null
+    private var surfaceFade: android.animation.ValueAnimator? = null
     val isVisible: Boolean get() = container.visibility == View.VISIBLE
+    /** True while the sheet is animating away: it no longer takes keys, and the page is already coming back. */
+    var isClosing = false
+        private set
+
+    /**
+     * A picture that travels from the page into the sheet (and back when it closes). [source] is the
+     * picture on the page, [target] its place in the sheet, [reveal] the parts of the sheet that appear
+     * around it once it is on its way.
+     */
+    class Flight(val source: View, val target: View, val reveal: List<View>) {
+        internal val from = android.graphics.Rect()
+    }
 
     fun show(
         kicker: String, title: String, subtitle: String?, lines: List<String>,
@@ -135,7 +151,8 @@ class InfoSheet(private val container: FrameLayout) {
     ) {
         // A refresh redraws the same sheet in place (for results that arrive late): keep the way back and the focused button.
         val focusedIndex = if (refresh) lastButtons.indexOfFirst { it.isFocused }.coerceAtLeast(0) else 0
-        if (!refresh) previousFocus = container.rootView.findFocus()
+        if (!refresh) rememberFocus()
+        settle()
         container.removeAllViews()
         container.setBackgroundColor(ContextCompat.getColor(context, R.color.sheet_scrim))
         val pad = LauncherTheme.px(context, R.dimen.space_6)
@@ -195,29 +212,127 @@ class InfoSheet(private val container: FrameLayout) {
 
         container.addView(card, FrameLayout.LayoutParams(context.dp(if (image != null) 720 else 560), -2, Gravity.CENTER))
         container.visibility = View.VISIBLE
-        com.example.tvlauncher.design.Motion.enter(container, card, context.dp(28).toFloat())
+        this.card = card
+        if (!refresh) com.example.tvlauncher.design.Motion.enter(container, card, context.dp(28).toFloat())
         lastButtons = built
         (built.getOrNull(focusedIndex) ?: first)?.post { (built.getOrNull(focusedIndex) ?: first)?.requestFocus() }
     }
 
     /** Shows any view centred over a scrim, focusing [focus]. Back dismisses it like every other sheet. */
-    fun showCustom(view: View, focus: View?) {
-        previousFocus = container.rootView.findFocus()
+    fun showCustom(view: View, focus: View?, flight: Flight? = null) {
+        rememberFocus()
+        settle()
         container.removeAllViews()
         container.setBackgroundColor(ContextCompat.getColor(context, R.color.sheet_scrim))
         container.clipChildren = false
+        // Measured before anything moves: the page is about to step back behind the sheet.
+        val flying = flight != null && Motion.animationsOn(container) &&
+            flight.source.isShown && flight.source.getGlobalVisibleRect(flight.from)
         container.addView(view, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         container.visibility = View.VISIBLE
-        com.example.tvlauncher.design.Motion.enter(container, view, context.dp(28).toFloat())
+        card = view
         lastButtons = emptyList()
+        if (flying) { this.flight = flight; flyIn(view, flight!!) } else Motion.enter(container, view, context.dp(28).toFloat())
         focus?.post { focus.requestFocus() }
     }
 
     fun hide() {
-        if (!isVisible) return
-        container.visibility = View.GONE
-        container.removeAllViews()
+        if (!isVisible || isClosing) return
+        isClosing = true
+        // Focus goes home at once, so the remote answers immediately; the sheet only has to finish leaving.
+        container.descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
         previousFocus?.takeIf { it.isAttachedToWindow }?.requestFocus()
+        container.requestLayout()   // lets the page start coming back while the sheet leaves
+        val f = flight
+        if (f != null && f.source.isAttachedToWindow && Motion.animationsOn(container)) flyOut(f)
+        else Motion.exit(container, card) { settle() }
+    }
+
+    private fun rememberFocus() {
+        // Reopened while still closing: the way back is the one already remembered.
+        if (!isClosing) previousFocus = container.rootView.findFocus()
+    }
+
+    /** Ends any entrance or exit in its final state and puts the container back to rest. */
+    private fun settle() {
+        surfaceFade?.cancel(); surfaceFade = null
+        container.animate().cancel()
+        card?.animate()?.cancel()
+        flight?.let { f ->
+            f.target.animate().cancel()
+            f.source.alpha = 1f
+        }
+        flight = null
+        if (isClosing) {
+            isClosing = false
+            container.visibility = View.GONE
+            container.removeAllViews()
+            card = null
+        }
+        container.alpha = 1f
+        container.descendantFocusability = android.view.ViewGroup.FOCUS_AFTER_DESCENDANTS
+        (container.background as? ColorDrawable)?.alpha = 255
+    }
+
+    /** The picture lifts off the page and settles into the sheet; the sheet's surface and words gather around it. */
+    private fun flyIn(card: View, f: Flight) {
+        f.source.alpha = 0f
+        val scrim = container.background as? ColorDrawable
+        val surface = card.background
+        scrim?.alpha = 0; surface?.alpha = 0
+        f.reveal.forEach { it.alpha = 0f; it.translationY = context.dp(10).toFloat() }
+        f.target.visibility = View.INVISIBLE
+        card.post {
+            if (flight !== f || isClosing) return@post
+            placeAt(f.target, f.from)
+            f.target.visibility = View.VISIBLE
+            f.target.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f)
+                .setDuration(Motion.FLIGHT_MS).setInterpolator(Motion.SWOOSH).start()
+            fadeSurfaces(scrim, surface, 255, Motion.SHEET_IN_MS)
+            f.reveal.forEach {
+                it.animate().alpha(1f).translationY(0f).setStartDelay(Motion.FLIGHT_MS / 3)
+                    .setDuration(Motion.SHEET_IN_MS).setInterpolator(Motion.SETTLE).start()
+            }
+        }
+    }
+
+    /** The reverse: the sheet dissolves from around the picture, which drops back into its place on the page. */
+    private fun flyOut(f: Flight) {
+        val scrim = container.background as? ColorDrawable
+        val surface = card?.background
+        f.reveal.forEach { it.animate().alpha(0f).setStartDelay(0).setDuration(Motion.SHEET_OUT_MS / 2).setInterpolator(Motion.SETTLE).start() }
+        fadeSurfaces(scrim, surface, 0, Motion.SHEET_OUT_MS)
+        // Back to where the picture was taken from: the page comes forward to exactly that position.
+        val o = offsetsTo(f.target, f.from)
+        f.target.animate().translationX(o[0]).translationY(o[1]).scaleX(o[2]).scaleY(o[3])
+            .setDuration(Motion.FLIGHT_MS - 60).setInterpolator(Motion.SWOOSH)
+            .withEndAction { if (flight === f) settle() }.start()
+    }
+
+    private fun fadeSurfaces(scrim: ColorDrawable?, surface: android.graphics.drawable.Drawable?, to: Int, ms: Long) {
+        surfaceFade?.cancel()
+        surfaceFade = android.animation.ValueAnimator.ofInt(scrim?.alpha ?: surface?.alpha ?: 255, to).apply {
+            duration = ms; interpolator = Motion.SETTLE
+            addUpdateListener { val a = it.animatedValue as Int; scrim?.alpha = a; surface?.alpha = a }
+            start()
+        }
+    }
+
+    /** Puts [view] (pivot at its top-left) exactly over [rect] in screen space. */
+    private fun placeAt(view: View, rect: android.graphics.Rect) {
+        val o = offsetsTo(view, rect)
+        view.translationX = o[0]; view.translationY = o[1]; view.scaleX = o[2]; view.scaleY = o[3]
+    }
+
+    /** Translation and scale that put [view]'s untransformed layout box over [rect]; sets the pivot to top-left. */
+    private fun offsetsTo(view: View, rect: android.graphics.Rect): FloatArray {
+        val saved = floatArrayOf(view.translationX, view.translationY, view.scaleX, view.scaleY)
+        view.translationX = 0f; view.translationY = 0f; view.scaleX = 1f; view.scaleY = 1f
+        val at = IntArray(2); view.getLocationOnScreen(at)
+        view.translationX = saved[0]; view.translationY = saved[1]; view.scaleX = saved[2]; view.scaleY = saved[3]
+        view.pivotX = 0f; view.pivotY = 0f
+        val w = view.width.coerceAtLeast(1); val h = view.height.coerceAtLeast(1)
+        return floatArrayOf((rect.left - at[0]).toFloat(), (rect.top - at[1]).toFloat(), rect.width() / w.toFloat(), rect.height() / h.toFloat())
     }
 }
 
@@ -270,8 +385,8 @@ class TonightCard(
     }
 
     private fun set(index: Int, title: String?, sub: String?) {
-        lines[index].title.text = title ?: "Nothing yet"
-        lines[index].sub.text = sub ?: ""
+        Motion.swapText(lines[index].title, title ?: "Nothing yet")
+        Motion.swapText(lines[index].sub, sub ?: "")
         lines[index].sub.visibility = if (sub.isNullOrBlank()) View.GONE else View.VISIBLE
         lines[index].row.isEnabled = title != null
     }

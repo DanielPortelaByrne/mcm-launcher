@@ -13,7 +13,6 @@ import android.view.animation.PathInterpolator
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
 import android.widget.TextView
-import androidx.core.content.ContextCompat
 import com.example.tvlauncher.R
 import kotlin.math.abs
 import kotlin.math.max
@@ -36,6 +35,13 @@ object Motion {
     const val FOCUS_IN_MS = 160L
     const val FOCUS_OUT_MS = 120L
     const val FADE_MS = 200L
+
+    /** Sheets: the page steps back to this scale as a layer arrives over it. */
+    const val PAGE_RECEDE = 0.975f
+    const val SHEET_IN_MS = 260L
+    const val SHEET_OUT_MS = 200L
+    /** A poster travelling from the page into a sheet (and back). */
+    const val FLIGHT_MS = 380L
 
     private class Running(val animator: ValueAnimator, val target: Int)
 
@@ -109,55 +115,116 @@ object Motion {
         a.start()
     }
 
-    /** A soft dip and a gentle settle back, so "select" feels pressed rather than switched. */
+    /**
+     * Focus, press, release: a quick dip below the focused size, then a slower settle back up, so OK feels
+     * like pressing an object rather than toggling a state. The dip is relative to [restScale].
+     */
     fun press(view: View, restScale: Float) {
         if (!animationsOn(view)) return
         view.animate().cancel()
-        view.animate().scaleX(0.97f).scaleY(0.97f).setDuration(60).setInterpolator(SETTLE).withEndAction {
-            view.animate().scaleX(restScale).scaleY(restScale).setDuration(160).setInterpolator(SETTLE).start()
+        val dip = restScale * PRESS_DIP
+        view.animate().scaleX(dip).scaleY(dip).setDuration(PRESS_DOWN_MS).setInterpolator(SETTLE).withEndAction {
+            view.animate().scaleX(restScale).scaleY(restScale).setDuration(PRESS_UP_MS).setInterpolator(SETTLE).start()
         }.start()
     }
 
-    /** Rich layered image-card focus: outer card scale, elevation, slight inner image scale, metadata brightens. */
-    fun focusImageCard(card: View, innerImage: View?, metadata: android.widget.TextView?, focused: Boolean) {
-        if (!animationsOn(card)) {
-            card.scaleX = if (focused) 1.04f else 1f
-            card.scaleY = if (focused) 1.04f else 1f
-            card.translationZ = if (focused) 16f else 0f
-            innerImage?.scaleX = if (focused) 1.015f else 1f
-            innerImage?.scaleY = if (focused) 1.015f else 1f
-            metadata?.let { tweenTextColor(it, ContextCompat.getColor(it.context, if (focused) R.color.text else R.color.text_muted), 0L) }
+    // ---- layered focus -----------------------------------------------------------------------------
+
+    const val CARD_SCALE = 1.045f
+    const val CARD_INNER_SCALE = 1.025f
+    const val PRESS_DIP = 0.955f
+    const val PRESS_DOWN_MS = 70L
+    const val PRESS_UP_MS = 190L
+    /** Resting alpha of a card's caption; focus brings it to full strength a beat after the image lifts. */
+    const val CAPTION_REST_ALPHA = 0.82f
+    private const val INNER_LAG_MS = 70L
+    private const val CAPTION_DELAY_MS = 40L
+
+    /**
+     * Focus for an image object, in layers: the clipped [frame] lifts and scales, the picture [inner] inside
+     * its clip scales a little more slowly (so the image seems to sit behind glass), and the [caption]
+     * brightens and follows the lift a beat later. The ivory mat is faded by the caller, as before.
+     */
+    fun focusImageCard(frame: View, inner: View?, caption: View?, focused: Boolean) {
+        val d = frame.resources.displayMetrics.density
+        val scale = if (focused) CARD_SCALE else 1f
+        val lift = if (focused) -3f * d else 0f
+        val innerScale = if (focused) CARD_INNER_SCALE else 1f
+        val captionAlpha = if (focused) 1f else CAPTION_REST_ALPHA
+        if (!animationsOn(frame)) {
+            frame.scaleX = scale; frame.scaleY = scale; frame.translationY = lift; frame.translationZ = if (focused) 18f else 0f
+            inner?.scaleX = innerScale; inner?.scaleY = innerScale
+            caption?.alpha = captionAlpha; caption?.translationY = lift
             return
         }
-        val duration = if (focused) FOCUS_IN_MS else FOCUS_OUT_MS
-        card.animate().cancel()
-        card.animate().scaleX(if (focused) 1.04f else 1f).scaleY(if (focused) 1.04f else 1f)
-            .translationZ(if (focused) 16f else 0f).setDuration(duration).setInterpolator(SETTLE).start()
-        innerImage?.animate()?.cancel()
-        innerImage?.animate()?.scaleX(if (focused) 1.015f else 1f)?.scaleY(if (focused) 1.015f else 1f)
-            ?.setDuration(duration + 40)?.setInterpolator(SETTLE)?.start()
-        metadata?.let { tweenTextColor(it, ContextCompat.getColor(it.context, if (focused) R.color.text else R.color.text_muted), duration) }
+        val ms = if (focused) FOCUS_IN_MS else FOCUS_OUT_MS
+        frame.animate().scaleX(scale).scaleY(scale).translationY(lift).translationZ(if (focused) 18f else 0f)
+            .setStartDelay(0).setDuration(ms).setInterpolator(SETTLE).start()
+        inner?.animate()?.scaleX(innerScale)?.scaleY(innerScale)?.setDuration(ms + INNER_LAG_MS)?.setInterpolator(SETTLE)?.start()
+        caption?.animate()?.alpha(captionAlpha)?.translationY(lift)
+            ?.setStartDelay(if (focused) CAPTION_DELAY_MS else 0)?.setDuration(ms)?.setInterpolator(SETTLE)?.start()
     }
 
-    /** Restrained app-icon focus: tiny lift + halo treatment from LauncherTheme. */
-    fun focusAppIcon(view: View, title: android.widget.TextView?, focused: Boolean) {
-        if (!animationsOn(view)) {
-            view.translationY = if (focused) -6f else 0f
-            title?.alpha = if (focused) 1f else 0.8f
-            return
+    /** A round app icon's extra: the smallest upward lift, so the disc rises off the shelf as its halo lights. */
+    fun liftIcon(ring: View, focused: Boolean) {
+        val lift = if (focused) -3f * ring.resources.displayMetrics.density else 0f
+        if (!animationsOn(ring)) { ring.translationY = lift; return }
+        ring.animate().translationY(lift).setDuration(if (focused) FOCUS_IN_MS + 40 else FOCUS_OUT_MS).setInterpolator(SETTLE).start()
+    }
+
+    // ---- content replacement -----------------------------------------------------------------------
+
+    const val SWAP_MS = 240L
+
+    private class Swap(val animator: ValueAnimator, var target: CharSequence, var applied: Boolean)
+
+    /**
+     * Replaces a label's text with a short fade-through (out, swap, back in). Calls that arrive mid-swap
+     * just retarget it, so rapid changes never stack or leave the label half-faded. Off-screen labels,
+     * unchanged text and "remove animations" all set the text directly.
+     */
+    fun swapText(tv: TextView, text: CharSequence) {
+        val running = tv.getTag(R.id.motion_swap) as? Swap
+        if (running != null && running.animator.isRunning) {
+            if (!running.applied) { running.target = text; return }
+            if (tv.text.toString() == text.toString()) return    // already fading in the right text
+            running.animator.cancel()                            // fading in stale text: turn round from here
+        } else if (tv.text.toString() == text.toString()) return
+        if (!animationsOn(tv) || !tv.isShown) { tv.text = text; tv.alpha = 1f; return }
+        val from = tv.alpha
+        val swap = Swap(ValueAnimator.ofFloat(0f, 1f), text, false)
+        swap.animator.apply {
+            duration = SWAP_MS; interpolator = null
+            addUpdateListener {
+                val f = it.animatedFraction
+                if (f < 0.4f) tv.alpha = from * (1f - SETTLE.getInterpolation(f / 0.4f))
+                else {
+                    if (!swap.applied) { tv.text = swap.target; swap.applied = true }
+                    tv.alpha = SETTLE.getInterpolation((f - 0.4f) / 0.6f)
+                }
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(animation: Animator) { cancelled = true }
+                override fun onAnimationEnd(animation: Animator) {
+                    if (cancelled) return
+                    if (!swap.applied) tv.text = swap.target
+                    tv.alpha = 1f
+                }
+            })
         }
-        val duration = if (focused) FOCUS_IN_MS else FOCUS_OUT_MS
+        tv.setTag(R.id.motion_swap, swap)
+        swap.animator.start()
+    }
+
+    /** Old picture recedes (a touch smaller, fading), new one settles in: for posters and sleeves. */
+    fun swapImage(view: View, apply: () -> Unit) {
+        if (!animationsOn(view) || !view.isShown) { apply(); view.alpha = 1f; view.scaleX = 1f; view.scaleY = 1f; return }
         view.animate().cancel()
-        view.animate().translationY(if (focused) -6f else 0f).setDuration(duration).setInterpolator(SETTLE).start()
-        title?.animate()?.cancel()
-        title?.animate()?.alpha(if (focused) 1f else 0.8f)?.setDuration(duration)?.setInterpolator(SETTLE)?.start()
-    }
-
-    /** Vertical scroll parallax: outer content recedes slightly while inner content slides in. */
-    fun parallelScrollVertical(view: View, scrollFraction: Float) {
-        // Outer/background moves at 0.985 scale and slight opacity reduction
-        view.scaleY = 1f - (scrollFraction * 0.015f)
-        view.alpha = 1f - (scrollFraction * 0.08f)
+        view.animate().alpha(0f).scaleX(0.97f).scaleY(0.97f).setDuration(110).setInterpolator(SETTLE).withEndAction {
+            apply()
+            view.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(SWOOSH).start()
+        }.start()
     }
 
     /** Fades [container] in and lifts [card] a short way into place (no scale), for sheets and menus. */
@@ -165,12 +232,22 @@ object Motion {
         if (!animationsOn(container)) return
         container.animate().cancel()
         container.alpha = 0f
-        container.animate().alpha(1f).setDuration(220).setInterpolator(SETTLE).start()
+        container.animate().alpha(1f).setDuration(SHEET_IN_MS).setInterpolator(SETTLE).start()
         card?.let {
             val rise = kotlin.math.min(abs(risePx), 12f * container.resources.displayMetrics.density) * (if (risePx < 0) -1f else 1f)
             it.animate().cancel()
             it.translationY = rise
-            it.animate().translationY(0f).setDuration(220).setInterpolator(SWOOSH).start()
+            it.scaleX = 0.985f; it.scaleY = 0.985f
+            it.animate().translationY(0f).scaleX(1f).scaleY(1f).setDuration(SHEET_IN_MS + 40).setInterpolator(SWOOSH).start()
         }
+    }
+
+    /** The reverse of [enter]: the card sinks back a little as the layer fades, then [onEnd] runs (always). */
+    fun exit(container: View, card: View?, onEnd: () -> Unit) {
+        if (!animationsOn(container)) { onEnd(); return }
+        val sink = 8f * container.resources.displayMetrics.density
+        card?.animate()?.translationY(sink)?.scaleX(0.985f)?.scaleY(0.985f)?.setDuration(SHEET_OUT_MS)?.setInterpolator(SETTLE)?.start()
+        container.animate().cancel()
+        container.animate().alpha(0f).setDuration(SHEET_OUT_MS).setInterpolator(SETTLE).withEndAction(onEnd).start()
     }
 }

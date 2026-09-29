@@ -86,6 +86,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         column.addView(status)
         panel(card, 20)
         card.setOnClickListener { showFilm() }
+        com.example.tvlauncher.design.SectionTheme.tag(card, com.example.tvlauncher.design.SectionTheme.Mood.FILM)
         activity.findViewById<FrameLayout>(R.id.homeHero).addView(card, FrameLayout.LayoutParams(dp(408), dp(184), Gravity.END or Gravity.CENTER_VERTICAL))
 
         val sections = activity.findViewById<LinearLayout>(R.id.discoverSections)
@@ -97,38 +98,40 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         val radius = px(R.dimen.radius_small).toFloat()
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(0, px(R.dimen.space_2), 0, px(R.dimen.space_2)) }
         sections.addView(com.example.tvlauncher.ui.CalmHorizontalScrollView(activity).apply {
+            com.example.tvlauncher.design.SectionTheme.tag(this, com.example.tvlauncher.design.SectionTheme.Mood.GALLERY)
             isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false
             setPadding(margin, 0, margin, 0)
             isHorizontalFadingEdgeEnabled = true; setFadingEdgeLength(px(R.dimen.edge_fade))
             addView(row)
         }, LinearLayout.LayoutParams(-1, -2).apply { marginStart = -margin; marginEnd = -margin })
         art.library.paintings.forEachIndexed { index, painting ->
-            val image = ImageView(activity).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
+            val frame = FrameLayout(activity).apply {
                 clipToOutline = true
                 outlineProvider = object : android.view.ViewOutlineProvider() {
                     override fun getOutline(v: View, outline: android.graphics.Outline) { outline.setRoundRect(0, 0, v.width, v.height, radius) }
                 }
                 background = LauncherTheme.surface(activity, R.color.surface_raised, R.dimen.radius_small)
             }
+            val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+            frame.addView(image, FrameLayout.LayoutParams(-1, -1))
             val mat = LauncherTheme.imageMat(activity, radius).apply { alpha = 0 }
-            image.foreground = mat
+            frame.foreground = mat
             val tile = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; clipChildren = false; clipToPadding = false
                 contentDescription = "View ${painting.title}"
             }
-            tile.addView(image, LinearLayout.LayoutParams(columnWidth, columnWidth * 9 / 16))
+            tile.addView(frame, LinearLayout.LayoutParams(columnWidth, columnWidth * 9 / 16))
             val titleText = com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(activity, painting.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
                 maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+                alpha = com.example.tvlauncher.design.Motion.CAPTION_REST_ALPHA
             }
             tile.addView(titleText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(R.dimen.space_2) })
             tile.setOnFocusChangeListener { v, focused ->
-                // Rich layered focus: image scale with inner image scale + metadata enhancement
-                LauncherTheme.fadeDrawable(image, mat, focused)
-                com.example.tvlauncher.design.Motion.focusImageCard(tile, image, titleText, focused)
+                LauncherTheme.fadeDrawable(frame, mat, focused)
+                com.example.tvlauncher.design.Motion.focusImageCard(frame, image, titleText, focused)
                 scrollFocusIntoView(v, focused)
             }
-            tile.setOnClickListener { art.library.select(index); onArt() }
+            tile.setOnClickListener { com.example.tvlauncher.design.Motion.press(frame, com.example.tvlauncher.design.Motion.CARD_SCALE); art.library.select(index); onArt() }
             row.addView(tile, LinearLayout.LayoutParams(columnWidth, -2).apply { if (index > 0) marginStart = px(R.dimen.card_gutter) })
             thumbDecoder.execute {
                 val bitmap = try { BitmapFactory.decodeResource(activity.resources, painting.resource, BitmapFactory.Options().apply { inSampleSize = 4 }) } catch (_: Exception) { null }
@@ -148,6 +151,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
             button.apply { gravity=Gravity.CENTER; panel(this, 26); setOnClickListener { action(button) } }
             actions.addView(button, LinearLayout.LayoutParams(px(R.dimen.card_column), px(R.dimen.control_height)).apply { if (actions.childCount > 0) marginStart = px(R.dimen.card_gutter) })
         }
+        com.example.tvlauncher.design.SectionTheme.tag(actions, com.example.tvlauncher.design.SectionTheme.Mood.GALLERY)
         sections.addView(actions, LinearLayout.LayoutParams(-1,-2))
     }
     fun homeReturned() {
@@ -158,11 +162,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     }
     fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); thumbDecoder.shutdownNow() }
     private fun render() {
-        val newTitle = film?.title ?: "Your next film awaits"
-        if (newTitle != title.text) {
-            // Animate title change with fade-through
-            com.example.tvlauncher.design.ContentTransition.fadeThroughText(title, title.text, newTitle)
-        }
+        com.example.tvlauncher.design.Motion.swapText(title, film?.title ?: "Your next film awaits")
         showDetails()
         status.visibility = if (watchlist.films.isNotEmpty()) View.GONE else View.VISIBLE
     }
@@ -173,28 +173,35 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         shownPath = current.path
         details = null
         posterBitmap = null
-        com.example.tvlauncher.design.ContentTransition.fadeVisibility(poster, false, 150)  // Fade out old poster
+        // The old poster steps back and waits, dimmed, for the new one (or the empty frame if there is none).
+        if (com.example.tvlauncher.design.Motion.animationsOn(poster) && poster.isShown && poster.drawable != null)
+            poster.animate().alpha(0f).scaleX(0.97f).scaleY(0.97f).setDuration(110).setInterpolator(com.example.tvlauncher.design.Motion.SETTLE)
+                .withEndAction { poster.setImageDrawable(null); settlePoster() }.start()
+        else poster.setImageDrawable(null)
         badge.set(null)
-        com.example.tvlauncher.design.ContentTransition.fadeThroughText(availability, availability.text, "Checking UK availability…")
+        com.example.tvlauncher.design.Motion.swapText(availability, "Checking UK availability…")
         info.load(current) { details, bitmap ->
             activity.runOnUiThread {
                 if (disposed || film?.path != current.path) return@runOnUiThread
                 this.details = details
-                val newAvailability = details?.availabilityLines()?.firstOrNull() ?: "Not streaming in the UK right now"
-                com.example.tvlauncher.design.ContentTransition.fadeThroughText(availability, availability.text, newAvailability)
+                com.example.tvlauncher.design.Motion.swapText(availability, details?.availabilityLines()?.firstOrNull() ?: "Not streaming in the UK right now")
                 badge.set(details?.ratingLabel())
                 if (bitmap != null) {
                     posterBitmap = bitmap
-                    // Fade poster in with crossfade animation
-                    val tempBitmap = bitmap
-                    poster.setImageBitmap(null)
-                    com.example.tvlauncher.design.ContentTransition.fadeVisibility(poster, true, 200)
-                    poster.setImageBitmap(tempBitmap)
+                    poster.animate().cancel()
+                    poster.setImageBitmap(bitmap)
+                    settlePoster()
                 }
                 // Head start: work out the best version now, so PLAY is ready by the time the sheet is opened.
                 details?.imdbId?.let { imdb -> if (smartFor != imdb) startSmart(current, imdb) }
             }
         }
+    }
+
+    /** Brings the poster frame forward to rest, from wherever the last change left it. */
+    private fun settlePoster() {
+        if (!com.example.tvlauncher.design.Motion.animationsOn(poster) || !poster.isShown) { poster.alpha = 1f; poster.scaleX = 1f; poster.scaleY = 1f; return }
+        poster.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(com.example.tvlauncher.design.Motion.SWOOSH).start()
     }
 
     private fun showFilm() {
@@ -215,7 +222,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
                 watchlist.refresh(true) { r -> activity.runOnUiThread { if (!disposed) { upcoming.clear(); film = nextFilm(); render(); status.text = r } } }
             }
         )
-        filmSheet.show(current.title, details?.ratingLabel(), posterBitmap, details?.page, whereLines(), actions)
+        filmSheet.show(current.title, details?.ratingLabel(), posterBitmap, details?.page, whereLines(), actions, from = poster)
         applySmart()
     }
 

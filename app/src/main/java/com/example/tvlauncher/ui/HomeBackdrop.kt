@@ -17,8 +17,9 @@ import java.util.concurrent.Executors
  * Decoding happens off the UI thread, sized to the screen rather than the
  * full-resolution source.
  *
- * Also supports section-aware atmospheric backdrop colour transitions via a semi-transparent
- * overlay that shifts tone based on the currently active section (apps, Continue Watching, etc).
+ * It is also the far wall of the room: it drifts up more slowly than the page as you scroll (a few percent,
+ * inside a little overscan, so no edge ever shows), and a low-alpha wash over it takes on the mood of the
+ * focused section (see [SectionTheme]).
  */
 class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary) {
     private val handler = Handler(Looper.getMainLooper())
@@ -28,13 +29,9 @@ class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary)
         alpha = 0f
         importantForAccessibility = ImageView.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
-    private val themeOverlay = View(base.context).apply {
-        alpha = 0.08f  // Very subtle overlay for atmospheric effect
-        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-    }
+    private val wash = View(base.context).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
     private var generation = 0
     private var running = false
-    private var currentSection = SectionTheme.Section.APPS
 
     private val tick = object : Runnable {
         override fun run() { advance(); handler.postDelayed(this, AUTO_MS) }
@@ -43,8 +40,17 @@ class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary)
     init {
         val parent = base.parent as ViewGroup
         parent.addView(fade, parent.indexOfChild(base) + 1, ViewGroup.LayoutParams(-1, -1))
-        parent.addView(themeOverlay, parent.indexOfChild(base) + 2, ViewGroup.LayoutParams(-1, -1))
-        themeOverlay.setBackgroundColor(SectionTheme.getAccentTint(currentSection))
+        parent.addView(wash, parent.indexOfChild(fade) + 1, ViewGroup.LayoutParams(-1, -1))
+        wash.setBackgroundColor(SectionTheme.Mood.NEUTRAL.tint)
+        // Overscan for the parallax: scaled from the top edge, so the spare height is all below.
+        for (v in listOf(base, fade)) { v.pivotY = 0f; v.scaleX = OVERSCAN; v.scaleY = OVERSCAN }
+    }
+
+    /** Page scrolled to [scrollY]: the painting follows at a fraction of the speed, within its overscan. */
+    fun onPageScrolled(scrollY: Int) {
+        val headroom = base.height * (OVERSCAN - 1f)
+        val y = -(scrollY * PARALLAX).coerceIn(0f, headroom)
+        base.translationY = y; fade.translationY = y
     }
 
     /** Shows the library's current painting immediately (no fade). */
@@ -56,12 +62,8 @@ class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary)
         load(library.index, animate = true)
     }
 
-    /** Update the atmospheric theme overlay based on the active section. */
-    fun setSectionTheme(section: SectionTheme.Section) {
-        if (currentSection == section) return
-        currentSection = section
-        SectionTheme.transitionToSection(themeOverlay, section)
-    }
+    /** The focused section changed: shift the room's light towards its mood. */
+    fun setMood(mood: SectionTheme.Mood) = SectionTheme.apply(wash, mood)
 
     fun start() {
         if (running) return
@@ -124,5 +126,7 @@ class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary)
     private companion object {
         const val AUTO_MS = 120_000L
         const val FADE_MS = 1600L
+        const val OVERSCAN = 1.06f
+        const val PARALLAX = 0.06f
     }
 }

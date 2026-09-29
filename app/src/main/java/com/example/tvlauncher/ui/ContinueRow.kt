@@ -126,17 +126,17 @@ class ContinueRow(
         root.addView(frame, LinearLayout.LayoutParams(width, width * 9 / 16))
         val titleText = com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(context, item.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
             maxLines = 1; isSingleLine = true; ellipsize = TextUtils.TruncateAt.END
+            alpha = com.example.tvlauncher.design.Motion.CAPTION_REST_ALPHA
         }
         root.addView(titleText, LinearLayout.LayoutParams(width, -2).apply { topMargin = px(R.dimen.space_2) })
 
         root.setOnFocusChangeListener { v, hasFocus ->
             LauncherTheme.fadeDrawable(frame, mat, hasFocus)
-            // Rich layered focus for Continue Watching cards
-            com.example.tvlauncher.design.Motion.focusImageCard(root, still, titleText, hasFocus)
+            com.example.tvlauncher.design.Motion.focusImageCard(frame, still, titleText, hasFocus)
             scrollFocusIntoView(v, hasFocus)
             if (hasFocus) PageHint.show(context.getString(R.string.hint_remove_card))
         }
-        root.setOnClickListener { com.example.tvlauncher.design.Motion.press(frame, 1.04f); launch(item) }
+        root.setOnClickListener { com.example.tvlauncher.design.Motion.press(frame, com.example.tvlauncher.design.Motion.CARD_SCALE); launch(item) }
         root.setOnLongClickListener { source.remove(item); refreshNow(); true }
 
         item.imageUri?.let { uri -> worker.execute { source.image(uri)?.let { bmp -> handler.post { still.setImageBitmap(bmp); placeholder.visibility = View.GONE } } } }
