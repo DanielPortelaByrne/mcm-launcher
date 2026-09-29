@@ -158,7 +158,11 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     }
     fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); thumbDecoder.shutdownNow() }
     private fun render() {
-        title.text=film?.title ?: "Your next film awaits"
+        val newTitle = film?.title ?: "Your next film awaits"
+        if (newTitle != title.text) {
+            // Animate title change with fade-through
+            com.example.tvlauncher.design.ContentTransition.fadeThroughText(title, title.text, newTitle)
+        }
         showDetails()
         status.visibility = if (watchlist.films.isNotEmpty()) View.GONE else View.VISIBLE
     }
@@ -169,16 +173,24 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         shownPath = current.path
         details = null
         posterBitmap = null
-        poster.setImageDrawable(null)
+        com.example.tvlauncher.design.ContentTransition.fadeVisibility(poster, false, 150)  // Fade out old poster
         badge.set(null)
-        availability.text = "Checking UK availability…"
+        com.example.tvlauncher.design.ContentTransition.fadeThroughText(availability, availability.text, "Checking UK availability…")
         info.load(current) { details, bitmap ->
             activity.runOnUiThread {
                 if (disposed || film?.path != current.path) return@runOnUiThread
                 this.details = details
-                availability.text = details?.availabilityLines()?.firstOrNull() ?: "Not streaming in the UK right now"
+                val newAvailability = details?.availabilityLines()?.firstOrNull() ?: "Not streaming in the UK right now"
+                com.example.tvlauncher.design.ContentTransition.fadeThroughText(availability, availability.text, newAvailability)
                 badge.set(details?.ratingLabel())
-                if (bitmap != null) { poster.setImageBitmap(bitmap); posterBitmap = bitmap }
+                if (bitmap != null) {
+                    posterBitmap = bitmap
+                    // Fade poster in with crossfade animation
+                    val tempBitmap = bitmap
+                    poster.setImageBitmap(null)
+                    com.example.tvlauncher.design.ContentTransition.fadeVisibility(poster, true, 200)
+                    poster.setImageBitmap(tempBitmap)
+                }
                 // Head start: work out the best version now, so PLAY is ready by the time the sheet is opened.
                 details?.imdbId?.let { imdb -> if (smartFor != imdb) startSmart(current, imdb) }
             }
