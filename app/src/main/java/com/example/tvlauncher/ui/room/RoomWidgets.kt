@@ -188,11 +188,12 @@ class InfoSheet(private val container: FrameLayout) {
             }, LinearLayout.LayoutParams(context.dp(imageSizeDp.first), context.dp(imageSizeDp.second)).apply { marginEnd = LauncherTheme.px(context, R.dimen.space_5) })
         }
         val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
-        card.addView(column, LinearLayout.LayoutParams(if (image != null) context.dp(360) else 0, -2, if (image != null) 0f else 1f))
+        val measure = context.dp(440)
+        card.addView(column, LinearLayout.LayoutParams(0, -2, 1f))
 
         val gap = LauncherTheme.px(context, R.dimen.space_2)
         column.addView(Type.text(context, kicker, Type.Style.EYEBROW))
-        column.addView(Type.text(context, title, Type.Style.TITLE).apply { setPadding(0, gap, 0, 0) })
+        column.addView(Type.text(context, title, Type.Style.TITLE).apply { maxWidth = measure; setPadding(0, gap, 0, 0) })
         subtitle?.let {
             val accent = ContextCompat.getColor(context, R.color.accent)
             column.addView(Type.text(context, it.uppercase(Locale.UK), Type.Style.CAPTION, accent).apply {
@@ -201,7 +202,7 @@ class InfoSheet(private val container: FrameLayout) {
                 background = GradientDrawable().apply { cornerRadius = context.dp(12).toFloat(); setStroke(context.dp(1), accent) }
             }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = gap + gap / 2 })
         }
-        lines.forEach { column.addView(Type.reading(Type.text(context, it, Type.Style.BODY, ContextCompat.getColor(context, R.color.text_muted))).apply { setPadding(0, gap + gap / 2, 0, 0) }) }
+        lines.forEach { column.addView(Type.reading(Type.text(context, it, Type.Style.BODY, ContextCompat.getColor(context, R.color.text_muted))).apply { maxWidth = measure; setPadding(0, gap + gap / 2, 0, 0) }) }
 
         var first: View? = null
         val built = mutableListOf<View>()
@@ -234,7 +235,14 @@ class InfoSheet(private val container: FrameLayout) {
         }
         column.addView(stack, LinearLayout.LayoutParams(-1, -2).apply { topMargin = LauncherTheme.px(context, R.dimen.space_4) })
 
-        container.addView(card, FrameLayout.LayoutParams(if (image != null) -2 else context.dp(560), -2, Gravity.CENTER))
+        // Beside a picture the card hugs its words (up to a reading measure) rather than a fixed width.
+        val cardWidth = if (image == null) context.dp(560) else {
+            val words = (0 until column.childCount).map { column.getChildAt(it) }.filterIsInstance<TextView>()
+                .maxOfOrNull { it.paint.measureText(it.text.toString()) + it.paddingLeft + it.paddingRight }?.toInt() ?: 0
+            val text = words.coerceIn(context.dp(280), measure)
+            pad * 2 + context.dp(imageSizeDp.first) + LauncherTheme.px(context, R.dimen.space_5) + text
+        }
+        container.addView(card, FrameLayout.LayoutParams(cardWidth, -2, Gravity.CENTER))
         container.visibility = View.VISIBLE
         this.card = card
         val f = if (from != null && imageView != null) Flight(from, imageView!!, listOf(column)) else null

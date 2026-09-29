@@ -102,7 +102,13 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
         right.addView(Type.text(context, "Eva's pick for tonight", Type.Style.EYEBROW))
         right.addView(Type.text(context, title, Type.Style.TITLE).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) })
-        page?.headline(withYear = !Regex("""\(\d{4}\)\s*$""").containsMatchIn(title))?.takeIf { it.isNotBlank() }?.let { right.addView(Type.text(context, it, Type.Style.CAPTION).apply { setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
+        // One meta line: runtime, genres, director (the year is already in the title).
+        page?.let { pg ->
+            val genres = pg.genres.take(2).joinToString(", ").takeIf { it.isNotBlank() }
+            val parts = pg.headline(withYear = !Regex("""\(\d{4}\)\s*$""").containsMatchIn(title)).split(" · ").filter { it.isNotBlank() }.toMutableList()
+            genres?.let { parts.add(minOf(1, parts.size), it) }
+            parts.joinToString(" · ")
+        }?.takeIf { it.isNotBlank() }?.let { right.addView(Type.text(context, it, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
         page?.tagline?.withoutEmDashes()?.let { right.addView(Type.text(context, "“$it”", Type.Style.CAPTION).apply { typeface = Typeface.create("serif", Typeface.ITALIC); maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
 
         val tabs = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
@@ -201,7 +207,6 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
             Tab.OVERVIEW -> {
                 val story = p?.synopsis?.withoutEmDashes() ?: "No synopsis on Letterboxd yet."
                 content.addView(Type.reading(Type.text(context, story, Type.Style.BODY)))
-                p?.genres?.takeIf { it.isNotEmpty() }?.let { g -> content.addView(Type.text(context, g.joinToString(" · "), Type.Style.CAPTION, butter).apply { setPadding(0, dimen(R.dimen.space_2), 0, 0) }) }
             }
             Tab.CAST -> grid(p?.cast?.take(24)?.map { it.name to it.role?.takeUnless { r -> r.equals("Self", true) } }.orEmpty(), "No cast listed.")
             Tab.CREW -> {

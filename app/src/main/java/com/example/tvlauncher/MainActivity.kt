@@ -309,8 +309,14 @@ class MainActivity : AppCompatActivity() {
             hint.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED)
             com.example.tvlauncher.ui.PageHint.tipAt = android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.END).apply {
                 topMargin = h[1] + (header.height - hint.measuredHeight) / 2
-                marginEnd = root.width - i[0] + resources.getDimensionPixelSize(R.dimen.space_3)
+                marginEnd = root.width - i[0] + resources.getDimensionPixelSize(R.dimen.space_4)
             }
+            com.example.tvlauncher.ui.PageHint.tipLowAt = android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.END).apply {
+                marginEnd = resources.getDimensionPixelSize(R.dimen.page_margin)
+                bottomMargin = resources.getDimensionPixelSize(R.dimen.space_2)
+            }
+            val page = findViewById<android.widget.ScrollView>(R.id.homeScroll)
+            com.example.tvlauncher.ui.PageHint.headerShown = { page.scrollY < header.bottom / 2 }
             com.example.tvlauncher.ui.PageHint.modeAt = android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.END).apply {
                 marginEnd = resources.getDimensionPixelSize(R.dimen.page_margin)
                 bottomMargin = resources.getDimensionPixelSize(R.dimen.space_4)

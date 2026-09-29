@@ -309,8 +309,11 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
-        android:textColor="@color/text_muted"
-        android:background="@drawable/bg_hint"
+        android:textColor="#A6F3E9CF"
+        android:shadowColor="#99000000"
+        android:shadowDy="1"
+        android:shadowRadius="6"
+        android:fontFamily="sans-serif"
         android:paddingStart="12dp"
         android:paddingEnd="12dp"
         android:paddingTop="@dimen/space_1"
@@ -345,11 +348,14 @@
             android:paddingEnd="@dimen/page_margin"
             android:paddingTop="@dimen/space_6">
 
+            <!-- Inset to the grid's disc edges (tiles carry side room for the focus halo). -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="bottom"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:paddingStart="29dp"
+                android:paddingEnd="29dp">
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -395,12 +401,10 @@
                 android:requiresFadingEdge="vertical"
                 android:scrollbars="none">
 
-                <!-- Pulled left so the first column's discs line up with the title above (tiles carry side room). -->
                 <LinearLayout
                     android:id="@+id/allAppsGrid"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="-29dp"
                     android:clipChildren="false"
                     android:clipToPadding="false"
                     android:orientation="vertical"

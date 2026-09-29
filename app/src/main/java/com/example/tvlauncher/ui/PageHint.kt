@@ -22,6 +22,10 @@ object PageHint {
     private var view: TextView? = null
     /** Where tips sit (level with the header, set by MainActivity) and where a mode's longer line sits. */
     var tipAt: android.widget.FrameLayout.LayoutParams? = null
+    /** Where tips sit once the page has scrolled and the header has gone. */
+    var tipLowAt: android.widget.FrameLayout.LayoutParams? = null
+    /** True while the header is on screen (the page is at its top). */
+    var headerShown: () -> Boolean = { true }
     var modeAt: android.widget.FrameLayout.LayoutParams? = null
     private val handler = Handler(Looper.getMainLooper())
     private val shown = HashMap<String, Int>()
@@ -31,7 +35,8 @@ object PageHint {
         val v = view ?: return@Runnable
         val text = pending ?: return@Runnable
         shown[text] = (shown[text] ?: 0) + 1
-        place(v, tipAt)
+        place(v, if (headerShown()) tipAt else tipLowAt ?: tipAt)
+        v.background = null
         v.text = text
         v.animate().alpha(1f).setDuration(Motion.FADE_MS).start()
         handler.postDelayed(retire, VISIBLE_MS)
@@ -51,6 +56,7 @@ object PageHint {
         handler.removeCallbacks(retire)
         pending = null
         place(v, modeAt)
+        v.setBackgroundResource(com.example.tvlauncher.R.drawable.bg_hint)
         v.text = text
         v.animate().alpha(1f).setDuration(Motion.FADE_MS).start()
     }

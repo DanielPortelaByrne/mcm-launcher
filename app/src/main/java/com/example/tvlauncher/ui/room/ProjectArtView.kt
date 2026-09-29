@@ -76,7 +76,16 @@ class ProjectArtView(context: Context, private val art: ArtType) : View(context)
     }
 
     private fun drawFrame(c: Canvas) {
+        // A soft contact shadow where the frame stands on the ledge, then a faint cast shadow behind it.
+        c.save(); c.scale(1f, 0.14f, 50f, frame.bottom)
+        paint.color = 0xFF000000.toInt()
+        paint.shader = RadialGradient(50f, frame.bottom, 44f, 0x55000000, 0x00000000, Shader.TileMode.CLAMP)
+        c.drawCircle(50f, frame.bottom, 44f, paint)
+        c.restore()
+        paint.shader = null
         c.drawRoundRect(RectF(frame.left + 1.5f, frame.top + 3f, frame.right + 1.5f, frame.bottom + 3f), 3f, 3f, fill(0x33000000))
+        // Opaque walnut: the shadow above leaves the paint at 20% alpha, which made the frame a ghost.
+        paint.color = 0xFF000000.toInt()
         paint.shader = LinearGradient(frame.left, frame.top, frame.right, frame.bottom, 0xFFA47A4E.toInt(), 0xFF6E4C30.toInt(), Shader.TileMode.CLAMP)
         c.drawRoundRect(frame, 3f, 3f, paint)
         paint.shader = null
