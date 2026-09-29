@@ -118,12 +118,14 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
                 contentDescription = "View ${painting.title}"
             }
             tile.addView(image, LinearLayout.LayoutParams(columnWidth, columnWidth * 9 / 16))
-            tile.addView(com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(activity, painting.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
+            val titleText = com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(activity, painting.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
                 maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(R.dimen.space_2) })
+            }
+            tile.addView(titleText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(R.dimen.space_2) })
             tile.setOnFocusChangeListener { v, focused ->
+                // Rich layered focus: image scale with inner image scale + metadata enhancement
                 LauncherTheme.fadeDrawable(image, mat, focused)
-                LauncherTheme.animateFocus(image, focused)
+                com.example.tvlauncher.design.Motion.focusImageCard(tile, image, titleText, focused)
                 scrollFocusIntoView(v, focused)
             }
             tile.setOnClickListener { art.library.select(index); onArt() }

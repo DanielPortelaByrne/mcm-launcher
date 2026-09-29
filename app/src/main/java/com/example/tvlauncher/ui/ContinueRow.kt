@@ -124,13 +124,15 @@ class ContinueRow(
         val mat = LauncherTheme.imageMat(context, radius).apply { alpha = 0 }
         frame.foreground = mat
         root.addView(frame, LinearLayout.LayoutParams(width, width * 9 / 16))
-        root.addView(com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(context, item.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
+        val titleText = com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(context, item.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
             maxLines = 1; isSingleLine = true; ellipsize = TextUtils.TruncateAt.END
-        }, LinearLayout.LayoutParams(width, -2).apply { topMargin = px(R.dimen.space_2) })
+        }
+        root.addView(titleText, LinearLayout.LayoutParams(width, -2).apply { topMargin = px(R.dimen.space_2) })
 
         root.setOnFocusChangeListener { v, hasFocus ->
             LauncherTheme.fadeDrawable(frame, mat, hasFocus)
-            LauncherTheme.animateFocus(frame, hasFocus)
+            // Rich layered focus for Continue Watching cards
+            com.example.tvlauncher.design.Motion.focusImageCard(root, still, titleText, hasFocus)
             scrollFocusIntoView(v, hasFocus)
             if (hasFocus) PageHint.show(context.getString(R.string.hint_remove_card))
         }
