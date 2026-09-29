@@ -4,9 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
 import com.example.tvlauncher.data.ArtLibrary
+import com.example.tvlauncher.design.SectionTheme
 import java.util.concurrent.Executors
 
 /**
@@ -14,6 +16,9 @@ import java.util.concurrent.Executors
  * library on every visit to home and, while home stays open, every [AUTO_MS].
  * Decoding happens off the UI thread, sized to the screen rather than the
  * full-resolution source.
+ *
+ * Also supports section-aware atmospheric backdrop colour transitions via a semi-transparent
+ * overlay that shifts tone based on the currently active section (apps, Continue Watching, etc).
  */
 class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary) {
     private val handler = Handler(Looper.getMainLooper())
@@ -23,8 +28,13 @@ class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary)
         alpha = 0f
         importantForAccessibility = ImageView.IMPORTANT_FOR_ACCESSIBILITY_NO
     }
+    private val themeOverlay = View(base.context).apply {
+        alpha = 0.08f  // Very subtle overlay for atmospheric effect
+        importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
     private var generation = 0
     private var running = false
+    private var currentSection = SectionTheme.Section.APPS
 
     private val tick = object : Runnable {
         override fun run() { advance(); handler.postDelayed(this, AUTO_MS) }
@@ -33,6 +43,8 @@ class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary)
     init {
         val parent = base.parent as ViewGroup
         parent.addView(fade, parent.indexOfChild(base) + 1, ViewGroup.LayoutParams(-1, -1))
+        parent.addView(themeOverlay, parent.indexOfChild(base) + 2, ViewGroup.LayoutParams(-1, -1))
+        themeOverlay.setBackgroundColor(SectionTheme.getAccentTint(currentSection))
     }
 
     /** Shows the library's current painting immediately (no fade). */
@@ -42,6 +54,13 @@ class HomeBackdrop(private val base: ImageView, private val library: ArtLibrary)
     fun advance() {
         library.select(library.index + 1)
         load(library.index, animate = true)
+    }
+
+    /** Update the atmospheric theme overlay based on the active section. */
+    fun setSectionTheme(section: SectionTheme.Section) {
+        if (currentSection == section) return
+        currentSection = section
+        SectionTheme.transitionToSection(themeOverlay, section)
     }
 
     fun start() {
