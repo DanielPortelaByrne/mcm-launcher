@@ -253,10 +253,13 @@ class MainActivity : AppCompatActivity() {
         homeRoom = HomeRoom(this, infoSheet)
         bootMark("room")
         backdrop = HomeBackdrop(findViewById(R.id.homePainting), artModeOverlay.library)
+        // The painting covers the whole window once it is up, so the window's own ink ground is just overdraw.
+        backdrop.onFirstPainting = { window.setBackgroundDrawable(null) }
         backdrop.showCurrent()
         val homeScroll = findViewById<com.example.tvlauncher.ui.CalmScrollView>(R.id.homeScroll)
+        pageVeil = backdrop.attachVeil(homeScroll)
         homeScroll.onScrolled = { y ->
-            backdrop.onPageScrolled(y)
+            backdrop.onPageScrolled()
             com.example.tvlauncher.ui.SpatialNavigation.update(homeScroll.getChildAt(0) as android.view.ViewGroup, y, homeScroll.height)
         }
         com.example.tvlauncher.design.SectionTheme.tag(findViewById(R.id.continueSection), com.example.tvlauncher.design.SectionTheme.Mood.FILM)
@@ -426,6 +429,7 @@ class MainActivity : AppCompatActivity() {
         allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
 
     private var obscured = false
+    private var pageVeil: android.view.View? = null
 
     private fun syncObscured() {
         if (!::backdrop.isInitialized) return
@@ -438,9 +442,11 @@ class MainActivity : AppCompatActivity() {
         val on = com.example.tvlauncher.design.Motion.animationsOn(page)
         page.pivotX = page.width / 2f; page.pivotY = page.height / 2f
         val scale = if (cover) com.example.tvlauncher.design.Motion.PAGE_RECEDE else 1f
+        val ms = if (!on) 0 else if (cover) com.example.tvlauncher.design.Motion.FADE_MS else com.example.tvlauncher.design.Motion.SHEET_OUT_MS + 60
         page.animate().alpha(if (cover) 0f else 1f).scaleX(scale).scaleY(scale)
-            .setDuration(if (!on) 0 else if (cover) com.example.tvlauncher.design.Motion.FADE_MS else com.example.tvlauncher.design.Motion.SHEET_OUT_MS + 60)
-            .setInterpolator(com.example.tvlauncher.design.Motion.SETTLE).start()
+            .setDuration(ms).setInterpolator(com.example.tvlauncher.design.Motion.SETTLE).start()
+        // The edge veil is painting laid over the page, so it goes wherever the page goes.
+        pageVeil?.animate()?.alpha(if (cover) 0f else 1f)?.setDuration(ms)?.setInterpolator(com.example.tvlauncher.design.Motion.SETTLE)?.start()
         backdrop.setBlurred(cover)
     }
 

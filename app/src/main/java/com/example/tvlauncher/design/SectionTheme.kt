@@ -1,15 +1,13 @@
 package com.example.tvlauncher.design
 
-import android.animation.ArgbEvaluator
-import android.animation.ValueAnimator
 import android.graphics.Color
 import android.view.View
 import com.example.tvlauncher.R
 
 /**
- * The room's light shifts a little with where you are on the page: a single full-screen wash over the
- * painting (under the page and its vignette), tinted by the focused section. It is meant to be felt more
- * than seen, so every tint is low alpha and text contrast is untouched (text sits on its own scrims).
+ * The room's light shifts a little with where you are on the page: the painting is tinted towards the
+ * focused section's mood (see HomeBackdrop.setMood). It is meant to be felt more than seen, so every tint
+ * is low alpha and text contrast is untouched (text sits on its own scrims).
  */
 object SectionTheme {
     enum class Mood(val tint: Int) {
@@ -40,22 +38,5 @@ object SectionTheme {
             v = v.parent
         }
         return null
-    }
-
-    /** Glides [wash] to [mood]'s tint. Retargets smoothly if called mid-transition. */
-    fun apply(wash: View, mood: Mood) {
-        val running = wash.getTag(R.id.motion_fade) as? ValueAnimator
-        if (wash.getTag(R.id.section_mood) == mood) return
-        wash.setTag(R.id.section_mood, mood)
-        running?.cancel()
-        val from = (wash.background as? android.graphics.drawable.ColorDrawable)?.color ?: Color.TRANSPARENT
-        if (!Motion.animationsOn(wash)) { wash.setBackgroundColor(mood.tint); return }
-        val a = ValueAnimator.ofObject(ArgbEvaluator(), from, mood.tint).apply {
-            duration = TRANSITION_MS
-            interpolator = Motion.SETTLE
-            addUpdateListener { wash.setBackgroundColor(it.animatedValue as Int) }
-        }
-        wash.setTag(R.id.motion_fade, a)
-        a.start()
     }
 }

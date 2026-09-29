@@ -7,13 +7,12 @@ import com.example.tvlauncher.R
 import com.example.tvlauncher.design.Motion
 
 /**
- * Micro-depth for the home page as it pans: rows leaving over the top edge recede very slightly (a little
- * smaller and dimmer, as if further away), rows arriving from below settle up the last few dp into place,
+ * Micro-depth for the home page as it pans: rows leaving over the top edge recede very slightly (dimmer,
+ * as if the light falls away there), rows arriving from below settle up the last few dp into place,
  * and headings arrive a touch later than their content. Everything is a pure function of the scroll
  * position, so rapid presses, retargeted pans and cancelled glides can never leave a row in between.
  */
 object SpatialNavigation {
-    private const val OUT_SCALE = 0.015f
     private const val OUT_ALPHA = 0.3f
     private const val IN_OFFSET_DP = 14f
     private const val HEADING_LAG = 1.5f
@@ -30,9 +29,6 @@ object SpatialNavigation {
             val out = ((scrollY + viewport * 0.15f - center) / (viewport * 0.3f)).coerceIn(0f, 1f)
             val incoming = ((center - (scrollY + viewport * 0.85f)) / (viewport * 0.3f)).coerceIn(0f, 1f)
             val heading = layer is TextView || layer.getTag(R.id.section_heading) == true
-            val scale = 1f - OUT_SCALE * out
-            layer.pivotX = layer.width / 2f; layer.pivotY = layer.height.toFloat()
-            layer.scaleX = scale; layer.scaleY = scale
             layer.translationY = incoming * IN_OFFSET_DP * d * (if (heading) HEADING_LAG else 1f)
             setAlpha(layer, 1f - OUT_ALPHA * out)
         }
@@ -57,7 +53,7 @@ object SpatialNavigation {
     }
 
     private fun reset(layer: View) {
-        layer.scaleX = 1f; layer.scaleY = 1f; layer.translationY = 0f
+        layer.translationY = 0f
         setAlpha(layer, 1f)
     }
 }

@@ -2,8 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/ink">
+    android:layout_height="match_parent">
 
     <!-- Full-bleed production artwork. Everything else is real native UI on top of it. -->
     <ImageView
@@ -14,10 +13,7 @@
         android:scaleType="centerCrop"
         android:src="@drawable/bg_painting" />
 
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@drawable/home_vignette" />
+    <!-- The page vignette (drawable/home_vignette) is baked into the painting bitmap by HomeBackdrop. -->
 
     <!-- The page. It fades at its top and bottom edges instead of slicing content at the screen edge. -->
     <com.example.tvlauncher.ui.CalmScrollView
