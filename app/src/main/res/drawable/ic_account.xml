@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Launcher icon set: 24dp grid, 2dp strokes with round caps and joins (design system, phase 1). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M12,4 a4,4 0 1,1 0,8 a4,4 0 1,1 0,-8 M4.5,20 C5.5,16.5 8.4,14.5 12,14.5 C15.6,14.5 18.5,16.5 19.5,20" />
+</vector>

@@ -1,0 +1,103 @@
+package com.example.tvlauncher.data
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class CastMember(val name: String, val role: String?)
+data class CrewGroup(val role: String, val names: List<String>)
+
+/** Everything the film sheet's tabs show, read from the film's Letterboxd page. Every field can be empty. */
+data class FilmPage(
+    val tagline: String? = null,
+    val synopsis: String? = null,
+    val year: Int? = null,
+    val runtimeMin: Int? = null,
+    val director: String? = null,
+    val cast: List<CastMember> = emptyList(),
+    val crew: List<CrewGroup> = emptyList(),
+    val studios: List<String> = emptyList(),
+    val countries: List<String> = emptyList(),
+    val languages: List<String> = emptyList(),
+    val genres: List<String> = emptyList(),
+    val themes: List<String> = emptyList()
+) {
+    /** "1952 · 95 min · Directed by George Cukor", only what is known. */
+    fun headline(): String = listOfNotNull(
+        year?.toString(), runtimeMin?.let { "$it min" }, director?.let { "Directed by $it" }
+    ).joinToString(" · ")
+
+    fun toJson(): JSONObject = JSONObject()
+        .put("tagline", tagline ?: "").put("synopsis", synopsis ?: "").put("year", year ?: 0).put("runtime", runtimeMin ?: 0).put("director", director ?: "")
+        .put("cast", JSONArray().also { a -> cast.forEach { a.put(JSONObject().put("n", it.name).put("r", it.role ?: "")) } })
+        .put("crew", JSONArray().also { a -> crew.forEach { a.put(JSONObject().put("r", it.role).put("n", JSONArray(it.names))) } })
+        .put("studios", JSONArray(studios)).put("countries", JSONArray(countries)).put("languages", JSONArray(languages))
+        .put("genres", JSONArray(genres)).put("themes", JSONArray(themes))
+
+    companion object {
+        private fun strings(a: JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }
+
+        fun fromJson(o: JSONObject): FilmPage = FilmPage(
+            o.optString("tagline").ifBlank { null }, o.optString("synopsis").ifBlank { null },
+            o.optInt("year").takeIf { it > 0 }, o.optInt("runtime").takeIf { it > 0 }, o.optString("director").ifBlank { null },
+            o.optJSONArray("cast")?.let { a -> (0 until a.length()).map { CastMember(a.getJSONObject(it).getString("n"), a.getJSONObject(it).optString("r").ifBlank { null }) } }.orEmpty(),
+            o.optJSONArray("crew")?.let { a -> (0 until a.length()).map { CrewGroup(a.getJSONObject(it).getString("r"), strings(a.getJSONObject(it).optJSONArray("n"))) } }.orEmpty(),
+            strings(o.optJSONArray("studios")), strings(o.optJSONArray("countries")), strings(o.optJSONArray("languages")),
+            strings(o.optJSONArray("genres")), strings(o.optJSONArray("themes"))
+        )
+    }
+}
+
+/** Film text without em dashes: "a — b" reads as "a, b". */
+fun String.withoutEmDashes(): String = replace(Regex("\\s*\u2014\\s*"), ", ")
+
+/** Reads a Letterboxd film page. Resilient by design: a missing section just leaves that field empty. */
+object LetterboxdParser {
+    private val opts = setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
+
+    fun parse(html: String): FilmPage {
+        val tagline = Regex("<h4 class=\"tagline\">(.*?)</h4>", opts).find(html)?.groupValues?.get(1)?.let { clean(it) }?.ifBlank { null }
+        val synopsis = Regex("<div class=\"truncate[^\"]*\"[^>]*>(.*?)</div>", opts).find(html)?.groupValues?.get(1)
+            ?.let { block -> Regex("<p[^>]*>(.*?)</p>", opts).findAll(block).map { clean(it.groupValues[1]) }.filter { it.isNotBlank() }.joinToString("\n\n") }?.ifBlank { null }
+        val year = Regex("<meta property=\"og:title\" content=\"[^\"]*\\((\\d{4})\\)\"", opts).find(html)?.groupValues?.get(1)?.toIntOrNull()
+        val runtime = Regex("(\\d+)(?:[\\s\\u00a0]|&nbsp;)*mins", opts).find(html)?.groupValues?.get(1)?.toIntOrNull()
+        val director = Regex("twitter:label1\" content=\"Directed by\"[^>]*>\\s*<meta name=\"twitter:data1\" content=\"([^\"]*)\"", opts).find(html)?.groupValues?.get(1)?.let { clean(it) }?.ifBlank { null }
+
+        val cast = Regex("<div class=\"cast-list[^\"]*\">(.*?)</div>", opts).find(html)?.groupValues?.get(1)?.let { block ->
+            Regex("<a title=\"(.*?)\" href=\"/actor/[^\"]+\"[^>]*>([^<]+)</a>", opts).findAll(block).map {
+                CastMember(clean(it.groupValues[2]), clean(it.groupValues[1]).takeIf { r -> r.isNotBlank() })
+            }.toList()
+        }.orEmpty()
+
+        val crew = panel(html, "crew")?.let { p ->
+            Regex("<span class=\"crewrole -full\">([^<]+)</span>.*?<div class=\"text-sluglist\">(.*?)</div>", opts).findAll(p)
+                .map { CrewGroup(clean(it.groupValues[1]), slugs(it.groupValues[2])) }.filter { it.names.isNotEmpty() }.toList()
+        }.orEmpty()
+
+        val details = panel(html, "details")
+        val genres = panel(html, "genres")
+        return FilmPage(
+            tagline, synopsis, year, runtime, director, cast, crew,
+            studios = section(details, "Studios?"), countries = section(details, "Countr(?:y|ies)"), languages = section(details, "(?:Primary |Spoken )?Languages?"),
+            genres = section(genres, "Genres?"), themes = section(genres, "Themes?").take(6)
+        )
+    }
+
+    private fun panel(html: String, name: String): String? =
+        Regex("id=\"tab-panel-$name\"[^>]*>(.*?)(?=<div[^>]*id=\"tab-panel-|</section>|\$)", opts).find(html)?.groupValues?.get(1)
+
+    private fun section(panel: String?, title: String): List<String> =
+        panel?.let { Regex("<h3><span>$title</span></h3>\\s*<div class=\"text-sluglist[^\"]*\">(.*?)</div>", opts).find(it)?.groupValues?.get(1)?.let(::slugs) }.orEmpty()
+
+    private fun slugs(block: String): List<String> =
+        Regex("<a [^>]*class=\"text-slug[^\"]*\"[^>]*>\\s*([^<]+?)\\s*</a>", opts).findAll(block).map { clean(it.groupValues[1]) }
+            .filter { it.isNotBlank() && !it.startsWith("Show All") }.toList()
+
+    /** Strips tags and decodes the handful of entities Letterboxd uses. */
+    fun clean(raw: String): String {
+        var s = Regex("<[^>]+>").replace(raw, "")
+        s = Regex("&#x([0-9a-fA-F]+);").replace(s) { it.groupValues[1].toInt(16).toChar().toString() }
+        s = Regex("&#(\\d+);").replace(s) { it.groupValues[1].toInt().toChar().toString() }
+        return s.replace("&amp;", "&").replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ").replace("&rsquo;", "’")
+            .replace(Regex("[\\s\\u00a0]+"), " ").trim().withoutEmDashes()
+    }
+}

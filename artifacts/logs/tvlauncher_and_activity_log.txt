@@ -1,0 +1,77 @@
+--------- beginning of system
+09-14 20:49:18.354   694   694 I ActivityTaskManager: Config changes=20005df8 {1.0 ?mcc0mnc [en_US] ldltr sw540dp w960dp h540dp 320dpi lrg long land ?uimode ?night finger qwerty/v/v dpad/v winConfig={ mBounds=Rect(0, 0 - 1920, 1080) mAppBounds=Rect(0, 0 - 1920, 1080) mMaxBounds=Rect(0, 0 - 1920, 1080) mDisplayRotation=ROTATION_0 mWindowingMode=fullscreen mActivityType=undefined mAlwaysOnTop=undefined mRotation=ROTATION_0} s.2 ?fontWeightAdjustment}
+09-14 20:49:35.160   694   694 I ActivityTaskManager: Config changes=200 {1.0 ?mcc0mnc [en_US] ldltr sw540dp w960dp h540dp 320dpi lrg long land television night finger qwerty/v/v dpad/v winConfig={ mBounds=Rect(0, 0 - 1920, 1080) mAppBounds=Rect(0, 0 - 1920, 1080) mMaxBounds=Rect(0, 0 - 1920, 1080) mDisplayRotation=ROTATION_0 mWindowingMode=fullscreen mActivityType=undefined mAlwaysOnTop=undefined mRotation=ROTATION_0} s.4 ?fontWeightAdjustment}
+09-14 20:49:36.148   694   694 I ActivityTaskManager: Config changes=10008000 {1.0 ?mcc0mnc [en_US] ldltr sw540dp w960dp h540dp 320dpi lrg long land television night finger qwerty/v/v dpad/v winConfig={ mBounds=Rect(0, 0 - 1920, 1080) mAppBounds=Rect(0, 0 - 1920, 1080) mMaxBounds=Rect(0, 0 - 1920, 1080) mDisplayRotation=ROTATION_0 mWindowingMode=fullscreen mActivityType=undefined mAlwaysOnTop=undefined mRotation=ROTATION_0} s.6 fontWeightAdjustment=0}
+09-14 20:49:37.099   694   694 W ActivityTaskManager: callingPackage for (uid=1000, pid=694) is ambiguous: [android, com.android.providers.settings, com.android.location.fused]
+09-14 20:49:37.126   694   694 W ActivityTaskManager: startActivity called from non-Activity context; forcing Intent.FLAG_ACTIVITY_NEW_TASK for: Intent { flg=0x840000 xflg=0x4 cmp=com.android.systemui/.tv.sensorprivacy.TvSensorPrivacyChangedActivity (has extras) }
+09-14 20:49:37.156   694   694 I ActivityTaskManager: START u0 {flg=0x840000 xflg=0x4 cmp=com.android.systemui/.tv.sensorprivacy.TvSensorPrivacyChangedActivity (has extras)} with LAUNCH_SINGLE_TOP from uid 1000 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:49:37.164   694   694 W ActivityTaskManager: callingPackage for (uid=1000, pid=694) is ambiguous: [android, com.android.providers.settings, com.android.location.fused]
+09-14 20:49:37.166   694   694 W ActivityTaskManager: startActivity called from non-Activity context; forcing Intent.FLAG_ACTIVITY_NEW_TASK for: Intent { flg=0x840000 xflg=0x4 cmp=com.android.systemui/.tv.sensorprivacy.TvSensorPrivacyChangedActivity (has extras) }
+09-14 20:49:37.170   694   694 I ActivityTaskManager: START u0 {flg=0x840000 xflg=0x4 cmp=com.android.systemui/.tv.sensorprivacy.TvSensorPrivacyChangedActivity (has extras)} with LAUNCH_SINGLE_TOP from uid 1000 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:49:37.172   694   694 W ActivityTaskManager: callingPackage for (uid=1000, pid=694) is ambiguous: [android, com.android.providers.settings, com.android.location.fused]
+09-14 20:49:37.174   694   694 W ActivityTaskManager: startActivity called from non-Activity context; forcing Intent.FLAG_ACTIVITY_NEW_TASK for: Intent { flg=0x840000 xflg=0x4 cmp=com.android.systemui/.tv.sensorprivacy.TvSensorPrivacyChangedActivity (has extras) }
+09-14 20:49:37.180   694   694 I ActivityTaskManager: START u0 {flg=0x840000 xflg=0x4 cmp=com.android.systemui/.tv.sensorprivacy.TvSensorPrivacyChangedActivity (has extras)} with LAUNCH_SINGLE_TOP from uid 1000 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:49:37.183   694   694 W ActivityTaskManager: callingPackage for (uid=1000, pid=694) is ambiguous: [android, com.android.providers.settings, com.android.location.fused]
+09-14 20:49:37.184   694   694 W ActivityTaskManager: startActivity called from non-Activity context; forcing Intent.FLAG_ACTIVITY_NEW_TASK for: Intent { flg=0x840000 xflg=0x4 cmp=com.android.systemui/.tv.sensorprivacy.TvSensorPrivacyChangedActivity (has extras) }
+09-14 20:49:37.188   694   694 I ActivityTaskManager: START u0 {flg=0x840000 xflg=0x4 cmp=com.android.systemui/.tv.sensorprivacy.TvSensorPrivacyChangedActivity (has extras)} with LAUNCH_SINGLE_TOP from uid 1000 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:49:37.441   694   694 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:49:37.480   694   694 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.android.tv.settings/.system.FallbackHome (has extras)} with LAUNCH_MULTIPLE from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+--------- beginning of main
+09-14 20:49:38.535   694   725 I ActivityTaskManager: Displayed com.android.tv.settings/.system.FallbackHome for user 0: +1s79ms
+09-14 20:49:39.733   694   725 I ActivityTaskManager: Restoring recents for user 0
+09-14 20:49:39.821   694  1115 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:49:39.845   694  1115 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.android.tv.provision/.DefaultActivity (has extras)} with LAUNCH_MULTIPLE from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:49:40.940   694  1113 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:49:41.095   694  1113 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.google.android.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:49:46.921   694   759 W ActivityTaskManager: Duplicate finish request for r=ActivityRecord{76337007 u0 com.android.tv.provision/.DefaultActivity t4 f}}
+09-14 20:49:48.175   694   725 I ActivityTaskManager: Displayed com.google.android.tvlauncher/.MainActivity for user 0: +6s697ms
+09-14 20:49:49.804   694   728 W ActivityTaskManager: Launch timeout has expired, giving up wake lock!
+09-14 20:50:07.044   694  1185 I ActivityTaskManager: START u0 {act=android.settings.SETTINGS xflg=0x4 cmp=com.android.tv.settings/.MainSettings} with LAUNCH_MULTIPLE from uid 10044 (sr=57411185) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+09-14 20:50:10.192   694   725 I ActivityTaskManager: Displayed com.android.tv.settings/.MainSettings for user 0: +2s824ms
+09-14 20:50:23.305   694   726 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:50:23.340   694   726 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.google.android.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:50:54.352   694   726 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:50:54.356   694   726 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.google.android.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:51:04.566   694  2099 W ActivityTaskManager: callingPackage for (uid=2000, pid=3543) has no WPC
+09-14 20:51:04.574   694  2099 I ActivityTaskManager: START u0 {act=android.settings.SETTINGS flg=0x10000000 xflg=0x4 cmp=com.android.tv.settings/.MainSettings} with LAUNCH_MULTIPLE from uid 2000 (BAL_ALLOW_PERMISSION) result code=0
+09-14 20:51:05.636   694   725 I ActivityTaskManager: Displayed com.android.tv.settings/.MainSettings for user 0: +1s45ms
+09-14 20:51:07.964   694   726 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:51:07.977   694   726 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.google.android.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=2
+09-14 20:51:29.135   694   759 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:51:29.155   694   759 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:51:30.083  3617  3617 I TvLauncher: Loaded 1 launchable apps
+09-14 20:51:30.711   694   725 I ActivityTaskManager: Displayed com.example.tvlauncher/.MainActivity for user 0: +1s571ms
+09-14 20:51:31.569   694   726 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:51:31.578   694   726 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:52:14.479   694   734 W ActivityTaskManager: Force removing ActivityRecord{185481147 u0 com.example.tvlauncher/.MainActivity t7 f}}: app died, no saved state
+09-14 20:52:14.492   694   734 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:52:14.518   694   734 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:52:14.526   694   759 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:52:14.534   694   759 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:52:14.888   694   726 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:52:14.896   694   726 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:52:15.209  3856  3856 I TvLauncher: Loaded 1 launchable apps
+09-14 20:52:15.830   694   725 I ActivityTaskManager: Displayed com.example.tvlauncher/.MainActivity for user 0: +1s286ms
+09-14 20:52:55.360   694   734 W ActivityTaskManager: Force removing ActivityRecord{8430606 u0 com.example.tvlauncher/.MainActivity t9 f}}: app died, no saved state
+09-14 20:52:55.388   694   734 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:52:55.402   694   734 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:52:55.438   694   759 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:52:55.444   694   759 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:52:55.791   694   726 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:52:55.801   694   726 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:52:56.176  3993  3993 I TvLauncher: Loaded 2 launchable apps
+09-14 20:52:56.706   694   725 I ActivityTaskManager: Displayed com.example.tvlauncher/.MainActivity for user 0: +1s262ms
+09-14 20:53:41.244   694   734 W ActivityTaskManager: Force removing ActivityRecord{186193928 u0 com.example.tvlauncher/.MainActivity t11 f}}: app died, no saved state
+09-14 20:53:41.258   694   734 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:53:41.269   694   734 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:53:41.274   694   759 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:53:41.278   694   759 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=0
+09-14 20:53:41.574   694   726 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:53:41.596   694   726 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:53:42.048  4131  4131 I TvLauncher: Loaded 4 launchable apps
+09-14 20:53:42.822   694   725 I ActivityTaskManager: Displayed com.example.tvlauncher/.MainActivity for user 0: +1s540ms
+09-14 20:53:50.461   694   726 W ActivityTaskManager: callingPackage for (uid=-1, pid=0) has no WPC
+09-14 20:53:50.470   694   726 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.HOME] flg=0x10000100 cmp=com.example.tvlauncher/.MainActivity (has extras)} with LAUNCH_SINGLE_TASK from uid 0 (BAL_ALLOW_ALLOWLISTED_UID) result code=3
+09-14 20:54:04.676  4131  4131 I TvLauncher: Launching com.android.tv.settings
+09-14 20:54:04.685   694  1309 I ActivityTaskManager: START u0 {act=android.intent.action.MAIN cat=[android.intent.category.LAUNCHER] flg=0x10000000 xflg=0x5 cmp=com.android.tv.settings/.MainSettings} with LAUNCH_MULTIPLE from uid 10088 (sr=24847993) (BAL_ALLOW_VISIBLE_WINDOW) result code=0
+09-14 20:54:04.949   694   725 I ActivityTaskManager: Displayed com.android.tv.settings/.MainSettings for user 0: +249ms

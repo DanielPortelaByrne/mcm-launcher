@@ -1,0 +1,566 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/ink">
+
+    <!-- Full-bleed production artwork. Everything else is real native UI on top of it. -->
+    <ImageView
+        android:id="@+id/homePainting"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop"
+        android:src="@drawable/bg_painting" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/home_vignette" />
+
+    <!-- The page. It fades at its top and bottom edges instead of slicing content at the screen edge. -->
+    <com.example.tvlauncher.ui.CalmScrollView
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:id="@+id/homeScroll"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
+    <LinearLayout
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/page_margin"
+        android:paddingEnd="@dimen/page_margin"
+        android:paddingBottom="@dimen/space_8">
+
+        <!-- Header: one 56dp pill on the surface colour. -->
+        <FrameLayout
+            android:id="@+id/header"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="@dimen/space_3"
+            android:background="@drawable/bg_header_capsule"
+            android:paddingStart="@dimen/space_2"
+            android:paddingEnd="@dimen/space_4">
+
+            <LinearLayout
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageView
+                    android:id="@+id/iconAccounts"
+                    style="@style/HeaderIcon"
+                    android:padding="@dimen/space_1"
+                    android:contentDescription="@string/accounts"
+                    android:src="@drawable/ic_account" />
+
+                <ImageView
+                    android:id="@+id/iconSearch"
+                    style="@style/HeaderIcon"
+                    android:contentDescription="@string/search"
+                    android:src="@drawable/ic_search" />
+
+                <View android:layout_width="1dp" android:layout_height="@dimen/space_4" android:layout_marginHorizontal="@dimen/space_2" android:background="@color/hairline" />
+
+                <TextView
+                    android:id="@+id/navHome"
+                    style="@style/HeaderNavTab"
+                    android:text="@string/nav_home" />
+
+                <TextView
+                    android:id="@+id/navApps"
+                    style="@style/HeaderNavTab"
+                    android:text="@string/nav_apps" />
+
+                <TextView
+                    android:id="@+id/navLiveTv"
+                    style="@style/HeaderNavTab"
+                    android:text="@string/nav_live_tv" />
+
+                <TextView
+                    android:id="@+id/navArt"
+                    style="@style/HeaderNavTab"
+                    android:text="@string/nav_art" />
+
+                <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+
+                <ImageView
+                    android:id="@+id/iconInputs"
+                    style="@style/HeaderIcon"
+                    android:contentDescription="@string/inputs"
+                    android:src="@drawable/ic_input" />
+
+                <ImageView
+                    android:id="@+id/iconNetwork"
+                    style="@style/HeaderIcon"
+                    android:contentDescription="@string/network"
+                    android:src="@drawable/ic_wifi" />
+
+                <ImageView
+                    android:id="@+id/iconSettings"
+                    style="@style/HeaderIcon"
+                    android:contentDescription="@string/settings"
+                    android:src="@drawable/ic_gear" />
+
+                <TextView
+                    android:id="@+id/clock"
+                    style="@style/Text.Body"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/space_3"
+                    tools:ignore="HardcodedText"
+                    tools:text="22:05" />
+
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Hero: the greeting on the page scrim, Eva's film card on the right (added in HomeCollection). -->
+        <FrameLayout
+            android:id="@+id/homeHero"
+            android:layout_width="match_parent"
+            android:layout_height="216dp">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center_vertical|start"
+                android:orientation="vertical">
+
+                <TextView
+                    style="@style/Text.Eyebrow"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:shadowColor="#99000000"
+                    android:shadowDy="1"
+                    android:shadowRadius="6"
+                    android:text="@string/home_eyebrow" />
+
+                <TextView
+                    style="@style/Text.Display"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_2"
+                    android:shadowColor="#99000000"
+                    android:shadowDy="2"
+                    android:shadowRadius="8"
+                    android:text="@string/home_title" />
+
+                <TextView
+                    style="@style/Text.Body"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_1"
+                    android:fontFamily="sans-serif"
+                    android:shadowColor="#99000000"
+                    android:shadowDy="1"
+                    android:shadowRadius="8"
+                    android:text="@string/home_subtitle"
+                    android:textColor="@color/text_muted" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- Your apps: seven apps and All apps, 108dp each, exactly the width between the margins. -->
+        <TextView
+            style="@style/SectionTitle"
+            android:paddingTop="@dimen/space_4"
+            android:paddingBottom="@dimen/space_2"
+            android:text="@string/your_apps" />
+
+        <com.example.tvlauncher.ui.CalmHorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/space_neg_page"
+            android:layout_marginEnd="@dimen/space_neg_page"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:paddingStart="@dimen/page_margin"
+            android:paddingEnd="@dimen/page_margin"
+            android:scrollbars="none">
+            <LinearLayout
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:id="@+id/shelfContainer"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/tile_height"
+                android:orientation="horizontal" />
+        </com.example.tvlauncher.ui.CalmHorizontalScrollView>
+
+        <!-- More apps: wide cards on the shared four-column rhythm. -->
+        <LinearLayout
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:id="@+id/featuredSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                style="@style/SectionTitle"
+                android:paddingTop="@dimen/space_4"
+                android:paddingBottom="@dimen/heading_gap"
+                android:text="@string/top_picks" />
+
+            <com.example.tvlauncher.ui.CalmHorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/space_neg_page"
+                android:layout_marginEnd="@dimen/space_neg_page"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:paddingStart="@dimen/page_margin"
+                android:paddingEnd="@dimen/page_margin"
+                android:scrollbars="none">
+                <LinearLayout
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:id="@+id/featuredContainer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:paddingTop="@dimen/space_2"
+                    android:paddingBottom="@dimen/space_2" />
+            </com.example.tvlauncher.ui.CalmHorizontalScrollView>
+        </LinearLayout>
+
+        <!-- Continue watching: hidden unless an app has published something part-watched. -->
+        <LinearLayout
+            android:id="@+id/continueSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                style="@style/SectionTitle"
+                android:paddingTop="@dimen/section_gap"
+                android:paddingBottom="@dimen/heading_gap"
+                android:text="@string/continue_watching" />
+
+            <com.example.tvlauncher.ui.CalmHorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/space_neg_page"
+                android:layout_marginEnd="@dimen/space_neg_page"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:paddingStart="@dimen/page_margin"
+                android:paddingEnd="@dimen/page_margin"
+                android:scrollbars="none">
+                <LinearLayout
+                    android:id="@+id/continueContainer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:orientation="horizontal"
+                    android:paddingTop="@dimen/space_2"
+                    android:paddingBottom="@dimen/space_2" />
+            </com.example.tvlauncher.ui.CalmHorizontalScrollView>
+        </LinearLayout>
+
+        <LinearLayout
+        android:clipChildren="false"
+        android:clipToPadding="false"
+            android:id="@+id/discoverSections"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <!-- Legacy footer (kept for its ids; the page hint below replaces it). -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/footerLeft"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/footerRight"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_footer_action"
+                android:clickable="true"
+                android:focusable="false"
+                android:text="@string/hint_art_mode" />
+        </LinearLayout>
+    </LinearLayout>
+
+    </com.example.tvlauncher.ui.CalmScrollView>
+
+    <!-- The one hint line: bottom-left, only for the focused item's hold action. -->
+    <TextView
+        android:id="@+id/pageHint"
+        style="@style/Text.Caption"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="@dimen/page_margin"
+        android:layout_marginBottom="@dimen/space_4"
+        android:background="@drawable/bg_hint"
+        android:paddingStart="@dimen/space_3"
+        android:paddingEnd="@dimen/space_3"
+        android:paddingTop="@dimen/space_1"
+        android:paddingBottom="@dimen/space_1"
+        android:textColor="@color/text"
+        android:alpha="0" />
+
+    <!-- Quick account dropdown, anchored under the header avatar -->
+    <FrameLayout
+        android:id="@+id/accountMenu"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/page_margin"
+        android:layout_marginTop="80dp"
+        android:visibility="gone" />
+
+    <!-- ALL APPS: a full-screen panel over the blurred painting (the page is hidden while it is up). -->
+    <FrameLayout
+        android:id="@+id/allAppsOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/overlay_ground"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/page_margin"
+            android:paddingEnd="@dimen/page_margin"
+            android:paddingTop="@dimen/space_6">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="bottom"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        style="@style/Text.Title"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/all_apps_title" />
+
+                    <TextView
+                        style="@style/Text.Caption"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/space_1"
+                        android:text="@string/all_apps_hint" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/allAppsEdit"
+                    style="@style/Text.Body"
+                    android:layout_width="wrap_content"
+                    android:layout_height="@dimen/control_height"
+                    android:drawableStart="@drawable/ic_edit"
+                    android:drawablePadding="@dimen/space_2"
+                    android:drawableTint="@color/text"
+                    android:focusable="true"
+                    android:clickable="true"
+                    android:gravity="center_vertical"
+                    android:paddingStart="@dimen/space_4"
+                    android:paddingEnd="@dimen/space_4"
+                    android:text="@string/edit_your_apps" />
+            </LinearLayout>
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_marginTop="@dimen/space_3"
+                android:fadingEdgeLength="@dimen/edge_fade"
+                android:requiresFadingEdge="vertical"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/allAppsGrid"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:orientation="vertical"
+                    android:paddingTop="@dimen/focus_reserve"
+                    android:paddingBottom="@dimen/focus_reserve" />
+            </ScrollView>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- EDIT YOUR APPS: the plain-OK alternative to hold-to-drag. Same panel as All apps. -->
+    <FrameLayout
+        android:id="@+id/editAppsOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/overlay_ground"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/page_margin"
+            android:paddingEnd="@dimen/page_margin"
+            android:paddingTop="@dimen/space_6">
+
+            <TextView
+                style="@style/Text.Title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/edit_your_apps" />
+
+            <TextView
+                style="@style/Text.Caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_1"
+                android:text="@string/hint_reorder" />
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_marginTop="@dimen/space_3"
+                android:fadingEdgeLength="@dimen/edge_fade"
+                android:requiresFadingEdge="vertical"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/editAppsList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:paddingTop="@dimen/space_2"
+                    android:paddingBottom="@dimen/space_2"
+                    android:orientation="vertical" />
+            </ScrollView>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- SEARCH: same panel; the field is the heading. -->
+    <FrameLayout
+        android:id="@+id/searchOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/overlay_ground"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/page_margin"
+            android:paddingEnd="@dimen/page_margin"
+            android:paddingTop="@dimen/space_6">
+
+            <EditText
+                android:id="@+id/searchInput"
+                style="@style/Text.Body"
+                android:layout_width="@dimen/search_box_width"
+                android:layout_height="@dimen/control_height"
+                android:background="@drawable/bg_search_field"
+                android:drawableStart="@drawable/ic_search"
+                android:drawablePadding="@dimen/space_2"
+                android:drawableTint="@color/text_muted"
+                android:hint="@string/search_hint"
+                android:imeOptions="actionSearch"
+                android:inputType="text"
+                android:maxLines="1"
+                android:paddingStart="@dimen/space_4"
+                android:paddingEnd="@dimen/space_4"
+                android:textColorHint="@color/text_muted" />
+
+            <TextView
+                android:id="@+id/searchNoResults"
+                style="@style/Text.Caption"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/space_4"
+                android:visibility="gone" />
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_marginTop="@dimen/space_3"
+                android:fadingEdgeLength="@dimen/edge_fade"
+                android:requiresFadingEdge="vertical"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/searchResultsGrid"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:orientation="vertical"
+                    android:paddingTop="@dimen/focus_reserve"
+                    android:paddingBottom="@dimen/focus_reserve" />
+            </ScrollView>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- "Who's watching?" picker: shown at power-on and from the avatar menu -->
+    <FrameLayout
+        android:id="@+id/whoPicker"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
+
+    <!-- Detail sheet for projects, tonight's film and recipes -->
+    <FrameLayout
+        android:id="@+id/infoSheet"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone" />
+
+    <!-- ART / AMBIENT MODE: the painting alone, all chrome faded away -->
+    <FrameLayout
+        android:id="@+id/artModeOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/artPainting"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="centerCrop"
+            android:src="@drawable/bg_painting" />
+
+    </FrameLayout>
+
+</FrameLayout>

@@ -1,0 +1,14 @@
+[
+  { "id": "shakshuka", "title": "Shakshuka", "cuisine": "Middle Eastern", "descriptor": "Eggs poached in spiced tomato", "theme": "sun" },
+  { "id": "ratatouille", "title": "Ratatouille", "cuisine": "French", "descriptor": "Slow summer vegetables", "theme": "circles" },
+  { "id": "pasta-ceci", "title": "Pasta e Ceci", "cuisine": "Italian", "descriptor": "Chickpeas, rosemary, tiny pasta", "theme": "leaf" },
+  { "id": "miso-aubergine", "title": "Miso Aubergine", "cuisine": "Japanese", "descriptor": "Glazed and blistered", "theme": "arch" },
+  { "id": "ricotta-pancakes", "title": "Lemon Ricotta Pancakes", "cuisine": "Brunch", "descriptor": "Light, tall, sunny", "theme": "sun" },
+  { "id": "cacciatore", "title": "Chicken Cacciatore", "cuisine": "Italian", "descriptor": "Hunter's stew with olives", "theme": "bands" },
+  { "id": "dal-tadka", "title": "Dal Tadka", "cuisine": "Indian", "descriptor": "Lentils with sizzled spices", "theme": "circles" },
+  { "id": "spanakopita", "title": "Spanakopita", "cuisine": "Greek", "descriptor": "Spinach and feta in filo", "theme": "bands" },
+  { "id": "patatas-bravas", "title": "Patatas Bravas", "cuisine": "Spanish", "descriptor": "Crisp potatoes, smoky sauce", "theme": "arch" },
+  { "id": "coq-au-vin", "title": "Coq au Vin", "cuisine": "French", "descriptor": "Chicken braised in red wine", "theme": "leaf" },
+  { "id": "gnocchi-sorrentina", "title": "Gnocchi Sorrentina", "cuisine": "Italian", "descriptor": "Baked with mozzarella", "theme": "sun" },
+  { "id": "tarte-tatin", "title": "Tarte Tatin", "cuisine": "Dessert", "descriptor": "Caramelised upside-down apples", "theme": "circles" }
+]

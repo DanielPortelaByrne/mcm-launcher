@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The one page scrim: warm dark from the left (the hero and every section title) and from the bottom
+     (rows and labels). Tuned so Body text reaches 4.5:1 on the brightest painting; no boxes behind text. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="0"
+                android:startColor="#C71A140E"
+                android:centerColor="#731A140E"
+                android:centerX="0.45"
+                android:endColor="#1F1A140E" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="90"
+                android:startColor="#B81A140E"
+                android:centerColor="#401A140E"
+                android:centerY="0.45"
+                android:endColor="#001A140E" />
+        </shape>
+    </item>
+</layer-list>

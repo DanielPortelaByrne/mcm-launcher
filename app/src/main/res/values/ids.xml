@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="orig_text_color" type="id" />
+    <item name="motion_pan" type="id" />
+    <item name="motion_fade" type="id" />
+    <item name="motion_text" type="id" />
+</resources>

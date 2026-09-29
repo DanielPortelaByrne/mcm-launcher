@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Only what the network-status header icon actually needs: a normal
+         permission, granted automatically, no runtime prompt. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lists the TV's Google accounts for the header avatar menu (runtime-prompted once). -->
+    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+    <!-- Lets the launcher switch its remote-button service back on if the TV drops it (e.g. after a reboot).
+         Granted once over ADB: pm grant com.example.tvlauncher android.permission.WRITE_SECURE_SETTINGS -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
+
+    <queries>
+        <package android:name="com.google.android.apps.tv.launcherx" />
+        <intent><action android:name="android.settings.SETTINGS" /></intent>
+        <package android:name="com.android.tv.settings" />
+        <package android:name="org.smarttube.stable" />
+        <package android:name="com.google.android.youtube.tv" />
+        <package android:name="com.netflix.ninja" />
+        <package android:name="com.stremio.one" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+        </intent>
+    </queries>
+
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:usesCleartextTraffic="true"
+        android:banner="@drawable/ic_banner"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:theme="@style/Theme.TvLauncher">
+
+        <!-- Watches media sessions for the Continue watching row. Needs notification access (see README). -->
+        <service
+            android:name=".system.MediaWatcherService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- TCL's picture-quality library, for the Settings-button picture panel. Optional: without it the
+             panel falls back to TCL's own. -->
+        <uses-library android:name="com.tcl.tv.display" android:required="false" />
+
+        <!-- The remote's Settings button in every app: press = Settings, hold = picture panel. Enabled over ADB (see README).
+             Its own process: every remote key waits on this service, so it must never queue behind the home screen's main thread. -->
+        <service
+            android:name=".system.RemoteKeyService"
+            android:process=":keys"
+            android:directBootAware="true"
+            android:exported="false"
+            android:label="@string/remote_keys_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/remote_key_service" />
+        </service>
+
+        <!-- Full-screen player behind PLAY. -->
+        <activity
+            android:name=".ui.PlayerActivity"
+            android:exported="false"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|smallestScreenSize|screenLayout"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.TvLauncher" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.TvLauncher">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

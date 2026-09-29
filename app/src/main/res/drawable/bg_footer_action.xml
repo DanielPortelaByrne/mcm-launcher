@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rest state for the "Art mode" footer shortcut; focus is swapped in code like every other control. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <corners android:radius="100dp" />
+    <solid android:color="@color/btn_brown" />
+</shape>

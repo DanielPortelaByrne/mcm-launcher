@@ -1,0 +1,24 @@
+--------- beginning of main
+09-14 20:51:30.083  3617  3617 I TvLauncher: Loaded 1 launchable apps
+09-14 20:52:15.209  3856  3856 I TvLauncher: Loaded 1 launchable apps
+09-14 20:52:56.176  3993  3993 I TvLauncher: Loaded 2 launchable apps
+09-14 20:53:42.048  4131  4131 I TvLauncher: Loaded 4 launchable apps
+09-14 20:54:04.676  4131  4131 I TvLauncher: Launching com.android.tv.settings
+09-14 21:43:10.909  4568  4568 I TvLauncher: Loaded 4 launchable apps
+09-14 21:44:46.058  4635  4635 I TvLauncher: Loaded 3 launchable apps
+09-14 21:45:12.680  4750  4750 I TvLauncher: Loaded 3 launchable apps
+09-14 21:46:23.240  4853  4853 I TvLauncher: Loaded 3 launchable apps
+09-14 21:47:29.866  4970  4970 I TvLauncher: Loaded 3 launchable apps
+09-14 21:47:51.231  4970  4970 I TvLauncher: Loaded 3 launchable apps
+09-14 21:48:03.340  4970  4970 I TvLauncher: Loaded 3 launchable apps
+09-14 21:48:16.742  4970  4970 I TvLauncher: Launching com.android.vending
+09-14 21:48:20.156  4970  4970 I TvLauncher: Loaded 3 launchable apps
+09-14 21:48:22.506  5194  5194 I TvLauncher: Loaded 3 launchable apps
+09-14 21:48:23.447  5194  5194 I TvLauncher: Loaded 3 launchable apps
+09-14 21:48:43.431  5272  5272 I TvLauncher: Loaded 3 launchable apps
+09-14 21:49:39.832  5411  5411 I TvLauncher: Loaded 3 launchable apps
+09-14 21:50:20.785  5528  5528 I TvLauncher: Loaded 3 launchable apps
+09-14 21:50:25.280  5528  5528 I TvLauncher: Launching com.android.vending
+09-14 21:50:27.676  5528  5528 I TvLauncher: Loaded 3 launchable apps
+09-14 21:50:32.867  5528  5528 I TvLauncher: Loaded 3 launchable apps
+09-14 21:50:33.648  5528  5528 I TvLauncher: Loaded 3 launchable apps

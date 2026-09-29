@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A "More apps" card: icon and name on the surface colour; lights ivory on focus. One column of the 4-column rhythm. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tileRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clickable="true"
+    android:focusable="true"
+    android:focusableInTouchMode="false">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/space_3"
+        android:paddingEnd="@dimen/space_3">
+
+        <ImageView
+            android:id="@+id/featureIcon"
+            android:layout_width="@dimen/space_6"
+            android:layout_height="@dimen/space_6"
+            android:contentDescription="@null"
+            android:scaleType="fitXY" />
+
+        <TextView
+            android:id="@+id/featureLabel"
+            style="@style/Text.Body"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/space_3"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1" />
+    </LinearLayout>
+</FrameLayout>

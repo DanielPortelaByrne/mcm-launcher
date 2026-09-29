@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Soft scrim over the painting's own olive band so ivory tiles/text stay
+     legible without hiding the brushwork underneath. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:angle="90"
+        android:startColor="@color/shelf_scrim_top"
+        android:endColor="@color/shelf_scrim_bottom" />
+</shape>

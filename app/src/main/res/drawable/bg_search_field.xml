@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The search field: a raised pill, one step lighter while it has focus (no outline). -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/radius_pill" />
+            <solid android:color="@color/surface_selected" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="@dimen/radius_pill" />
+            <solid android:color="@color/surface_raised" />
+        </shape>
+    </item>
+</selector>

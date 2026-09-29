@@ -1,0 +1,6 @@
+[
+  { "id": "freddo",   "title": "Freddo Figurine",       "nextAction": "Paint the details",        "art": "figurine", "status": "In progress", "notes": "" },
+  { "id": "tayto",    "title": "Mr Tayto",              "nextAction": "Shape the face",           "art": "tayto",    "status": "Sketching",   "notes": "Placeholder project. Edit assets/home/projects.json." },
+  { "id": "timigotchi", "title": "Timigotchi Wall Mirror", "nextAction": "Cut the mirror shape",  "art": "mirror",   "status": "Planning",    "notes": "Placeholder project. Edit assets/home/projects.json." },
+  { "id": "camaleonda", "title": "Camaleonda",          "nextAction": "Sew the first module",     "art": "sofa",     "status": "In progress", "notes": "" }
+]

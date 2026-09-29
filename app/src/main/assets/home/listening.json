@@ -1,0 +1,18 @@
+{
+  "pollSeconds": 30,
+  "_help": "To show real listening, set lastfmUser and lastfmApiKey for a person (Spotify and Apple Music can both scrobble to Last.fm). Leave them blank to use the demo entries below.",
+  "people": {
+    "eva":    { "provider": "SPOTIFY",     "lastfmUser": "", "lastfmApiKey": "" },
+    "daniel": { "provider": "APPLE_MUSIC", "lastfmUser": "", "lastfmApiKey": "" }
+  },
+  "demo": [
+    { "person": "eva",    "status": "PLAYING_NOW",     "track": "Dreams",             "artist": "Fleetwood Mac",      "album": "Rumours",            "durationSec": 257 },
+    { "person": "eva",    "status": "PAUSED",          "track": "Sunday Morning",     "artist": "The Velvet Underground", "album": "The Velvet Underground & Nico", "durationSec": 176 },
+    { "person": "eva",    "status": "RECENTLY_PLAYED", "track": "Golden Slumbers",    "artist": "The Beatles",        "album": "Abbey Road",         "durationSec": 91 },
+    { "person": "eva",    "status": "PLAYING_NOW",     "track": "Moon River",         "artist": "Henry Mancini",      "album": "Breakfast at Tiffany's", "durationSec": 172 },
+    { "person": "daniel", "status": "PLAYING_NOW",     "track": "So What",            "artist": "Miles Davis",        "album": "Kind of Blue",       "durationSec": 562 },
+    { "person": "daniel", "status": "PLAYING_NOW",     "track": "Take Five",          "artist": "The Dave Brubeck Quartet", "album": "Time Out",    "durationSec": 324 },
+    { "person": "daniel", "status": "RECENTLY_PLAYED", "track": "Autumn Leaves",      "artist": "Cannonball Adderley", "album": "Somethin' Else",    "durationSec": 587 },
+    { "person": "daniel", "status": "NOTHING_AVAILABLE" }
+  ]
+}

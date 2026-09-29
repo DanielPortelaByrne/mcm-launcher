@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A soft dusk behind section headings, fading in and out horizontally so it never shows an edge. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <gradient android:angle="0" android:centerX="0.28" android:startColor="#0026271D" android:centerColor="#6626271D" android:endColor="#0026271D" />
+</shape>
