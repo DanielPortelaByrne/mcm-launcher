@@ -186,12 +186,12 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
                 this.details = details
                 com.example.tvlauncher.design.Motion.swapText(availability, details?.availabilityLines()?.firstOrNull() ?: "Not streaming in the UK right now")
                 badge.set(details?.ratingLabel())
-                if (bitmap != null) {
-                    posterBitmap = bitmap
-                    poster.animate().cancel()
-                    poster.setImageBitmap(bitmap)
-                    settlePoster()
-                }
+                // No poster on Letterboxd: a printed cover in the room's colours instead of an empty frame.
+                val art = bitmap ?: com.example.tvlauncher.design.PosterArt.typographic(activity, current.title)
+                posterBitmap = art
+                poster.animate().cancel()
+                poster.setImageBitmap(art)
+                settlePoster()
                 // Head start: work out the best version now, so PLAY is ready by the time the sheet is opened.
                 details?.imdbId?.let { imdb -> if (smartFor != imdb) startSmart(current, imdb) }
             }

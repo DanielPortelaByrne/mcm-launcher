@@ -104,7 +104,7 @@ class ContinueRow(
             // No artwork from the app: a warm panel with the app's icon, instead of an empty dark box.
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(context.getColor(R.color.walnut), context.getColor(R.color.surface_raised)))
         }
-        val still = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        val still = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; colorFilter = com.example.tvlauncher.design.Motion.printFilter(0f) }
         frame.addView(still, FrameLayout.LayoutParams(-1, -1))
         val placeholder = ImageView(context).apply {
             app?.icon?.let { setImageDrawable(com.example.tvlauncher.design.RoundIcon.own(context, it)) } ?: setImageResource(R.drawable.ic_launcher)
@@ -133,6 +133,7 @@ class ContinueRow(
         root.setOnFocusChangeListener { v, hasFocus ->
             LauncherTheme.fadeDrawable(frame, mat, hasFocus)
             com.example.tvlauncher.design.Motion.focusImageCard(frame, still, titleText, hasFocus)
+            com.example.tvlauncher.design.Motion.printFocus(still, hasFocus)
             scrollFocusIntoView(v, hasFocus)
             if (hasFocus) PageHint.show(context.getString(R.string.hint_remove_card))
         }

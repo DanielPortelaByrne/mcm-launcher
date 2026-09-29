@@ -54,7 +54,7 @@ private fun paper(context: Context, radiusDp: Int): GradientDrawable = GradientD
 // ---------------------------------------------------------------------------------------------
 
 /** The sideboard: projects standing on a walnut ledge. One caption below the ledge follows the focused object. */
-class ProjectShelf(private val context: Context, projects: List<Project>, private val onOpen: (Project) -> Unit) {
+class ProjectShelf(private val context: Context, projects: List<Project>, private val onOpen: (Project, View) -> Unit) {
 
     val view: View
     private val title = Type.text(context, "Currently making", Type.Style.HEADING)
@@ -90,7 +90,7 @@ class ProjectShelf(private val context: Context, projects: List<Project>, privat
                     .scaleX(if (hasFocus) 1.08f else 1f).scaleY(if (hasFocus) 1.08f else 1f).setDuration(if (hasFocus) com.example.tvlauncher.design.Motion.FOCUS_IN_MS else com.example.tvlauncher.design.Motion.FOCUS_OUT_MS).setInterpolator(com.example.tvlauncher.design.Motion.SETTLE).start()
                 if (hasFocus) { show(project); scrollFocusIntoView(v, true) }
             }
-            item.setOnClickListener { onOpen(project) }
+            item.setOnClickListener { onOpen(project, item) }
             row.addView(item, LinearLayout.LayoutParams(context.dp(150), context.dp(150)).apply { marginEnd = context.dp(28) })
         }
         trapEdges(row)
@@ -147,7 +147,11 @@ class InfoSheet(private val container: FrameLayout) {
     fun show(
         kicker: String, title: String, subtitle: String?, lines: List<String>,
         image: android.graphics.Bitmap? = null, actions: List<SheetAction> = emptyList(),
-        refresh: Boolean = false
+        refresh: Boolean = false,
+        /** Size of [image] in dp; defaults to a portrait poster. */
+        imageSizeDp: Pair<Int, Int> = 150 to 225,
+        /** The picture on the page that [image] shows: it flies from there into the sheet. */
+        from: View? = null
     ) {
         // A refresh redraws the same sheet in place (for results that arrive late): keep the way back and the focused button.
         val focusedIndex = if (refresh) lastButtons.indexOfFirst { it.isFocused }.coerceAtLeast(0) else 0
@@ -163,14 +167,15 @@ class InfoSheet(private val container: FrameLayout) {
             background = LauncherTheme.surface(context, R.color.surface_solid)
             elevation = context.dp(24).toFloat()
         }
+        var imageView: View? = null
         if (image != null) {
-            card.addView(android.widget.ImageView(context).apply {
+            card.addView(android.widget.ImageView(context).also { imageView = it }.apply {
                 setImageBitmap(image); scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
                 clipToOutline = true
                 outlineProvider = object : android.view.ViewOutlineProvider() {
                     override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, LauncherTheme.px(context, R.dimen.radius_small).toFloat()) }
                 }
-            }, LinearLayout.LayoutParams(context.dp(150), context.dp(225)).apply { marginEnd = LauncherTheme.px(context, R.dimen.space_5) })
+            }, LinearLayout.LayoutParams(context.dp(imageSizeDp.first), context.dp(imageSizeDp.second)).apply { marginEnd = LauncherTheme.px(context, R.dimen.space_5) })
         }
         val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         card.addView(column, LinearLayout.LayoutParams(0, -2, 1f))
@@ -193,8 +198,10 @@ class InfoSheet(private val container: FrameLayout) {
                     setSpan(android.text.style.StyleSpan(Typeface.NORMAL), action.label.length + 1, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
             val extraLines = action.sublabel?.count { it == '\n' }?.plus(1) ?: 0
+            // A lone Close is a small centred pill; a list of choices reads left-aligned like a menu.
+            val alone = buttons.size == 1
             val button = Type.text(context, label, Type.Style.BODY).apply {
-                gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true
+                gravity = if (alone) Gravity.CENTER else Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true
                 setPadding(LauncherTheme.px(context, R.dimen.space_4), 0, LauncherTheme.px(context, R.dimen.space_4), 0)
                 tag = extraLines
             }
@@ -204,7 +211,7 @@ class InfoSheet(private val container: FrameLayout) {
                 LauncherTheme.surface(context, R.color.focus, R.dimen.radius_pill), 1f
             )
             button.setOnClickListener { hide(); if (i != buttons.lastIndex) action.run() }
-            stack.addView(button, LinearLayout.LayoutParams(-1, controlHeight + context.dp(20) * extraLines).apply { topMargin = if (i == 0) 0 else gap })
+            stack.addView(button, LinearLayout.LayoutParams(if (alone) context.dp(200) else -1, controlHeight + context.dp(20) * extraLines).apply { topMargin = if (i == 0) 0 else gap })
             built += button
             if (first == null) first = button
         }
@@ -213,7 +220,10 @@ class InfoSheet(private val container: FrameLayout) {
         container.addView(card, FrameLayout.LayoutParams(context.dp(if (image != null) 720 else 560), -2, Gravity.CENTER))
         container.visibility = View.VISIBLE
         this.card = card
-        if (!refresh) com.example.tvlauncher.design.Motion.enter(container, card, context.dp(28).toFloat())
+        val f = if (from != null && imageView != null) Flight(from, imageView!!, listOf(column)) else null
+        val flying = !refresh && f != null && Motion.animationsOn(container) && from!!.isShown && from.getGlobalVisibleRect(f.from)
+        if (flying) { flight = f; flyIn(card, f!!) }
+        else if (!refresh) Motion.enter(container, card, context.dp(28).toFloat())
         lastButtons = built
         (built.getOrNull(focusedIndex) ?: first)?.post { (built.getOrNull(focusedIndex) ?: first)?.requestFocus() }
     }
@@ -288,7 +298,7 @@ class InfoSheet(private val container: FrameLayout) {
             f.target.visibility = View.VISIBLE
             f.target.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f)
                 .setDuration(Motion.FLIGHT_MS).setInterpolator(Motion.SWOOSH).start()
-            fadeSurfaces(scrim, surface, 255, Motion.SHEET_IN_MS)
+            fadeSurfaces(scrim, surface, 255, Motion.SHEET_IN_MS / 2)
             f.reveal.forEach {
                 it.animate().alpha(1f).translationY(0f).setStartDelay(Motion.FLIGHT_MS / 3)
                     .setDuration(Motion.SHEET_IN_MS).setInterpolator(Motion.SETTLE).start()
@@ -436,7 +446,7 @@ class RecipeCardStack(private val context: Context, private val deck: RecipeDeck
     private val title = Type.text(context, "", Type.Style.HEADING, PAPER_INK).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END; setLineSpacing(0f, 0.95f) }
     private val descriptor = Type.text(context, "", Type.Style.CAPTION, PAPER_INK_DIM).apply { typeface = Typeface.create("serif", Typeface.ITALIC); maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
     private val motif = RecipeMotifView(context)
-    private val faceMat = LauncherTheme.imageMat(context, context.dp(6).toFloat()).apply { alpha = 0 }
+    private val faceMat = LauncherTheme.outsetRing(face, context.dp(6).toFloat(), context.dp(5))
     private var busy = false
 
     init {
@@ -467,7 +477,6 @@ class RecipeCardStack(private val context: Context, private val deck: RecipeDeck
         column.addView(descriptor, LinearLayout.LayoutParams(-1, -2).apply { topMargin = context.dp(6) })
         face.addView(column, FrameLayout.LayoutParams(-1, -1).apply { marginEnd = context.dp(64) })
         face.addView(Type.text(context, "MESA", Type.Style.EYEBROW, PAPER_INK_DIM), FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START))
-        face.foreground = faceMat
         face.addView(motif, FrameLayout.LayoutParams(context.dp(58), context.dp(58), Gravity.BOTTOM or Gravity.END))
         view.addView(face, FrameLayout.LayoutParams(w, h, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = context.dp(8) })
 

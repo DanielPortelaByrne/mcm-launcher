@@ -20,6 +20,16 @@ import kotlin.math.min
  */
 class ProjectArtView(context: Context, private val art: ArtType) : View(context) {
 
+    companion object {
+        /** The print as a bitmap [sizeDp] square, for showing it large (in a sheet) without a live view. */
+        fun render(context: Context, art: ArtType, sizeDp: Int): android.graphics.Bitmap {
+            val px = (sizeDp * context.resources.displayMetrics.density).toInt()
+            val bitmap = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888)
+            ProjectArtView(context, art).apply { layout(0, 0, px, px); draw(Canvas(bitmap)) }
+            return bitmap
+        }
+    }
+
     var lit: Boolean = false
         set(value) { field = value; invalidate() }
 

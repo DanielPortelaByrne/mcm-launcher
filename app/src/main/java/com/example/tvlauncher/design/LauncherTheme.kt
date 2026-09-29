@@ -86,6 +86,22 @@ object LauncherTheme {
     }
 
     /**
+     * The focus ring for paper objects (recipe cards): an ivory ring standing [gapPx] clear of the object's
+     * edge, drawn in its overlay so it can sit outside it. On cream paper an inset ring would vanish, and an
+     * ink hairline reads as a heavy black border. Returned at alpha 0 for [fadeDrawable].
+     */
+    fun outsetRing(view: View, radiusPx: Float, gapPx: Int): Drawable {
+        val ring = GradientDrawable().apply {
+            cornerRadius = radiusPx + gapPx
+            setStroke(px(view.context, R.dimen.focus_ring_width), ContextCompat.getColor(view.context, R.color.focus))
+            alpha = 0
+        }
+        view.overlay.add(ring)
+        view.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ -> ring.setBounds(-gapPx, -gapPx, v.width + gapPx, v.height + gapPx) }
+        return ring
+    }
+
+    /**
      * The one focus rule for image objects: an ivory mat fades in over the view's edge, plus the shared lift.
      * [extra] runs on every change (scroll into view, hints...).
      */

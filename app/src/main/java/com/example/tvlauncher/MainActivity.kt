@@ -633,10 +633,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closeOverlayAndRestore(hide: () -> Unit) {
+        // Read the way back first: hiding the overlay drops its focus onto the window's first focusable
+        // (the avatar), and the focus tracker would record that as the page's last focus.
+        val back = lastMainFocus
         hide()
         headerBar.setSelected(NavTab.HOME)
         collection.homeReturned()
-        val back = lastMainFocus
         if (back != null && back.isAttachedToWindow && back.isShown && back.isFocusable) back.post { back.requestFocus() } else restoreShelfFocus()
     }
 
@@ -731,7 +733,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setRearrangeHint(dragging: Boolean) {
-        com.example.tvlauncher.ui.PageHint.show(getString(if (dragging) R.string.hint_dragging else R.string.hint_rearrange))
+        if (dragging) com.example.tvlauncher.ui.PageHint.showMode(getString(R.string.hint_dragging))
+        else com.example.tvlauncher.ui.PageHint.show(getString(R.string.hint_rearrange))
     }
 
     private fun commitOrganise() {
@@ -757,6 +760,7 @@ class MainActivity : AppCompatActivity() {
 
     /** The page hint for whatever just took focus: only hold actions and other non-obvious keys. */
     private fun updateFooter(context: FooterContext) {
+        if (context == FooterContext.ORGANISE) { com.example.tvlauncher.ui.PageHint.showMode(getString(R.string.hint_dragging)); return }
         com.example.tvlauncher.ui.PageHint.show(when (context) {
             FooterContext.SHELF_APP -> getString(R.string.hint_rearrange)
             FooterContext.FEATURED_APP -> getString(R.string.hint_add_to_shelf)
