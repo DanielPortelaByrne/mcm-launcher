@@ -13,6 +13,7 @@ import android.view.animation.PathInterpolator
 import android.widget.HorizontalScrollView
 import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import com.example.tvlauncher.R
 import kotlin.math.abs
 import kotlin.math.max
@@ -115,6 +116,48 @@ object Motion {
         view.animate().scaleX(0.97f).scaleY(0.97f).setDuration(60).setInterpolator(SETTLE).withEndAction {
             view.animate().scaleX(restScale).scaleY(restScale).setDuration(160).setInterpolator(SETTLE).start()
         }.start()
+    }
+
+    /** Rich layered image-card focus: outer card scale, elevation, slight inner image scale, metadata brightens. */
+    fun focusImageCard(card: View, innerImage: View?, metadata: android.widget.TextView?, focused: Boolean) {
+        if (!animationsOn(card)) {
+            card.scaleX = if (focused) 1.04f else 1f
+            card.scaleY = if (focused) 1.04f else 1f
+            card.translationZ = if (focused) 16f else 0f
+            innerImage?.scaleX = if (focused) 1.015f else 1f
+            innerImage?.scaleY = if (focused) 1.015f else 1f
+            metadata?.let { tweenTextColor(it, ContextCompat.getColor(it.context, if (focused) R.color.text else R.color.text_muted), 0L) }
+            return
+        }
+        val duration = if (focused) FOCUS_IN_MS else FOCUS_OUT_MS
+        card.animate().cancel()
+        card.animate().scaleX(if (focused) 1.04f else 1f).scaleY(if (focused) 1.04f else 1f)
+            .translationZ(if (focused) 16f else 0f).setDuration(duration).setInterpolator(SETTLE).start()
+        innerImage?.animate()?.cancel()
+        innerImage?.animate()?.scaleX(if (focused) 1.015f else 1f)?.scaleY(if (focused) 1.015f else 1f)
+            ?.setDuration(duration + 40)?.setInterpolator(SETTLE)?.start()
+        metadata?.let { tweenTextColor(it, ContextCompat.getColor(it.context, if (focused) R.color.text else R.color.text_muted), duration) }
+    }
+
+    /** Restrained app-icon focus: tiny lift + halo treatment from LauncherTheme. */
+    fun focusAppIcon(view: View, title: android.widget.TextView?, focused: Boolean) {
+        if (!animationsOn(view)) {
+            view.translationY = if (focused) -6f else 0f
+            title?.alpha = if (focused) 1f else 0.8f
+            return
+        }
+        val duration = if (focused) FOCUS_IN_MS else FOCUS_OUT_MS
+        view.animate().cancel()
+        view.animate().translationY(if (focused) -6f else 0f).setDuration(duration).setInterpolator(SETTLE).start()
+        title?.animate()?.cancel()
+        title?.animate()?.alpha(if (focused) 1f else 0.8f)?.setDuration(duration)?.setInterpolator(SETTLE)?.start()
+    }
+
+    /** Vertical scroll parallax: outer content recedes slightly while inner content slides in. */
+    fun parallelScrollVertical(view: View, scrollFraction: Float) {
+        // Outer/background moves at 0.985 scale and slight opacity reduction
+        view.scaleY = 1f - (scrollFraction * 0.015f)
+        view.alpha = 1f - (scrollFraction * 0.08f)
     }
 
     /** Fades [container] in and lifts [card] a short way into place (no scale), for sheets and menus. */

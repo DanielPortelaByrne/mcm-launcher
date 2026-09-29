@@ -99,6 +99,36 @@ object LauncherTheme {
         }
     }
 
+    /**
+     * Richer image card focus with layered internal animation: card scale, inner image scale, metadata brightens.
+     * Useful for Continue Watching, painting thumbnails, recipe cards, and other image-based content.
+     */
+    fun bindRichImageFocus(
+        card: View,
+        radiusPx: Float,
+        innerImage: View? = null,
+        metadata: TextView? = null,
+        extra: ((Boolean) -> Unit)? = null
+    ) {
+        val mat = imageMat(card.context, radiusPx).apply { alpha = 0 }
+        card.foreground = mat
+        card.setOnFocusChangeListener { v, hasFocus ->
+            fadeDrawable(v, mat, hasFocus)
+            Motion.focusImageCard(v, innerImage, metadata, hasFocus)
+            extra?.invoke(hasFocus)
+        }
+    }
+
+    /**
+     * Restrained app-icon focus: tiny upward lift, title brightens, subtle settle.
+     */
+    fun bindAppIconFocus(view: View, title: TextView? = null, extra: ((Boolean) -> Unit)? = null) {
+        view.setOnFocusChangeListener { v, hasFocus ->
+            Motion.focusAppIcon(v, title, hasFocus)
+            extra?.invoke(hasFocus)
+        }
+    }
+
     /** Crossfades [drawable]'s alpha in or out with the shared focus timings. */
     fun fadeDrawable(view: View, drawable: Drawable, show: Boolean) {
         val target = if (show) 255 else 0
