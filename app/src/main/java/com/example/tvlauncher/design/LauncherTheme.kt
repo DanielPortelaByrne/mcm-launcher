@@ -145,14 +145,17 @@ object LauncherTheme {
     private fun recolor(view: View, focused: Boolean) {
         val ink = ContextCompat.getColor(view.context, R.color.ink)
         if (view is TextView) {
+            // The resting colour is remembered across focus changes: re-reading it while a tween back is still
+            // running would capture a half-lit colour and leave the label stuck there.
             val saved = view.getTag(R.id.orig_text_color) as? ColorStateList
+            val tweening = (view.getTag(R.id.motion_text) as? android.animation.Animator)?.isRunning == true
             if (focused) {
-                if (saved == null) view.setTag(R.id.orig_text_color, view.textColors)
-                val alpha = Color.alpha(view.textColors.defaultColor)
+                val rest = if (saved != null && tweening) saved else view.textColors
+                view.setTag(R.id.orig_text_color, rest)
+                val alpha = Color.alpha(rest.defaultColor)
                 Motion.tweenTextColor(view, Color.argb(alpha, Color.red(ink), Color.green(ink), Color.blue(ink)))
             } else if (saved != null) {
                 Motion.tweenTextColor(view, saved.defaultColor)
-                view.setTag(R.id.orig_text_color, null)
             }
         }
         if (view is ViewGroup) {
