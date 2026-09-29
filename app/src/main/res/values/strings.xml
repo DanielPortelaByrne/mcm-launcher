@@ -41,11 +41,11 @@
 
     <!-- Footer hints -->
     <string name="hint_open">OK Open</string>
-    <string name="hint_add_to_shelf">Hold OK to swap it into Your apps</string>
+    <string name="hint_add_to_shelf">Hold OK to move it up</string>
     <string name="hint_organise">Hold OK Organise</string>
     <string name="hint_rearrange">Hold OK to rearrange</string>
-    <string name="hint_remove_card">Hold OK to remove it from Continue watching</string>
-    <string name="hint_shuffle">OK to shuffle the recipe cards</string>
+    <string name="hint_remove_card">Hold OK to remove</string>
+    <string name="hint_shuffle">OK to shuffle</string>
     <string name="hint_dragging">Left and right to move  ·  OK to drop  ·  Back to cancel</string>
     <string name="hint_art_mode">Art mode</string>
     <string name="hint_move">◀ ▶ Move</string>

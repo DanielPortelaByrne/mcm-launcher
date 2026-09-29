@@ -184,7 +184,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
             activity.runOnUiThread {
                 if (disposed || film?.path != current.path) return@runOnUiThread
                 this.details = details
-                com.example.tvlauncher.design.Motion.swapText(availability, details?.availabilityLines()?.firstOrNull() ?: "Not streaming in the UK right now")
+                com.example.tvlauncher.design.Motion.swapText(availability, details?.cardLine() ?: "Not streaming in the UK right now")
                 badge.set(details?.ratingLabel())
                 // No poster on Letterboxd: a printed cover in the room's colours instead of an empty frame.
                 val art = bitmap ?: com.example.tvlauncher.design.PosterArt.typographic(activity, current.title)

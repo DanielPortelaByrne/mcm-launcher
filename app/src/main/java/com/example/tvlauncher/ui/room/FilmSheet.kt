@@ -102,7 +102,7 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
         right.addView(Type.text(context, "Eva's pick for tonight", Type.Style.EYEBROW))
         right.addView(Type.text(context, title, Type.Style.TITLE).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) })
-        page?.headline()?.takeIf { it.isNotBlank() }?.let { right.addView(Type.text(context, it, Type.Style.CAPTION).apply { setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
+        page?.headline(withYear = !Regex("""\(\d{4}\)\s*$""").containsMatchIn(title))?.takeIf { it.isNotBlank() }?.let { right.addView(Type.text(context, it, Type.Style.CAPTION).apply { setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
         page?.tagline?.withoutEmDashes()?.let { right.addView(Type.text(context, "“$it”", Type.Style.CAPTION).apply { typeface = Typeface.create("serif", Typeface.ITALIC); maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
 
         val tabs = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
@@ -136,7 +136,7 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
         // Its own clipping frame: the surrounding views must not clip (so focus highlights are never cut off),
         // which would otherwise let scrolled text spill up over the tabs.
         val scrollHolder = FrameLayout(context).apply { clipChildren = true; addView(scroll, FrameLayout.LayoutParams(-1, -1)) }
-        right.addView(scrollHolder, LinearLayout.LayoutParams(-1, context.px(132)).apply { topMargin = dimen(R.dimen.space_2); bottomMargin = dimen(R.dimen.space_2) })
+        right.addView(scrollHolder, LinearLayout.LayoutParams(-1, context.px(132)).apply { topMargin = dimen(R.dimen.space_2); bottomMargin = dimen(R.dimen.space_4) })
 
         // primary row
         val primary = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
@@ -260,7 +260,8 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
     /** A pill button: [accent] is the terracotta PLAY, [quiet] the small secondary row. Focus = solid ivory, no scaling. */
     private fun pill(label: String, sub: String? = null, accent: Boolean = false, quiet: Boolean = false): TextView {
-        val rest = LauncherTheme.surface(context, if (accent) R.color.action else if (quiet) R.color.surface_raised else R.color.surface_selected, R.dimen.radius_pill)
+        val rest = if (quiet) GradientDrawable().apply { cornerRadius = 999f; setColor(0) }
+            else LauncherTheme.surface(context, if (accent) R.color.action else R.color.surface_selected, R.dimen.radius_pill)
         val lit = LauncherTheme.surface(context, R.color.focus, R.dimen.radius_pill)
         val restText = if (quiet) dim else ivory
         val fade = android.graphics.drawable.TransitionDrawable(arrayOf(rest, lit)).apply { isCrossFadeEnabled = true }

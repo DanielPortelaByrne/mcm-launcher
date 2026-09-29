@@ -42,7 +42,10 @@ object PosterArt {
             1 -> c.drawRoundRect(RectF(u * 0.18f, h * 0.52f, u * 0.82f, h * 1.2f), u * 0.32f, u * 0.32f, p)
             else -> { c.drawRect(0f, h * 0.7f, u, h * 0.78f, p); c.drawCircle(u * 0.32f, h * 0.66f, u * 0.2f, p) }
         }
-        val margin = 14f * d
+        val margin = 17f * d
+        p.color = IVORY; p.alpha = 64; p.style = Paint.Style.STROKE; p.strokeWidth = 1f * d
+        c.drawRect(6f * d, 6f * d, w - 6f * d, h - 6f * d, p)
+        p.style = Paint.Style.FILL
         // Title: serif, ivory, top-left, up to four lines.
         val tp = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = IVORY; typeface = Typeface.create("serif", Typeface.BOLD); textSize = 25f * d

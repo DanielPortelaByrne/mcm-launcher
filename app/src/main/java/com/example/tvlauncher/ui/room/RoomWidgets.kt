@@ -65,8 +65,18 @@ class ProjectShelf(private val context: Context, projects: List<Project>, privat
         val frame = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
         root.addView(frame, LinearLayout.LayoutParams(-1, context.dp(190)))
 
+        // The ledge as furniture: a lit walnut top the prints stand on, a hairline where the edge catches the
+        // light, and a darker front lip in shadow. Barely rounded, like a real shelf edge.
+        val top = context.dp(9)
         frame.addView(View(context).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xFF8A6440.toInt(), 0xFF5A3F28.toInt(), 0xFF3F2B1B.toInt())).apply { cornerRadius = context.dp(8).toFloat() }
+            background = LayerDrawable(arrayOf(
+                GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xFF4A3320.toInt(), 0xFF2E1F13.toInt())).apply { cornerRadius = context.dp(2).toFloat() },
+                GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xFF6E4B2C.toInt(), 0xFF8A6440.toInt())).apply { cornerRadii = floatArrayOf(4f, 4f, 4f, 4f, 0f, 0f, 0f, 0f) },
+                GradientDrawable().apply { setColor(0x66D9B27C) }
+            )).apply {
+                setLayerInset(1, 0, 0, 0, context.dp(26) - top)
+                setLayerInset(2, 0, top, 0, context.dp(26) - top - context.dp(1))
+            }
             elevation = context.dp(4).toFloat()
         }, FrameLayout.LayoutParams(-1, context.dp(26), Gravity.BOTTOM))
 
@@ -178,12 +188,19 @@ class InfoSheet(private val container: FrameLayout) {
             }, LinearLayout.LayoutParams(context.dp(imageSizeDp.first), context.dp(imageSizeDp.second)).apply { marginEnd = LauncherTheme.px(context, R.dimen.space_5) })
         }
         val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
-        card.addView(column, LinearLayout.LayoutParams(0, -2, 1f))
+        card.addView(column, LinearLayout.LayoutParams(if (image != null) context.dp(360) else 0, -2, if (image != null) 0f else 1f))
 
         val gap = LauncherTheme.px(context, R.dimen.space_2)
         column.addView(Type.text(context, kicker, Type.Style.EYEBROW))
         column.addView(Type.text(context, title, Type.Style.TITLE).apply { setPadding(0, gap, 0, 0) })
-        subtitle?.let { column.addView(Type.text(context, it, Type.Style.BODY, ContextCompat.getColor(context, R.color.accent)).apply { setPadding(0, gap, 0, 0) }) }
+        subtitle?.let {
+            val accent = ContextCompat.getColor(context, R.color.accent)
+            column.addView(Type.text(context, it.uppercase(Locale.UK), Type.Style.CAPTION, accent).apply {
+                letterSpacing = 0.14f; textSize = 13f
+                setPadding(context.dp(10), context.dp(3), context.dp(10), context.dp(4))
+                background = GradientDrawable().apply { cornerRadius = context.dp(12).toFloat(); setStroke(context.dp(1), accent) }
+            }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = gap + gap / 2 })
+        }
         lines.forEach { column.addView(Type.reading(Type.text(context, it, Type.Style.BODY, ContextCompat.getColor(context, R.color.text_muted))).apply { setPadding(0, gap + gap / 2, 0, 0) }) }
 
         var first: View? = null
@@ -217,7 +234,7 @@ class InfoSheet(private val container: FrameLayout) {
         }
         column.addView(stack, LinearLayout.LayoutParams(-1, -2).apply { topMargin = LauncherTheme.px(context, R.dimen.space_4) })
 
-        container.addView(card, FrameLayout.LayoutParams(context.dp(if (image != null) 720 else 560), -2, Gravity.CENTER))
+        container.addView(card, FrameLayout.LayoutParams(if (image != null) -2 else context.dp(560), -2, Gravity.CENTER))
         container.visibility = View.VISIBLE
         this.card = card
         val f = if (from != null && imageView != null) Flight(from, imageView!!, listOf(column)) else null

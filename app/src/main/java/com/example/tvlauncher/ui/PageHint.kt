@@ -20,6 +20,9 @@ object PageHint {
     private const val MAX_SHOWS = 3
 
     private var view: TextView? = null
+    /** Where tips sit (level with the header, set by MainActivity) and where a mode's longer line sits. */
+    var tipAt: android.widget.FrameLayout.LayoutParams? = null
+    var modeAt: android.widget.FrameLayout.LayoutParams? = null
     private val handler = Handler(Looper.getMainLooper())
     private val shown = HashMap<String, Int>()
     private var pending: String? = null
@@ -28,6 +31,7 @@ object PageHint {
         val v = view ?: return@Runnable
         val text = pending ?: return@Runnable
         shown[text] = (shown[text] ?: 0) + 1
+        place(v, tipAt)
         v.text = text
         v.animate().alpha(1f).setDuration(Motion.FADE_MS).start()
         handler.postDelayed(retire, VISIBLE_MS)
@@ -36,12 +40,17 @@ object PageHint {
 
     fun attach(target: TextView) { view = target; target.alpha = 0f }
 
+    private fun place(v: TextView, at: android.widget.FrameLayout.LayoutParams?) {
+        if (at != null && v.layoutParams !== at) v.layoutParams = at
+    }
+
     /** A mode the remote is in (dragging an app): shown at once and kept up until replaced. */
     fun showMode(text: String) {
         val v = view ?: return
         handler.removeCallbacks(reveal)
         handler.removeCallbacks(retire)
         pending = null
+        place(v, modeAt)
         v.text = text
         v.animate().alpha(1f).setDuration(Motion.FADE_MS).start()
     }

@@ -167,6 +167,7 @@ class ShelfLayoutBuilder(private val context: Context) {
         label.layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) }
         // Names use the whole slot and the lighter weight, so "Paramount+" or "PrivadoVPN" fit without an ellipsis.
         label.maxWidth = labelWidth
+        label.minWidth = dp(56f)
         label.typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.NORMAL)
         label.setPadding(dp(8f), dp(2f), dp(8f), dp(3f))
         label.background = pill

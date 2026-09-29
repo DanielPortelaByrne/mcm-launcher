@@ -182,10 +182,11 @@ object Motion {
         if (amount >= 1f) return null
         val m = android.graphics.ColorMatrix().apply { setSaturation(PRINT_SATURATION + (1f - PRINT_SATURATION) * amount) }
         val warm = 1f - amount
+        val v = 1f - 0.1f * warm
         m.postConcat(android.graphics.ColorMatrix(floatArrayOf(
-            1f + 0.03f * warm, 0f, 0f, 0f, 0f,
-            0f, 1f, 0f, 0f, 0f,
-            0f, 0f, 1f - 0.06f * warm, 0f, 0f,
+            v * (1f + 0.03f * warm), 0f, 0f, 0f, 0f,
+            0f, v, 0f, 0f, 0f,
+            0f, 0f, v * (1f - 0.06f * warm), 0f, 0f,
             0f, 0f, 0f, 1f, 0f)))
         return android.graphics.ColorMatrixColorFilter(m)
     }
@@ -197,14 +198,14 @@ object Motion {
         val to = if (focused) 1f else 0f
         if (!animationsOn(image)) { image.setTag(R.id.motion_print, to); image.colorFilter = printFilter(to); return }
         val a = ValueAnimator.ofFloat(from, to).apply {
-            duration = if (focused) FOCUS_IN_MS + 60 else FOCUS_OUT_MS; interpolator = SETTLE
+            duration = if (focused) 200L else FOCUS_OUT_MS + 40; interpolator = SETTLE
             addUpdateListener { val f = it.animatedValue as Float; image.setTag(R.id.motion_print, f); image.colorFilter = printFilter(f) }
         }
         image.setTag(R.id.motion_fade, a)
         a.start()
     }
 
-    private const val PRINT_SATURATION = 0.72f
+    private const val PRINT_SATURATION = 0.55f
 
     // ---- content replacement -----------------------------------------------------------------------
 

@@ -269,6 +269,7 @@ class MainActivity : AppCompatActivity() {
         networkIcon.setOnClickListener { handleCapability(systemActions.openNetworkSettings()) }
         findViewById<ImageView>(R.id.iconSettings).setOnClickListener { handleCapability(systemActions.openSettings()) }
         com.example.tvlauncher.ui.PageHint.attach(findViewById(R.id.pageHint))
+        placeHint()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -291,6 +292,30 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    /**
+     * The hint sits where the header has nothing to say: vertically centred on the header, ending a gap
+     * short of its right-hand icons. Measured once the header is laid out (the page is at the top then).
+     */
+    private fun placeHint() {
+        val hint = findViewById<TextView>(R.id.pageHint)
+        val header = findViewById<android.view.View>(R.id.header)
+        val icons = findViewById<android.view.View>(R.id.iconInputs)
+        header.post {
+            val h = IntArray(2).also { header.getLocationInWindow(it) }
+            val i = IntArray(2).also { icons.getLocationInWindow(it) }
+            val root = hint.parent as android.view.View
+            hint.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED)
+            com.example.tvlauncher.ui.PageHint.tipAt = android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.END).apply {
+                topMargin = h[1] + (header.height - hint.measuredHeight) / 2
+                marginEnd = root.width - i[0] + resources.getDimensionPixelSize(R.dimen.space_3)
+            }
+            com.example.tvlauncher.ui.PageHint.modeAt = android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.END).apply {
+                marginEnd = resources.getDimensionPixelSize(R.dimen.page_margin)
+                bottomMargin = resources.getDimensionPixelSize(R.dimen.space_4)
+            }
+        }
     }
 
     /** Shows the "Who's watching?" picker once per boot, and again after the TV has been in standby a while. */

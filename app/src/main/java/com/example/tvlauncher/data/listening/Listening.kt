@@ -54,7 +54,7 @@ data class PersonalListeningState(
 
     /** One short, human status line for the plaque. */
     fun statusLine(nowMs: Long): String = when (status) {
-        ListeningStatus.PLAYING_NOW -> positionMs(nowMs)?.let { "Now spinning · ${clock(it)}" } ?: "Now spinning"
+        ListeningStatus.PLAYING_NOW -> positionMs(nowMs)?.let { "Playing · ${clock(it)}" } ?: "Playing"
         ListeningStatus.PAUSED -> "Paused"
         ListeningStatus.RECENTLY_PLAYED -> observedAtMs?.let { "Played ${ago(nowMs - it)}" } ?: "Played recently"
         ListeningStatus.NOTHING_AVAILABLE -> "Nothing on the platter"

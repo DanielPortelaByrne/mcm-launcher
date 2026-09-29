@@ -61,16 +61,22 @@ private fun panVertically(sv: CalmScrollView, view: View, density: Float) {
     Motion.scrollVerticalTo(sv, bounds.top - (h * 0.34f).toInt())
 }
 
-private fun panHorizontally(sv: CalmHorizontalScrollView, view: View, density: Float) {
+/**
+ * Rails keep their grid: when one has to move, it snaps so a whole card starts exactly at the page margin
+ * (never a sliver of card cut at the left edge). Going right, it moves the least whole-card distance that
+ * shows the focused card; going left, the focused card comes to the margin.
+ */
+private fun panHorizontally(sv: CalmHorizontalScrollView, view: View, @Suppress("UNUSED_PARAMETER") density: Float) {
     val bounds = Rect(0, 0, view.width, view.height)
     sv.offsetDescendantRectToMyCoords(view, bounds)
-    val margin = (72 * density).toInt()
-    val left = sv.scrollX + margin
-    val right = sv.scrollX + sv.width - margin
-    val target = when {
-        bounds.left < left -> bounds.left - margin
-        bounds.right > right -> bounds.right - sv.width + margin
-        else -> return
+    val start = sv.paddingLeft
+    val end = sv.width - sv.paddingRight
+    if (bounds.left >= sv.scrollX + start && bounds.right <= sv.scrollX + end) return
+    val target = if (bounds.left < sv.scrollX + start) bounds.left - start else {
+        val need = bounds.right - end
+        val row = sv.getChildAt(0) as? android.view.ViewGroup
+        val stops = (0 until (row?.childCount ?: 0)).map { row!!.left + row.getChildAt(it).left - start }
+        stops.filter { it >= need }.minOrNull() ?: need
     }
     Motion.scrollHorizontalTo(sv, target)
 }
