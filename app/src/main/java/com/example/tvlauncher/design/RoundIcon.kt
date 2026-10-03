@@ -11,8 +11,6 @@ import android.graphics.RectF
 import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.InsetDrawable
-import android.graphics.drawable.LayerDrawable
 import androidx.annotation.ColorRes
 import androidx.annotation.DrawableRes
 import androidx.core.content.ContextCompat
@@ -70,7 +68,14 @@ object RoundIcon {
         val mark = ContextCompat.getDrawable(context, glyph)!!.mutate().apply {
             setTint(ContextCompat.getColor(context, com.example.tvlauncher.R.color.ivory))
         }
-        return LayerDrawable(arrayOf(disc, InsetDrawable(mark, 0.27f)))
+        val bitmap = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        disc.setBounds(0, 0, SIZE, SIZE)
+        disc.draw(canvas)
+        val inset = (SIZE * 0.27f).toInt()
+        mark.setBounds(inset, inset, SIZE - inset, SIZE - inset)
+        mark.draw(canvas)
+        return circular(context, bitmap)
     }
 
     /**
@@ -92,7 +97,7 @@ object RoundIcon {
     private fun renderSquare(source: Drawable): Bitmap {
         val bitmap = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        if (source is AdaptiveIconDrawable) {
+        if (android.os.Build.VERSION.SDK_INT >= 26 && source is AdaptiveIconDrawable) {
             drawLayer(canvas, source.background)
             drawLayer(canvas, source.foreground)
         } else drawLegacy(canvas, source)
@@ -144,7 +149,7 @@ object RoundIcon {
      */
     private fun logoMask(source: Drawable, art: Bitmap): FloatArray? {
         val n = SIZE * SIZE
-        if (source is AdaptiveIconDrawable && source.foreground != null) {
+        if (android.os.Build.VERSION.SDK_INT >= 26 && source is AdaptiveIconDrawable && source.foreground != null) {
             val fg = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
             drawLayer(Canvas(fg), source.foreground)
             val px = IntArray(n).also { fg.getPixels(it, 0, SIZE, 0, 0, SIZE, SIZE) }

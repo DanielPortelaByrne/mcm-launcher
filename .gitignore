@@ -32,3 +32,6 @@ local.properties
 
 # Logs
 *.log
+
+# Kotlin compiler cache
+.kotlin/
