@@ -1,0 +1,15 @@
+{
+  "name": "mcm-webos",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "package": "ares-package app -o artifacts",
+    "check": "node --check app/app.js",
+    "test": "node tools/test.cjs"
+  },
+  "devDependencies": {
+    "@webos-tools/cli": "^3.2.6",
+    "jsdom": "^26.1.0",
+    "ssh2": "^1.17.0"
+  }
+}

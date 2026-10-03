@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>MCM Home</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<div id="painting" aria-hidden="true"></div><div id="vignette" aria-hidden="true"></div>
+<main id="home">
+  <header class="capsule">
+    <button data-action="profiles" class="symbol" aria-label="Who's watching?" id="profile">B&amp;A</button>
+    <button data-action="search" class="symbol" aria-label="Search apps"><span class="search-icon"></span></button>
+    <span class="divider"></span>
+    <button data-action="home" class="nav active">Home</button>
+    <button data-action="apps" class="nav">Apps</button>
+    <button data-action="live" class="nav">Live TV</button>
+    <button data-action="art" class="nav">Art</button>
+    <span class="spacer"></span>
+    <button data-action="inputs" class="symbol" aria-label="Inputs"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9,6 H18 A2,2 0 0,1 20,8 V16 A2,2 0 0,1 18,18 H9 M3,12 H13 M10,9 L13,12 L10,15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <button data-action="settings" class="symbol" aria-label="Make it yours"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.06,10.57 L21.13,10.90 L21.13,13.10 L19.06,13.43 L18.00,15.98 L19.24,17.68 L17.68,19.24 L15.98,18.00 L13.43,19.06 L13.10,21.13 L10.90,21.13 L10.57,19.06 L8.02,18.00 L6.32,19.24 L4.76,17.68 L6.00,15.98 L4.94,13.43 L2.87,13.10 L2.87,10.90 L4.94,10.57 L6.00,8.02 L4.76,6.32 L6.32,4.76 L8.02,6.00 L10.57,4.94 L10.90,2.87 L13.10,2.87 L13.43,4.94 L15.98,6.00 L17.68,4.76 L19.24,6.32 L18.00,8.02 Z M12,9 a3,3 0 1,1 0,6 a3,3 0 1,1 0,-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    <time id="clock"></time>
+  </header>
+  <section class="hero">
+    <div class="greeting"><p class="eyebrow">MCM / THE LIVING ROOM</p><h1>Make yourself at home.</h1><p class="muted">Your favourite things, ready when you are.</p><button class="pill" data-action="apps">Browse apps</button></div>
+    <button id="film" class="film-card" data-action="film"><span class="eyebrow">EVA'S PICK FOR TONIGHT</span><strong id="film-title">Finding something for tonight…</strong><span id="film-source">MCM picks</span></button>
+  </section>
+  <section><h2>Your apps</h2><div id="shelf" class="shelf"><p class="muted">Finding your apps…</p></div></section>
+  <section id="more-section"><h2>More apps</h2><div id="more" class="rail"></div></section>
+  <section><div class="section-heading"><h2>This evening</h2><p>A few gentle ideas</p></div><div class="evening"><div class="tonight paper"><p class="eyebrow">TONIGHT?</p><h3>A little time for the things you love.</h3><div id="tonight"></div></div><button class="recipe paper" id="recipe" data-action="recipe"></button></div></section>
+  <footer><button data-action="settings" class="text-button">Make it yours</button><button data-action="stock" class="text-button">LG Home</button><span>MCM Home</span></footer>
+</main>
+<section id="panel" hidden aria-label="MCM panel"></section>
+<section id="art-mode" hidden><div id="art-caption"></div><div class="art-controls"><button data-action="art-prev">← Previous</button><button data-action="art-next">Next →</button><button data-action="art-exit">Back to home</button></div></section>
+<div id="toast" role="status" hidden></div>
+<script src="data.js"></script><script src="app.js"></script>
+</body></html>

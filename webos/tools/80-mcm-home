@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+root=/var/lib/mcm-home
+if [ -f "$root/mapper.pid" ]; then
+    oldpid=$(cat "$root/mapper.pid")
+    case "$oldpid" in ''|*[!0-9]*) oldpid=0;; esac
+    if [ -r "/proc/$oldpid/cmdline" ] && tr '\000' ' ' < "/proc/$oldpid/cmdline" | grep -q "$root/mapper/runtime/ir-mapper.py"; then exit 0; fi
+fi
+mkdir -p /tmp/mcm-mapper
+nohup python3 -u "$root/mapper/runtime/ir-mapper.py" --config "$root/mapper/magic_mapper_config.json" --state-dir /tmp/mcm-mapper --app-dir /media/developer/apps/usr/palm/applications/com.daniel.mcm.home > "$root/mapper.log" 2>&1 < /dev/null &
+echo "$!" > "$root/mapper.pid"
