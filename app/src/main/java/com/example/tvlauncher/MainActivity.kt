@@ -127,6 +127,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.tvlauncher.system.FireHomeService.startIfEnabled(this)
         bootMark("onCreate")
         bootMark("layout")
         setContentView(R.layout.activity_main)
@@ -417,6 +418,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_MENU && com.example.tvlauncher.system.FireHomeService.supported()) {
+            if (event.action == KeyEvent.ACTION_UP) startActivity(Intent(this, com.example.tvlauncher.system.FireHomeSettingsActivity::class.java))
+            return true
+        }
         // While an app is held for rearranging, the remote belongs to the drag no matter where focus is.
         if (organiseIndex != null && onOrganiseKey(event.keyCode, event)) return true
         val direction = when(event.keyCode) {

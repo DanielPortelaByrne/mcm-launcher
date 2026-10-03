@@ -19,7 +19,8 @@ ADB and open `com.example.tvlauncher/.MainActivity`.
 
 Verified on the device: stable startup, profiles, selecting Eva and Daniel,
 app-grid D-pad navigation, live film posters, Art browsing, pause/resume,
-and Back navigation. The Amazon Home button has not been remapped.
+and Back navigation. Home now redirects to MCM through the persistent monitor
+described below; the earlier tests are retained as investigation history.
 
 ## Home-routing test (2026-10-03)
 
@@ -101,3 +102,48 @@ was performed during this investigation.
 - [External ADB monitor example](https://gist.github.com/Skyluker4/c6f7d5c726f202afb46605ae47981eaf): demonstrates the host-side approach; our Fire OS 6 uses ActivityManager rather than its ActivityTaskManager tag.
 - [Kamakiri source](https://github.com/amonet-kamakiri/kamakiri) and [first-person Mantis ROM installation](https://journal.amazinaxel.com/2025/11-05-lineage-on-firetv): the latter explicitly warns that newer firmware patches the unlock. We did not verify any newer exploit for NS6711/5908.
 - [Rootless Logcat source](https://github.com/tananaev/rootless-logcat) and [Android READ_LOGS permission](https://developer.android.com/reference/android/Manifest.permission#READ_LOGS): background for a possible app implementation, not proof of Fire OS compatibility.
+
+## Persistent Home routing (2026-10-03)
+
+The final implementation runs within MCM as `FireHomeService`, with an ongoing
+notification and sticky service restart. It needs a one-time ADB grant of
+`android.permission.READ_LOGS`; restart MCM after granting so its new process
+receives the log-reading group. It reads only ActivityManager's system log
+stream, checks fresh Home launch events, and opens MCM. Log contents are not
+stored or transmitted. Accessibility and system Home settings are not modified.
+
+`FireHomeBootReceiver` handles both early and normal boot plus app replacement.
+The enabled preference lives in device-protected storage. The first normal-boot
+test found MCM queued behind over 100 receivers, so early-boot support was added.
+After another real reboot, the monitor was already foreground before MCM was
+manually opened; pressing Home returned MCM from Amazon Home and Settings.
+
+Menu within MCM opens D-pad-accessible controls:
+
+- Turn routing on or off (the choice persists).
+- Open Amazon Home, suppressing redirects for one minute.
+- Open Fire TV settings or return to MCM.
+
+Verified: APK build, 96 passing unit tests (including genuine Home events versus
+other users, activities and diagnostics); app-level redirect; off switch; Amazon pause;
+re-enable; real reboot startup; Home from Amazon and Settings. The earlier
+shell prototype's physical-remote test is recorded above. Daniel confirmed the
+persistent version returns to MCM with a few-second delay after reboot. Other
+controls were not explicitly confirmed in that response. Extended sleep/wake reliability has not
+yet been established. Force-stopping MCM intentionally prevents restart until
+MCM is opened again, as Android normally handles force-stopped apps.
+
+Recovery: use Menu -> Turn off MCM Home button. If MCM's controls are unavailable,
+revoke its log permission and force-stop it via ADB, then press Home:
+
+```sh
+adb -s <device>:5555 shell pm revoke com.example.tvlauncher android.permission.READ_LOGS
+adb -s <device>:5555 shell am force-stop com.example.tvlauncher
+adb -s <device>:5555 shell input keyevent 3
+```
+
+Re-enabling after recovery requires regranting the permission and opening MCM.
+No root, bootloader change, firmware flash, external relay, or shell boot hook
+is used. `tools/fire-tv-home-trial.sh` remains a bounded diagnostic prototype;
+do not run it alongside the permanent service. The two older restore scripts
+address the abandoned default-Home/accessibility trials, not this log monitor.

@@ -6,6 +6,8 @@
          permission, granted automatically, no runtime prompt. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Lists the TV's Google accounts for the header avatar menu (runtime-prompted once). -->
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
     <!-- Lets the launcher switch its remote-button service back on if the TV drops it (e.g. after a reboot).
@@ -45,6 +47,15 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.TvLauncher">
 
+        <service android:name=".system.FireHomeService" android:exported="false" android:directBootAware="true" />
+        <activity android:name=".system.FireHomeSettingsActivity" android:exported="false" />
+        <receiver android:name=".system.FireHomeBootReceiver" android:exported="false" android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <!-- Watches media sessions for the Continue watching row. Needs notification access (see README). -->
         <service
             android:name=".system.MediaWatcherService"

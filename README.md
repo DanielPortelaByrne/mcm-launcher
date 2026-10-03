@@ -32,12 +32,25 @@ adb -s <fire-tv-ip>:5555 shell am start -n com.example.tvlauncher/.MainActivity
 
 App ID: `com.example.tvlauncher`. The APK is in
 `app/build/outputs/apk/debug/app-debug.apk`. Open MCM from the Fire TV app list.
-**Permanent Home routing is not enabled.** A temporary, non-root monitor running
-on the stick successfully returned Home to MCM in automated tests, including
-after disconnecting ADB. Daniel also confirmed the physical Home button returns
-to MCM after roughly one second. Reboot startup remains unimplemented.
-The firmware blocked the launcher-disable and accessibility methods.
-See [the investigation and bounded trial](docs/fire-tv.md#deeper-investigation-2026-10-03).
+**Home routing is enabled on the installed Fire TV.** MCM runs a local Home-event
+monitor and restarts it at boot. Reboot startup and Home from Amazon/Settings
+were verified on the stick. Amazon Home can appear briefly before MCM returns.
+No root or always-on computer is required.
+
+Press **Menu in MCM** to turn routing on/off, open Amazon Home with a one-minute
+pause, or open Fire TV settings. On a new installation, grant the one-time
+permission below, restart MCM, then enable routing through Menu:
+
+```sh
+adb -s <fire-tv-ip>:5555 shell pm grant com.example.tvlauncher android.permission.READ_LOGS
+adb -s <fire-tv-ip>:5555 shell am force-stop com.example.tvlauncher
+adb -s <fire-tv-ip>:5555 shell am start -n com.example.tvlauncher/.MainActivity
+```
+
+This implementation supports Amazon devices on Android API 25 (Fire OS 6).
+It filters Home events locally and does not save or transmit logs.
+See [persistent Home routing](docs/fire-tv.md#persistent-home-routing-2026-10-03)
+for verification and recovery.
 
 ## Compatibility and verification
 
