@@ -34,8 +34,9 @@ App ID: `com.example.tvlauncher`. The APK is in
 `app/build/outputs/apk/debug/app-debug.apk`. Open MCM from the Fire TV app list.
 **Permanent Home routing is not enabled.** A temporary, non-root monitor running
 on the stick successfully returned Home to MCM in automated tests, including
-after disconnecting ADB. Reboot startup and physical-remote confirmation remain
-unverified. The firmware blocked the launcher-disable and accessibility methods.
+after disconnecting ADB. Daniel also confirmed the physical Home button returns
+to MCM after roughly one second. Reboot startup remains unimplemented.
+The firmware blocked the launcher-disable and accessibility methods.
 See [the investigation and bounded trial](docs/fire-tv.md#deeper-investigation-2026-10-03).
 
 ## Compatibility and verification

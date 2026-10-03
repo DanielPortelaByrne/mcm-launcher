@@ -58,13 +58,13 @@ Then `tools/fire-tv-home-trial.sh` ran directly on the Fire TV as the ADB shell
 user. After disconnecting and reconnecting ADB, simulated Home presses from MCM
 and Android Settings both returned MCM to `mResumedActivity`. No computer-side
 monitor was running for those checks. Its 120-second expiration was also verified.
-A subsequent 300-second trial was started for physical-remote feedback; that
-feedback is not yet recorded here.
+A subsequent 300-second trial confirmed physical-remote behavior: Daniel
+initially saw Amazon Home, then reported that MCM reopened after about one second.
 
 This redirects after Amazon Home starts, so its screen can briefly appear.
 It does not replace the system launcher or intercept volume/D-pad input.
-Physical remote behavior, long-press Home, sleep/wake, and extended reliability
-still need testing. The script has no boot hook and cannot survive a reboot.
+Other controls, long-press Home, sleep/wake, and extended reliability still need
+confirmation. The script has no boot hook and cannot survive a reboot.
 
 To reproduce from a shell that preserves the quoted remote command:
 
