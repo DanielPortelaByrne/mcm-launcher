@@ -38,3 +38,66 @@ settings restored. MCM remains installed and can be opened from Apps.
 Home still opens Amazon. No root procedure or external always-running computer
 relay was installed. The recovery scripts in `tools/` are retained for reference;
 they were prepared for the trials, not as proof of a working Home mapping.
+
+## Deeper investigation (2026-10-03)
+
+**A non-root redirect works in automated tests.** This updates the earlier
+conclusion: the blocked methods above do not rule out every Home workaround.
+
+Device: AFTMM / mantis, Fire OS 6.7.1.1 (NS6711/5908), API 25,
+reported security patch 2025-11-01. ADB runs as shell (UID 2000), `su` was
+not found, and verified boot reports green. The physical eFuse state was not read.
+
+### Working proof of concept
+
+The shell can read ActivityManager's Home launch event and run
+`am start -n com.example.tvlauncher/.MainActivity`. A computer-side monitor
+detected one simulated Home press and returned MCM to the foreground.
+
+Then `tools/fire-tv-home-trial.sh` ran directly on the Fire TV as the ADB shell
+user. After disconnecting and reconnecting ADB, simulated Home presses from MCM
+and Android Settings both returned MCM to `mResumedActivity`. No computer-side
+monitor was running for those checks. Its 120-second expiration was also verified.
+A subsequent 300-second trial was started for physical-remote feedback; that
+feedback is not yet recorded here.
+
+This redirects after Amazon Home starts, so its screen can briefly appear.
+It does not replace the system launcher or intercept volume/D-pad input.
+Physical remote behavior, long-press Home, sleep/wake, and extended reliability
+still need testing. The script has no boot hook and cannot survive a reboot.
+
+To reproduce from a shell that preserves the quoted remote command:
+
+```sh
+adb -s <device>:5555 push tools/fire-tv-home-trial.sh /data/local/tmp/mcm-home-trial.sh
+adb -s <device>:5555 shell 'nohup sh /data/local/tmp/mcm-home-trial.sh 120 >/data/local/tmp/mcm-home-trial.log 2>&1 </dev/null &'
+```
+
+The duration is restricted to 15-300 seconds. Do not start overlapping trials.
+Wait for `MCM Home trial finished` in the log before repeating. Expiration or a
+reboot restores ordinary Home behavior automatically; no settings need undoing.
+
+### Options assessed
+
+| Route | Finding |
+| --- | --- |
+| Shell monitor on the stick | Proven during a bounded trial, including ADB disconnect. Needs a restart mechanism after reboot. |
+| External ADB monitor | Proven once on this computer. An always-on host could reconnect after reboot; that deployment has not been built. |
+| App-contained log monitor | Candidate for further development, not proven. Requires testing log permission, background activity launch, and boot startup on this firmware. |
+| Accessibility tools | Home on Fire explicitly reports 6.7.1.1 unsupported; FTVLaunchX reports failure on 6.2.7.2 and later. Consistent with our failed trial. |
+| Root / custom ROM / downgrade | No verified route found for this installed build. Existing Mantis unlock instructions concern vulnerable older firmware and USB access. A ROM download alone does not provide an unlock. |
+
+Recommended next step: develop the proven log-event redirect into a restartable
+solution, with a visible off switch and an escape to Amazon Home. An app using
+ADB-granted `READ_LOGS`, or a local ADB helper, may remove the external-host
+dependency, but neither should be described as supported before testing.
+No rooting, flashing, firmware downgrade, factory reset, or boot persistence
+was performed during this investigation.
+
+### Primary references
+
+- [Home on Fire compatibility](https://github.com/toolicious/home-on-fire#compatibility): explicitly excludes Fire OS 6.7.1.1.
+- [FTVLaunchX](https://github.com/codefaktor/FTVLaunchX): older accessibility approach is no longer working on 6.2.7.2+.
+- [External ADB monitor example](https://gist.github.com/Skyluker4/c6f7d5c726f202afb46605ae47981eaf): demonstrates the host-side approach; our Fire OS 6 uses ActivityManager rather than its ActivityTaskManager tag.
+- [Kamakiri source](https://github.com/amonet-kamakiri/kamakiri) and [first-person Mantis ROM installation](https://journal.amazinaxel.com/2025/11-05-lineage-on-firetv): the latter explicitly warns that newer firmware patches the unlock. We did not verify any newer exploit for NS6711/5908.
+- [Rootless Logcat source](https://github.com/tananaev/rootless-logcat) and [Android READ_LOGS permission](https://developer.android.com/reference/android/Manifest.permission#READ_LOGS): background for a possible app implementation, not proof of Fire OS compatibility.
