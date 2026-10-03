@@ -16,7 +16,7 @@ class ParentFeedTest {
          "danielLately":{"photos":[$photos]},
          "familyArchive":null,
          "comingUp":[{"title":"Daniel & Eva home","date":"2026-10-15","endDate":"2026-10-19","allDay":true}],
-         "forAmelia":{"live":[{"title":"Record News","subtitle":"Ao vivo","image":"https://i.ytimg.com/vi/x/hqdefault.jpg","link":{"uri":"https://www.youtube.com/watch?v=x","packages":["com.amazon.firetv.youtube"]}}],"novelas":[],"film":null,"duolingoStreak":null},
+         "forAmelia":{"live":[{"title":"Record News","subtitle":"Ao vivo","image":"https://i.ytimg.com/vi/x/hqdefault.jpg","link":{"uri":"https://www.youtube.com/watch?v=x","packages":["com.amazon.firetv.youtube"]}}],"novelas":[],"film":null,"duolingoStreak":1705,"shows":[{"title":"Domingo Legal","subtitle":"Passa ou Repassa","link":{"uri":"https://www.youtube.com/watch?v=d","packages":["com.amazon.firetv.youtube"]}}]},
          "tonight":[],"listening":null,
          "sport":{"wolves":{"name":"Wolves","live":null,"last":{"date":"2026-09-20T11:00Z","competition":"Championship","home":"Wolves","away":"West Brom","homeScore":1,"awayScore":0,"state":"post","venue":"Molineux"},"next":null,"table":{"position":4,"of":24,"league":"2026-27 English League Championship"}},"ireland":null},
          "crochet":[],"aria":[],"localEvents":[] $extra}
@@ -27,6 +27,8 @@ class ParentFeedTest {
         assertEquals(1, f.danielLately.size)
         assertEquals("Daniel & Eva home", f.comingUp.single().title)
         assertEquals("Record News", f.forAmelia!!.live.single().title)
+        assertEquals("Domingo Legal", f.forAmelia!!.shows.single().title)
+        assertEquals(1705, f.forAmelia!!.duolingoStreak)
         assertEquals(4, f.sport!!.wolves!!.position)
         assertEquals(1, f.sport!!.wolves!!.last!!.homeScore)
         assertTrue(f.familyArchive.isEmpty())

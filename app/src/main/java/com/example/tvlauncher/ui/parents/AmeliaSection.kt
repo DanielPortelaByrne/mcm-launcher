@@ -23,7 +23,7 @@ import com.example.tvlauncher.design.Type
  * clips, an action film, and Ária's programme for the daytime. Portuguese, because it is hers.
  */
 class AmeliaSection(private val activity: Activity, private val images: FeedImages, private val aria: () -> Pick?) {
-    val section = Kit.Section(activity, "Para Amélia", "Ao vivo, novelas e um filme", SectionTheme.Mood.EVENING)
+    val section = Kit.Section(activity, "Para Amélia", "Ao vivo, programas e um filme", SectionTheme.Mood.EVENING)
 
     private val guide = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
     private val rowsBox = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
@@ -67,12 +67,13 @@ class AmeliaSection(private val activity: Activity, private val images: FeedImag
     fun bind(a: ForAmelia?) {
         val lines = mutableListOf<Line>()
         a?.live?.firstOrNull()?.let { lines += Line("Ao vivo", it, it.title, "Agora, do Brasil") }
+        a?.shows?.firstOrNull()?.let { lines += Line("Programa", it, it.title, it.subtitle) }
         a?.novelas?.firstOrNull()?.let { lines += Line("Novelas", it, it.title, it.subtitle) }
         a?.film?.let { lines += Line("Filme", it, it.title + (it.year?.let { y -> " ($y)" } ?: ""), "Ação e drama para hoje à noite") }
         aria()?.let { lines += Line("Para a Ária", it, it.title, it.subtitle) }
         if (lines.isEmpty()) { section.shown = false; return }
         section.shown = true
-        streak.text = a?.duolingoStreak?.let { "Inglês · ofensiva de $it dias 🔥" }.orEmpty()
+        streak.text = a?.duolingoStreak?.let { "Duolingo · ofensiva de ${java.text.NumberFormat.getIntegerInstance(java.util.Locale.forLanguageTag("pt-BR")).format(it)} dias 🔥" }.orEmpty()
         streak.visibility = if (streak.text.isNullOrEmpty()) View.GONE else View.VISIBLE
         val key = lines.joinToString { it.pick.link.uri }
         if (key == shownKey) return

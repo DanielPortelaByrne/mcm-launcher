@@ -59,7 +59,7 @@ data class Pick(
     val minutes: Int? = null
 )
 
-data class ForAmelia(val live: List<Pick>, val novelas: List<Pick>, val film: Pick?, val duolingoStreak: Int?)
+data class ForAmelia(val live: List<Pick>, val novelas: List<Pick>, val film: Pick?, val duolingoStreak: Int?, val shows: List<Pick> = emptyList())
 
 data class Listening(val records: List<Pick>, val concert: Pick?, val podcasts: List<Pick>)
 
@@ -105,7 +105,7 @@ object ParentFeedParser {
             },
             forAmelia = root.optJSONObject("forAmelia")?.let { a ->
                 ForAmelia(picks(a.optJSONArray("live")), picks(a.optJSONArray("novelas")), a.optJSONObject("film")?.let(::pick),
-                    a.optInt("duolingoStreak", -1).takeIf { it > 0 })
+                    a.optInt("duolingoStreak", -1).takeIf { it > 0 }, picks(a.optJSONArray("shows")))
             },
             tonight = picks(root.optJSONArray("tonight")),
             listening = root.optJSONObject("listening")?.let { l ->
