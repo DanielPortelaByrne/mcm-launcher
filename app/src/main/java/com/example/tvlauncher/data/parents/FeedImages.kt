@@ -37,7 +37,7 @@ class FeedImages(context: Context) {
         worker.execute {
             if (closed) return@execute
             val bitmap = try { decode(fileFor(url), maxW, maxH, opaque) } catch (e: Throwable) {
-                Log.w("ParentFeed", "Image unavailable: ${e.javaClass.simpleName}"); null
+                Log.w("ParentFeed", "Image unavailable from ${java.net.URL(url).host}: ${e.javaClass.simpleName} ${e.message.orEmpty().take(60)}"); null
             }
             if (bitmap != null) memory.put(key, bitmap)
             main.post { if (!closed) onLoaded(bitmap) }

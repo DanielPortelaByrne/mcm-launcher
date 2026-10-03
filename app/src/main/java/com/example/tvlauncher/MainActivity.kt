@@ -43,7 +43,7 @@ import com.example.tvlauncher.ui.HomeCollection
 import com.example.tvlauncher.ui.NavTab
 import com.example.tvlauncher.ui.SearchPanel
 import com.example.tvlauncher.ui.WhoPicker
-import com.example.tvlauncher.ui.room.HomeRoom
+import com.example.tvlauncher.ui.parents.ParentsHome
 import com.example.tvlauncher.ui.room.InfoSheet
 import com.example.tvlauncher.ui.ShelfLayoutBuilder
 import com.example.tvlauncher.ui.ShelfTile
@@ -91,7 +91,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var accountMenu: AccountMenu
     private lateinit var whoPicker: WhoPicker
     private lateinit var infoSheet: InfoSheet
-    private lateinit var homeRoom: HomeRoom
+    private lateinit var parentsHome: ParentsHome
     private lateinit var continueRow: com.example.tvlauncher.ui.ContinueRow
     private var screenOffAt = 0L
     private lateinit var accountIcon: ImageView
@@ -242,7 +242,7 @@ class MainActivity : AppCompatActivity() {
         bootMark("panels")
         collection = HomeCollection(this, infoSheet, artModeOverlay, ::enterArtMode,
             { handleCapability(systemActions.openSettings()) }, { editAppsPanel.show(currentApps) },
-            { IconCache.clear(); currentApps = emptyList(); refreshApps() })
+            { IconCache.clear(); currentApps = emptyList(); refreshApps() }, withFilm = false)
         androidx.core.content.ContextCompat.registerReceiver(this, screenReceiver, android.content.IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON)
         }, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
@@ -251,7 +251,7 @@ class MainActivity : AppCompatActivity() {
             com.example.tvlauncher.data.ContinueWatching(this), ::resumeItem
         )
         bootMark("collection")
-        homeRoom = HomeRoom(this, infoSheet)
+        parentsHome = ParentsHome(this, infoSheet, findViewById(R.id.homeRoot))
         bootMark("room")
         backdrop = HomeBackdrop(findViewById(R.id.homePainting), artModeOverlay.library)
         // The painting covers the whole window once it is up, so the window's own ink ground is just overdraw.
@@ -261,8 +261,7 @@ class MainActivity : AppCompatActivity() {
         pageVeil = backdrop.attachVeil(homeScroll)
         homeScroll.onScrolled = { y ->
             backdrop.onPageScrolled()
-            com.example.tvlauncher.ui.SpatialNavigation.update(homeScroll.getChildAt(0) as android.view.ViewGroup, y, homeScroll.height)
-        }
+       }
         com.example.tvlauncher.design.SectionTheme.tag(findViewById(R.id.continueSection), com.example.tvlauncher.design.SectionTheme.Mood.FILM)
 
         findViewById<ImageView>(R.id.iconSearch).setOnClickListener { searchPanel.show(currentApps) }
@@ -275,7 +274,7 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
-                    infoSheet.isVisible -> infoSheet.hide()
+                    parentsHome.onBack() -> Unit
                     whoPicker.isVisible -> whoPicker.hide()
                     accountMenu.isVisible -> accountMenu.hide()
                     artModeOverlay.isVisible -> { artModeOverlay.hide(); headerBar.setSelected(NavTab.HOME); collection.homeReturned(); restoreShelfFocus() }
@@ -359,8 +358,7 @@ class MainActivity : AppCompatActivity() {
         if (hasResumedOnce && !artModeOverlay.isVisible) backdrop.advance()
         hasResumedOnce = true
         bootMark("homeReturned+picker")
-        homeRoom.refresh()
-        homeRoom.start()
+        parentsHome.resume()
         ensureWatcherBound()
         ensureRemoteKeysEnabled()
         bootMark("room+watcher")
@@ -379,7 +377,7 @@ class MainActivity : AppCompatActivity() {
         networkMonitor.stop()
         artModeOverlay.pause()
         backdrop.stop()
-        homeRoom.stop()
+        parentsHome.pause()
     }
 
     override fun onDestroy() {
@@ -387,7 +385,7 @@ class MainActivity : AppCompatActivity() {
         collection.close()
         backdrop.close()
         continueRow.close()
-        homeRoom.close()
+        parentsHome.close()
         unregisterReceiver(screenReceiver)
         artModeOverlay.pause()
         super.onDestroy()
@@ -396,6 +394,7 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         if (artModeOverlay.isVisible) artModeOverlay.hide()
+        parentsHome.onHome()
         allAppsPanel.hide(); editAppsPanel.hide(); searchPanel.hide(); accountMenu.hide()
         headerBar.setSelected(NavTab.HOME)
         collection.homeReturned()
@@ -462,14 +461,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun anyOverlayVisible(): Boolean =
-        allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
+        allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing) || (::parentsHome.isInitialized && parentsHome.overlayVisible)
 
     private var obscured = false
     private var pageVeil: android.view.View? = null
 
     private fun syncObscured() {
         if (!::backdrop.isInitialized) return
-        val cover = allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
+        val cover = allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing) || (::parentsHome.isInitialized && parentsHome.overlayVisible)
         if (cover == obscured) return
         obscured = cover
         // Alpha, not visibility: the page stays focusable, so closing a sheet can hand focus straight back to it.

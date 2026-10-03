@@ -119,6 +119,9 @@ object HttpFeedFetcher : FeedFetcher {
 class ParentsConfig(private val context: Context) {
     private val prefs = context.getSharedPreferences("parents_config", Context.MODE_PRIVATE)
 
+    /** True once a newly pushed address has been taken in, so the caller fetches from it straight away. */
+    @Volatile var justProvisioned = false
+
     /** Blocking (touches storage). */
     fun feedUrl(): String? {
         importProvisioned()
@@ -130,7 +133,7 @@ class ParentsConfig(private val context: Context) {
         if (!file.exists()) return
         try {
             val url = org.json.JSONObject(file.readText()).optString("feedUrl")
-            if (url.startsWith("https://")) { prefs.edit().putString("feedUrl", url).apply(); Log.i(TAG, "Feed address provisioned") }
+            if (url.startsWith("https://")) { prefs.edit().putString("feedUrl", url).apply(); justProvisioned = true; Log.i(TAG, "Feed address provisioned") }
             else Log.w(TAG, "Provisioned config has no https feedUrl; ignored")
         } catch (e: Exception) {
             Log.w(TAG, "Provisioned config unreadable: ${e.javaClass.simpleName}")

@@ -17,8 +17,12 @@ import com.example.tvlauncher.data.FilmDetails
 import com.example.tvlauncher.data.FilmInfo
 import com.example.tvlauncher.data.Watchlist
 
-class HomeCollection(private val activity: Activity, private val sheet: com.example.tvlauncher.ui.room.InfoSheet, private val art: ArtModeOverlay, private val onArt: () -> Unit, private val onSettings: () -> Unit, private val onEdit: () -> Unit, private val onIconStyle: () -> Unit) {
-    private val watchlist = Watchlist(activity)
+/**
+ * [withFilm]: Eva's Letterboxd film card in the hero. The parents' home leaves it out (its hero holds
+ * "Coming up"), and then the watchlist is never read or synced.
+ */
+class HomeCollection(private val activity: Activity, private val sheet: com.example.tvlauncher.ui.room.InfoSheet, private val art: ArtModeOverlay, private val onArt: () -> Unit, private val onSettings: () -> Unit, private val onEdit: () -> Unit, private val onIconStyle: () -> Unit, private val withFilm: Boolean = true) {
+    private val watchlist by lazy { Watchlist(activity) }
     private var film: Film? = null
     private val title = com.example.tvlauncher.design.Type.text(activity, "Finding tonight's film…", com.example.tvlauncher.design.Type.Style.HEADING)
     private val status = com.example.tvlauncher.design.Type.text(activity, "Syncing Eva's watchlist", com.example.tvlauncher.design.Type.Style.CAPTION)
@@ -87,7 +91,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         panel(card, 20)
         card.setOnClickListener { showFilm() }
         com.example.tvlauncher.design.SectionTheme.tag(card, com.example.tvlauncher.design.SectionTheme.Mood.FILM)
-        activity.findViewById<FrameLayout>(R.id.homeHero).addView(card, FrameLayout.LayoutParams(dp(408), dp(184), Gravity.END or Gravity.CENTER_VERTICAL))
+        if (withFilm) activity.findViewById<FrameLayout>(R.id.homeHero).addView(card, FrameLayout.LayoutParams(dp(408), dp(184), Gravity.END or Gravity.CENTER_VERTICAL))
 
         val sections = activity.findViewById<LinearLayout>(R.id.discoverSections)
         sections.addView(com.example.tvlauncher.design.SectionHeader.build(activity, "The MCM collection", "${art.library.paintings.size} paintings for a quieter screen"))
@@ -155,12 +159,13 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         sections.addView(actions, LinearLayout.LayoutParams(-1,-2))
     }
     fun homeReturned() {
+        if (!withFilm) return
         watchlist.whenLoaded { activity.runOnUiThread { if (!disposed) { film = nextFilm(); render() } } }
         watchlist.refresh { message -> activity.runOnUiThread {
             if (!disposed) { status.text=message; if (film == null) { film=nextFilm(); render() } else status.visibility = View.GONE }
         } }
     }
-    fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); thumbDecoder.shutdownNow() }
+    fun close() { disposed=true; if (withFilm) watchlist.close(); info.close(); smartWorker.shutdownNow(); thumbDecoder.shutdownNow() }
     private fun render() {
         com.example.tvlauncher.design.Motion.swapText(title, film?.title ?: "Your next film awaits")
         showDetails()
