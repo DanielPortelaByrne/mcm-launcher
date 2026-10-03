@@ -36,6 +36,10 @@ monitor and restarts it at boot. Reboot startup and Home from Amazon/Settings
 were verified on the stick. Amazon Home can appear briefly before MCM returns.
 No root or always-on computer is required.
 
+MCM also opens automatically once per Fire TV boot while Home routing is enabled.
+It waits for app storage to unlock; late boot callbacks do not reopen it over
+another app. Turning Home routing off also disables this startup launch.
+
 Press **Menu in MCM** to turn routing on/off, open Amazon Home with a one-minute
 pause, or open Fire TV settings. On a new installation, grant the one-time
 permission below, restart MCM, then enable routing through Menu:

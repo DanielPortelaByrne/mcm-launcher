@@ -18,6 +18,27 @@ class FireHomeService : Service() {
     @Volatile private var running = false
     @Volatile private var reader: Process? = null
     private var worker: Thread? = null
+    private val bootHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var bootAttempt = 0
+    private val bootLaunch = object : Runnable {
+        override fun run() {
+            if (!running || !enabled(this@FireHomeService)) return
+            val boot = android.provider.Settings.Global.getInt(contentResolver, "boot_count", 0)
+            if (prefs(this@FireHomeService).getInt("opened_boot", -1) == boot) return
+            if (getSystemService(android.os.UserManager::class.java).isUserUnlocked) {
+                try {
+                    startActivity(Intent(this@FireHomeService, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                    prefs(this@FireHomeService).edit().putInt("opened_boot", boot).apply()
+                    Log.i(TAG, "MCM opened at startup")
+                    return
+                } catch (e: Exception) {
+                    Log.w(TAG, "Startup launch waiting: ${e.javaClass.simpleName}")
+                }
+            }
+            if (++bootAttempt < 120) bootHandler.postDelayed(this, 1000)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -38,6 +59,11 @@ class FireHomeService : Service() {
             startForeground(3101, notification)
             running = true
             worker = Thread({ monitor() }, "McmHomeMonitor").also { it.start() }
+        }
+        if (intent?.getBooleanExtra("open_at_boot", false) == true) {
+            bootAttempt = 0
+            bootHandler.removeCallbacks(bootLaunch)
+            bootHandler.post(bootLaunch)
         }
         return START_STICKY
     }
@@ -71,6 +97,7 @@ class FireHomeService : Service() {
 
     override fun onDestroy() {
         running = false
+        bootHandler.removeCallbacks(bootLaunch)
         reader?.destroy()
         worker?.interrupt()
         stopForeground(true)
@@ -91,8 +118,9 @@ class FireHomeService : Service() {
             return storage.getSharedPreferences("fire_home", Context.MODE_PRIVATE)
         }
         fun enabled(context: Context) = prefs(context).getBoolean("enabled", false)
-        fun startIfEnabled(context: Context) {
-            if (supported() && enabled(context)) context.startService(Intent(context, FireHomeService::class.java))
+        fun startIfEnabled(context: Context, openAtBoot: Boolean = false) {
+            if (supported() && enabled(context)) context.startService(Intent(context, FireHomeService::class.java)
+                .putExtra("open_at_boot", openAtBoot))
         }
     }
 }
@@ -108,7 +136,7 @@ class FireHomeBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED || intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             Log.i(FireHomeService.TAG, "Restart after ${intent.action}")
-            FireHomeService.startIfEnabled(context)
+            FireHomeService.startIfEnabled(context, intent.action != Intent.ACTION_MY_PACKAGE_REPLACED)
         }
     }
 }

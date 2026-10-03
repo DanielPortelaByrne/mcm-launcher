@@ -147,3 +147,21 @@ No root, bootloader change, firmware flash, external relay, or shell boot hook
 is used. `tools/fire-tv-home-trial.sh` remains a bounded diagnostic prototype;
 do not run it alongside the permanent service. The two older restore scripts
 address the abandoned default-Home/accessibility trials, not this log monitor.
+
+## Explicit startup launch (2026-10-03)
+
+Boot broadcasts now request an explicit MCM launch as well as starting the
+monitor. The service waits for credential storage to unlock, with bounded
+one-second retries for up to two minutes. It records the boot count after a
+successful request so the delayed normal boot broadcast does not interrupt a
+subsequently opened app. App updates and ordinary service restarts do not request
+this launch. Turning Home routing off also disables startup launch.
+
+Verified with a real reboot and no remote or simulated key input: Amazon Home
+appeared during initial startup, then MCM became the resumed activity. The saved
+`opened_boot` matched the current boot count, and the Home monitor was foreground.
+The build and all 96 unit tests passed before installation.
+
+This concerns Fire TV boot. Turning the television on while an independently
+powered Fire Stick stays running is a different event and is not covered by this
+boot callback.
