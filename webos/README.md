@@ -74,3 +74,11 @@ Dependencies and references:
 - https://webostv.developer.lge.com/develop/tools/cli-dev-guide
 
 LG source lives in `webos/` on branch `feature/lg-webos`.
+
+The initial Your apps order is YouTube, Fire TV Stick (HDMI 1), then
+PlayStation 5 (HDMI 2). The HDMI shortcuts have device icons and switch inputs.
+Existing preferences are migrated once; later app reordering stays editable.
+
+The recommended film hero uses Letterboxd landscape artwork with a readable
+overlay. Artwork is fetched only for the selected film, cached (up to 40 images),
+and falls back to the plain card if unavailable.

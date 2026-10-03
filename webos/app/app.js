@@ -6,6 +6,12 @@
   var prefs;
   try { prefs = JSON.parse(localStorage.getItem('mcm.home') || '{}'); } catch (_) { prefs = {}; }
   prefs.hidden = prefs.hidden || []; prefs.order = prefs.order || [];
+  if (prefs.shelfLayout !== 'hdmi-shortcuts-v1') {
+    var shortcuts = ['youtube.leanback.v4', 'com.webos.app.hdmi1', 'com.webos.app.hdmi2'];
+    prefs.order = shortcuts.concat(prefs.order.filter(function(id) { return shortcuts.indexOf(id) < 0; }));
+    prefs.hidden = prefs.hidden.filter(function(id) { return shortcuts.indexOf(id) < 0; });
+    prefs.shelfLayout = 'hdmi-shortcuts-v1';
+  }
   prefs.profile = 'Bandit and Aries'; prefs.painting = Number(prefs.painting) || 0;
   var bridges = [], toastTimer, artTimer;
   var $ = function (s) { return document.querySelector(s); };
@@ -47,7 +53,7 @@
       return ai - bi || a.title.localeCompare(b.title);
     });
   }
-  function icon(app) { return app.iconData ? '<img src="' + escape(app.iconData) + '" alt="">' : escape(app.title.slice(0,1)); }
+  function icon(app) { if (app.id === 'com.webos.app.hdmi1' || app.id === 'com.webos.app.hdmi2') return '<img src="assets/' + (app.id === 'com.webos.app.hdmi1' ? 'fire-tv.svg' : 'playstation.svg') + '" alt="">'; return app.iconData ? '<img src="' + escape(app.iconData) + '" alt="">' : escape(app.title.slice(0,1)); }
   function appButton(app, wide) { return '<button class="app-button' + (wide ? ' wide-app' : '') + '" data-app="' + escape(app.id) + '" aria-label="' + escape(app.title) + '"><span class="disc">' + icon(app) + '</span><span><span class="label">' + escape(app.title) + '</span>' + (wide ? '<small>OPEN APP</small>' : '') + '</span></button>'; }
   function renderApps() {
     var visible = appsSorted(false);
@@ -112,8 +118,19 @@
   }
 
   function updateRecipe() { $('#recipe').innerHTML = '<span class="eyebrow">FROM THE MESA RECIPE BOX</span><strong>' + escape(state.recipe.title) + '</strong><small>' + escape(state.recipe.cuisine || '') + '</small><small>OK to open · Hold OK to shuffle</small>'; }
-  function updateFilm() { $('#film-title').textContent = state.film.title + (state.film.year ? ' (' + state.film.year + ')' : ''); $('#film-source').textContent = state.film.path ? 'From Karsten Runquist’s Letterboxd watchlist' : 'From your MCM picks'; }
+  function updateFilm() { refreshFilmArt(); $('#film-title').textContent = state.film.title + (state.film.year ? ' (' + state.film.year + ')' : ''); $('#film-source').textContent = state.film.path ? 'From Karsten Runquist’s Letterboxd watchlist' : 'From your MCM picks'; }
   function filmPanel() { var f=state.film; panel('film',heading(f.title) + '<p class="panel-copy">' + (f.path ? 'From Karsten Runquist’s public Letterboxd watchlist.' : 'A pick from the MCM film collection.') + '</p><div class="panel-actions"><button data-action="film-search">Find on the TV</button>' + (f.path ? '<button data-action="letterboxd">Open Letterboxd</button>' : '') + '<button data-action="film-shuffle">Another film</button></div>'); }
+  function refreshFilmArt() {
+    var film = state.film, card = $('#film');
+    card.style.backgroundImage = '';card.classList.remove('with-art');
+    if (!film.path) return;
+    exec('python3 /var/lib/mcm-home/film-art.py ' + quote(film.path)).then(function(text) {
+      var data = JSON.parse(text);
+      if (state.film !== film || !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(data.image || '')) return;
+      card.style.backgroundImage = 'linear-gradient(0deg,rgba(20,15,10,.95),rgba(20,15,10,.12) 70%),url("' + data.image + '")';
+      card.classList.add('with-art');
+    }).catch(function(){});
+  }
   function refreshFilm() { return exec('python3 /var/lib/mcm-home/watchlist.py').then(function(text) { var data=JSON.parse(text); if(data.source === 'kurstboy' && data.films && data.films.length) {state.watchlist=data.films;state.film=data.films[Math.floor(Math.random()*data.films.length)];updateFilm();} }).catch(function(){}); }
   function inputs() { rootLuna('luna://com.webos.service.eim/getAllInputStatus',{}).then(function (r) { panel('inputs',heading('Inputs') + '<div class="option-list">' + (r.devices || []).map(function (d) { return '<button data-input="' + escape(d.appId) + '">' + escape(d.label || d.appId) + '</button>'; }).join('') + '<button data-action="inputs-app">Open TV input menu</button></div>'); }).catch(function () { launch('com.webos.app.inputs').catch(function () {}); }); }
   function action(name) {
