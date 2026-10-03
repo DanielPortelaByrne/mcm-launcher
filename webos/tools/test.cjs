@@ -15,7 +15,7 @@ w.PalmServiceBridge=class{
     const data=JSON.parse(payload);calls.push({uri,data});
     let response={returnValue:true,stdoutString:'timingServiceResponse Got response: {"returnValue":true}'};
     if(data.command?.includes('list-apps.py'))response.stdoutString=JSON.stringify({apps});
-    if(data.command?.includes('watchlist.py'))response.stdoutString=JSON.stringify({films:[{title:'Watchlist film',path:'/film/test/'}]});
+    if(data.command?.includes('watchlist.py'))response.stdoutString=JSON.stringify({source:'kurstboy',films:[{title:'Watchlist film',path:'/film/test/'}]});
     queueMicrotask(()=>this.onservicecallback(JSON.stringify(response)));
   }
 };
@@ -29,7 +29,7 @@ async function run(){
   await tick();
   assert.equal(q('#shelf').querySelectorAll('[data-app]').length,7);
   assert.equal(q('#more').querySelectorAll('[data-app]').length,5);
-  assert.equal(q('#projects'),null);assert.equal(q('#listening'),null);assert.equal(w.MCM.prefs.profile,'Bandit and Aries');assert.equal(w.MCM.prefs.painting,2);assert(!calls.some(c=>c.data.command?.includes('watchlist.py')));
+  assert.equal(q('#projects'),null);assert.equal(q('#listening'),null);assert.equal(w.MCM.prefs.profile,'Bandit and Aries');assert.equal(w.MCM.prefs.painting,2);assert.equal(q('#film-title').textContent,'Watchlist film');assert(q('#film-source').textContent.includes('Karsten Runquist'));assert(!w.document.body.textContent.includes('EVA'));w.MCM.action('film');assert(q('[data-action="letterboxd"]'));w.MCM.action('close-panel');
   w.MCM.action('apps');assert.equal(q('#app-grid').children.length,12);
   w.MCM.action('close-panel');assert.equal(q('#panel').hidden,true);
   w.MCM.action('search');q('#search').value='App 10';q('#search').dispatchEvent(new w.Event('input'));assert.equal(q('#app-grid').children.length,1);

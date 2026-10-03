@@ -112,8 +112,9 @@
   }
 
   function updateRecipe() { $('#recipe').innerHTML = '<span class="eyebrow">FROM THE MESA RECIPE BOX</span><strong>' + escape(state.recipe.title) + '</strong><small>' + escape(state.recipe.cuisine || '') + '</small><small>OK to open · Hold OK to shuffle</small>'; }
-  function updateFilm() { $('#film-title').textContent = state.film.title + (state.film.year ? ' (' + state.film.year + ')' : ''); $('#film-source').textContent = 'From your MCM picks'; }
-  function filmPanel() { var f=state.film; panel('film',heading(f.title) + '<p class="panel-copy">A pick from the MCM film collection.</p><div class="panel-actions"><button data-action="film-search">Find on the TV</button><button data-action="film-shuffle">Another film</button></div>'); }
+  function updateFilm() { $('#film-title').textContent = state.film.title + (state.film.year ? ' (' + state.film.year + ')' : ''); $('#film-source').textContent = state.film.path ? 'From Karsten Runquist’s Letterboxd watchlist' : 'From your MCM picks'; }
+  function filmPanel() { var f=state.film; panel('film',heading(f.title) + '<p class="panel-copy">' + (f.path ? 'From Karsten Runquist’s public Letterboxd watchlist.' : 'A pick from the MCM film collection.') + '</p><div class="panel-actions"><button data-action="film-search">Find on the TV</button>' + (f.path ? '<button data-action="letterboxd">Open Letterboxd</button>' : '') + '<button data-action="film-shuffle">Another film</button></div>'); }
+  function refreshFilm() { return exec('python3 /var/lib/mcm-home/watchlist.py').then(function(text) { var data=JSON.parse(text); if(data.source === 'kurstboy' && data.films && data.films.length) {state.watchlist=data.films;state.film=data.films[Math.floor(Math.random()*data.films.length)];updateFilm();} }).catch(function(){}); }
   function inputs() { rootLuna('luna://com.webos.service.eim/getAllInputStatus',{}).then(function (r) { panel('inputs',heading('Inputs') + '<div class="option-list">' + (r.devices || []).map(function (d) { return '<button data-input="' + escape(d.appId) + '">' + escape(d.label || d.appId) + '</button>'; }).join('') + '<button data-action="inputs-app">Open TV input menu</button></div>'); }).catch(function () { launch('com.webos.app.inputs').catch(function () {}); }); }
   function action(name) {
     switch(name) {
@@ -131,7 +132,8 @@
       case 'refresh-apps': refreshApps(); break;
       case 'recipe': info(state.recipe.title,state.recipe.cuisine,[state.recipe.descriptor,'From the MESA recipe collection. Full recipes are not yet connected in the original launcher.']); break;
       case 'film': filmPanel(); break;
-      case 'film-shuffle': var pool=DATA.films; state.film=pool[Math.floor(Math.random()*pool.length)]; updateFilm(); filmPanel(); break;
+      case 'film-shuffle': var pool=state.watchlist || DATA.films; state.film=pool[Math.floor(Math.random()*pool.length)]; updateFilm(); filmPanel(); break;
+      case 'letterboxd': if(state.film.path)openUrl('https://letterboxd.com'+state.film.path); break;
       case 'film-search': launch('com.webos.app.voiceweb',{query:state.film.title}).catch(function () { openUrl('https://www.justwatch.com/uk/search?q='+encodeURIComponent(state.film.title)); }); break;
       case 'restore-home': panel('restore',heading('Restore LG Home')+'<p class="panel-copy">The Home button will open LG Home again. MCM stays installed and can still be opened from Apps.</p><div class="panel-actions"><button data-action="confirm-restore">Restore LG Home button</button></div>'); break;
       case 'confirm-restore': exec('/var/lib/mcm-home/restore-home.sh').then(function(){toast('LG Home button restored');}).catch(function(e){toast(e.message);}); break;
@@ -175,6 +177,6 @@
   document.addEventListener('visibilitychange',function(){if(!document.hidden){refreshApps();}});
   window.addEventListener('error',function(e){toast('MCM: '+e.message);});
   function clock(){ $('#clock').textContent=new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}); }
-  painting(prefs.painting);$('#profile').textContent='B&A';$('#profile').setAttribute('aria-label',prefs.profile);clock();setInterval(clock,30000);personal();$('.nav').focus();refreshApps();
+  painting(prefs.painting);$('#profile').textContent='B&A';$('#profile').setAttribute('aria-label',prefs.profile);clock();setInterval(clock,30000);personal();$('.nav').focus();refreshApps();refreshFilm();
   window.MCM = {state:state,prefs:prefs,action:action,refreshApps:refreshApps,move:move,launch:launch};
 })();

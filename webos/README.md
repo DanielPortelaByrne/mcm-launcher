@@ -9,8 +9,9 @@ the Bandit and Aries profile locally, and supports D-pad navigation, long-press 
 painting selection, and full-screen rotating art.
 
 This LG version has one local profile, **Bandit and Aries**. Existing personal
-profile preferences are replaced on launch. Sideboard, Now Spinning and the
-personal watchlist integration are removed. Films use bundled MCM picks.
+profile preferences are replaced on launch. Sideboard and Now Spinning are removed. Film picks use Karsten Runquist’s
+public Letterboxd watchlist (`kurstboy`), with bundled MCM picks as fallback.
+The first watchlist page is cached on the TV for six hours.
 Recipe summaries remain available.
 This port does not include Android's Media3 player, Google
 account selection, Android media-session watching, or the Stremio stream-ranking
