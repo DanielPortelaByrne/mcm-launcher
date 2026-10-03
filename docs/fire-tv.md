@@ -1,6 +1,7 @@
-# Fire TV installation
+# Fire TV installation - Daniel's parents' house
 
-The original Daniel, Daniel (UK), and Eva launcher was installed on the
+At Daniel's parents' house, the original Daniel, Daniel (UK), and Eva launcher
+was installed on the
 Amazon Fire TV Stick AFTMM running Android 7.1.2 / API 25.
 
 Branch: `feature/fire-tv`. This uses the original native Android app,
