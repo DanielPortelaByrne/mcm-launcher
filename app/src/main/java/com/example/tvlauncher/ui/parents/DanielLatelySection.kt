@@ -72,12 +72,14 @@ class DanielLatelySection(private val activity: Activity, private val images: Fe
     private fun build(a: DanielLatelyArrangement.Arranged, now: Long) {
         leadBox.removeAllViews(); smallRow.removeAllViews()
         val prints = mutableListOf<View>()
-        fun add(photo: Photo, parent: android.view.ViewGroup, heightDp: Int, tilt: Float, position: Int) {
-            val aspect = photo.aspect.coerceIn(0.66f, 1.6f)
+        fun widthOf(photo: Photo, heightDp: Int): Int {
             val border = if (heightDp > 200) 9 else 6
+            return (Kit.dp(activity, heightDp - border * 2) * photo.aspect.coerceIn(0.66f, 1.6f)).toInt() + Kit.dp(activity, border * 2)
+        }
+        fun add(photo: Photo, parent: android.view.ViewGroup, heightDp: Int, tilt: Float, position: Int) {
             val h = Kit.dp(activity, heightDp)
-            val w = (Kit.dp(activity, heightDp - border * 2) * aspect).toInt() + Kit.dp(activity, border * 2)
-            val print = Kit.Print(activity, tilt, border)
+            val w = widthOf(photo, heightDp)
+            val print = Kit.Print(activity, tilt, if (heightDp > 200) 9 else 6)
             print.frame.contentDescription = photo.caption ?: "Photo from Daniel"
             print.bindFocus(null) { focused -> if (focused) describe(photo, position, now) }
             print.frame.setOnClickListener { Motion.press(print.frame, Motion.CARD_SCALE); open(position, print.frame) }
@@ -88,7 +90,14 @@ class DanielLatelySection(private val activity: Activity, private val images: Fe
             images.load(photo.thumbUrl, w, h) { print.set(it) }
         }
         add(a.lead, leadBox, LEAD_H, -1.6f, 0)
-        a.others.forEachIndexed { i, p -> add(p, smallRow, SMALL_H, TILTS[i % TILTS.size], i + 1) }
+        // Only as many small prints as fit between the lead print and the page margin.
+        var room = Kit.dp(activity, PAGE_W - 28) - widthOf(a.lead, LEAD_H)
+        a.others.forEachIndexed { i, p ->
+            val need = widthOf(p, SMALL_H) + if (i > 0) Kit.dp(activity, 18) else 0
+            if (need > room) return@forEachIndexed
+            room -= need
+            add(p, smallRow, SMALL_H, TILTS[i % TILTS.size], i + 1)
+        }
         Kit.trapEdges(prints)
         describe(a.lead, 0, now)
     }
@@ -109,6 +118,8 @@ class DanielLatelySection(private val activity: Activity, private val images: Fe
     private companion object {
         const val LEAD_H = 262
         const val SMALL_H = 128
+        /** The width between the page margins (960dp layout, 48dp margins). */
+        const val PAGE_W = 864
         val TILTS = floatArrayOf(2.2f, -1.4f, 1.6f)
     }
 }

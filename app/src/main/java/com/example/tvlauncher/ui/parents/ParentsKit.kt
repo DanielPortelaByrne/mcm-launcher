@@ -132,8 +132,10 @@ object Kit {
 
     /** A section on the page: its heading and body. Hidden whole when there is nothing to show. */
     class Section(val context: Context, title: String, subtitle: String? = null, mood: com.example.tvlauncher.design.SectionTheme.Mood) {
-        private val header = com.example.tvlauncher.design.SectionHeader.build(context, title, subtitle)
+        // Always built with a subtitle slot, so a section can say something later ("7 photos · last added today").
+        private val header = com.example.tvlauncher.design.SectionHeader.build(context, title, subtitle ?: " ")
         val subtitleView: TextView? = (header as LinearLayout).getChildAt(1) as? TextView
+        init { subtitle(subtitle) }
         val body = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         val view = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false

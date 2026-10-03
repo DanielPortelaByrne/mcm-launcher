@@ -98,6 +98,7 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
     /** Worker thread. */
     private fun check(force: Boolean) {
         val outcome = repository.refresh(force = force, minIntervalMs = MIN_CHECK_MS)
+        if (outcome != ParentFeedRepository.Outcome.SKIPPED) Log.i(TAG, "Feed check: $outcome (feed of ${repository.cached?.updatedAt ?: "none"})")
         if (outcome == ParentFeedRepository.Outcome.UPDATED) main.post { if (!closed) render(repository.cached) }
     }
 
