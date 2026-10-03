@@ -16,7 +16,7 @@ w.PalmServiceBridge=class{
     const data=JSON.parse(payload);calls.push({uri,data});
     let response={returnValue:true,stdoutString:'timingServiceResponse Got response: {"returnValue":true}'};
     if(data.command?.includes('list-apps.py'))response.stdoutString=JSON.stringify({apps});
-    if(data.command?.includes('watchlist.py'))response.stdoutString=JSON.stringify({source:'kurstboy',films:[{title:'Watchlist film',path:'/film/test/'}]});
+    if(data.command?.includes('watchlist.py'))response.stdoutString=JSON.stringify({source:'kurstboy-high-rated',films:[{title:'Below threshold',path:'/film/low/',rating:3.99},{title:'Watchlist film',path:'/film/test/',rating:4.3},{title:'Unknown rating',path:'/film/unknown/'}]});
     if(data.command?.includes('film-art.py'))response.stdoutString=JSON.stringify({image:'data:image/jpeg;base64,aGVsbG8='});
     queueMicrotask(()=>this.onservicecallback(JSON.stringify(response)));
   }
@@ -31,7 +31,7 @@ async function run(){
   await tick();
   assert.equal(q('#shelf').querySelectorAll('[data-app]').length,7);
   assert.equal(q('#more').querySelectorAll('[data-app]').length,8);
-  assert.equal(q('#projects'),null);assert.equal(q('#listening'),null);assert.equal(w.MCM.prefs.profile,'Bandit and Aries');assert.equal(w.MCM.prefs.painting,2);assert.equal(q('#film-title').textContent,'Watchlist film');assert(q('#film-source').textContent.includes('Karsten Runquist'));assert(q('#film').classList.contains('with-art'));assert(q('#film').style.backgroundImage.includes('data:image/jpeg')); assert(!w.document.body.textContent.includes('EVA'));w.MCM.action('film');assert(q('[data-action="letterboxd"]'));w.MCM.action('close-panel');
+  assert.equal(q('#projects'),null);assert.equal(q('#listening'),null);assert.equal(w.MCM.prefs.profile,'Bandit and Aries');assert.equal(w.MCM.prefs.painting,2);assert.equal(q('#film-title').textContent,'Watchlist film');assert(q('#film-source').textContent.includes('4.30 / 5'));assert.equal(w.MCM.state.watchlist.length,1);assert(w.MCM_DATA.films.every(f=>f.rating>=4&&f.rating<=5));assert(q('#film').classList.contains('with-art'));assert(q('#film').style.backgroundImage.includes('data:image/jpeg')); assert(!w.document.body.textContent.includes('EVA'));w.MCM.action('film');assert(q('[data-action="letterboxd"]'));w.MCM.action('close-panel');
   assert.deepEqual(Array.from(q('#shelf').querySelectorAll('[data-app]')).slice(0,3).map(b=>b.dataset.app),['youtube.leanback.v4','com.webos.app.hdmi1','com.webos.app.hdmi2']);
   for(const id of ['com.webos.app.hdmi1','com.webos.app.hdmi2']) {const b=q('#shelf [data-app="'+id+'"]');assert(b.querySelector('img'));b.click();await tick();assert(calls.some(c=>c.data.command?.includes(id)&&c.data.command.includes('applicationmanager/launch')));}
   w.MCM.action('apps');assert.equal(q('#app-grid').children.length,15);

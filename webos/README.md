@@ -10,7 +10,8 @@ painting selection, and full-screen rotating art.
 
 This LG version has one local profile, **Bandit and Aries**. Existing personal
 profile preferences are replaced on launch. Sideboard and Now Spinning are removed. Film picks use Karsten Runquist’s
-public Letterboxd watchlist (`kurstboy`), with bundled MCM picks as fallback.
+public Letterboxd watchlist (`kurstboy`), filtered to films averaging at least 4.0/5 on Letterboxd.
+A saved snapshot of qualifying films is bundled as offline fallback.
 The first watchlist page is cached on the TV for six hours.
 Recipe summaries remain available.
 This port does not include Android's Media3 player, Google
@@ -82,3 +83,7 @@ Existing preferences are migrated once; later app reordering stays editable.
 The recommended film hero uses Letterboxd landscape artwork with a readable
 overlay. Artwork is fetched only for the selected film, cached (up to 40 images),
 and falls back to the plain card if unavailable.
+
+The recommendation card shows the verified average rating. Unrated titles and
+films below 4.0 are excluded. Ratings are refreshed with the six-hour watchlist
+cache; recommendations currently draw from its first page.

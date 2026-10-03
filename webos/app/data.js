@@ -144,44 +144,34 @@ window.MCM_DATA = {
   ],
   "films": [
     {
-      "id": "paddington2",
-      "title": "Paddington 2",
-      "year": 2017
+      "title": "The Treasure of the Sierra Madre (1948)",
+      "path": "/film/the-treasure-of-the-sierra-madre/",
+      "rating": 4.3
     },
     {
-      "id": "amelie",
-      "title": "Amélie",
-      "year": 2001
+      "title": "We All Loved Each Other So Much (1974)",
+      "path": "/film/we-all-loved-each-other-so-much/",
+      "rating": 4.27
     },
     {
-      "id": "budapest",
-      "title": "The Grand Budapest Hotel",
-      "year": 2014
+      "title": "The Disappearance of Haruhi Suzumiya (2010)",
+      "path": "/film/the-disappearance-of-haruhi-suzumiya/",
+      "rating": 4.26
     },
     {
-      "id": "chef",
-      "title": "Chef",
-      "year": 2014
+      "title": "Carandiru (2003)",
+      "path": "/film/carandiru/",
+      "rating": 4.17
     },
     {
-      "id": "julie",
-      "title": "Julie & Julia",
-      "year": 2009
+      "title": "The Raid (2011)",
+      "path": "/film/the-raid-2011/",
+      "rating": 4.04
     },
     {
-      "id": "sunshine",
-      "title": "Little Miss Sunshine",
-      "year": 2006
-    },
-    {
-      "id": "ratatouille",
-      "title": "Ratatouille",
-      "year": 2007
-    },
-    {
-      "id": "moonrise",
-      "title": "Moonrise Kingdom",
-      "year": 2012
+      "title": "Fox and His Friends (1975)",
+      "path": "/film/fox-and-his-friends/",
+      "rating": 4.02
     }
   ]
 };

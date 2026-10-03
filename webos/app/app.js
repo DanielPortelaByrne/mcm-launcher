@@ -118,8 +118,8 @@
   }
 
   function updateRecipe() { $('#recipe').innerHTML = '<span class="eyebrow">FROM THE MESA RECIPE BOX</span><strong>' + escape(state.recipe.title) + '</strong><small>' + escape(state.recipe.cuisine || '') + '</small><small>OK to open · Hold OK to shuffle</small>'; }
-  function updateFilm() { refreshFilmArt(); $('#film-title').textContent = state.film.title + (state.film.year ? ' (' + state.film.year + ')' : ''); $('#film-source').textContent = state.film.path ? 'From Karsten Runquist’s Letterboxd watchlist' : 'From your MCM picks'; }
-  function filmPanel() { var f=state.film; panel('film',heading(f.title) + '<p class="panel-copy">' + (f.path ? 'From Karsten Runquist’s public Letterboxd watchlist.' : 'A pick from the MCM film collection.') + '</p><div class="panel-actions"><button data-action="film-search">Find on the TV</button>' + (f.path ? '<button data-action="letterboxd">Open Letterboxd</button>' : '') + '<button data-action="film-shuffle">Another film</button></div>'); }
+  function updateFilm() { refreshFilmArt(); var tonight=$('#tonight [data-action="film"]');if(tonight)tonight.textContent='Watch · '+state.film.title; $('#film-title').textContent = state.film.title + (state.film.year ? ' (' + state.film.year + ')' : ''); $('#film-source').textContent = state.film.rating.toFixed(2) + ' / 5 on Letterboxd' + (state.watchlist ? ' · Highly rated picks' : ' · Saved pick'); }
+  function filmPanel() { var f=state.film; panel('film',heading(f.title) + '<p class="panel-copy">' + ('Rated ' + f.rating.toFixed(2) + ' out of 5 on Letterboxd. From Karsten Runquist’s public watchlist; only films averaging at least 4.0 qualify.') + '</p><div class="panel-actions"><button data-action="film-search">Find on the TV</button>' + (f.path ? '<button data-action="letterboxd">Open Letterboxd</button>' : '') + '<button data-action="film-shuffle">Another film</button></div>'); }
   function refreshFilmArt() {
     var film = state.film, card = $('#film');
     card.style.backgroundImage = '';card.classList.remove('with-art');
@@ -131,7 +131,7 @@
       card.classList.add('with-art');
     }).catch(function(){});
   }
-  function refreshFilm() { return exec('python3 /var/lib/mcm-home/watchlist.py').then(function(text) { var data=JSON.parse(text); if(data.source === 'kurstboy' && data.films && data.films.length) {state.watchlist=data.films;state.film=data.films[Math.floor(Math.random()*data.films.length)];updateFilm();} }).catch(function(){}); }
+  function refreshFilm() { return exec('python3 /var/lib/mcm-home/watchlist.py').then(function(text) { var data=JSON.parse(text); if(data.source === 'kurstboy-high-rated' && data.films && data.films.length) {var films=data.films.filter(function(f){return typeof f.rating === 'number' && f.rating >= 4 && f.rating <= 5;});if(films.length){state.watchlist=films;state.film=films[Math.floor(Math.random()*films.length)];updateFilm();}} }).catch(function(){}); }
   function inputs() { rootLuna('luna://com.webos.service.eim/getAllInputStatus',{}).then(function (r) { panel('inputs',heading('Inputs') + '<div class="option-list">' + (r.devices || []).map(function (d) { return '<button data-input="' + escape(d.appId) + '">' + escape(d.label || d.appId) + '</button>'; }).join('') + '<button data-action="inputs-app">Open TV input menu</button></div>'); }).catch(function () { launch('com.webos.app.inputs').catch(function () {}); }); }
   function action(name) {
     switch(name) {

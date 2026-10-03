@@ -2,3 +2,4 @@ node_modules/
 tools/tv-host-fingerprint.txt
 artifacts/*.ipk
 artifacts/*.png
+artifacts/*.json
