@@ -1,16 +1,105 @@
-# MCM Launcher - Fire TV
+# MCM Launcher - Fire TV (parents' home)
 
-MCM launcher adapted for the **Amazon Fire TV
-Stick at Daniel's parents' house**. Maintained on `feature/fire-tv`.
-The active native Android app source is in `app/`.
+MCM launcher for the **Amazon Fire TV Stick at Daniel's parents' house**.
+`feature/parents-home` (this branch) is the parents' own home screen, built on
+`feature/fire-tv`, which holds the Fire OS Home routing. The app source is in `app/`.
 
 ## This household's version
 
 The installed device is an **AFTMM Fire TV Stick**, running Android **7.1.2**
-(API **25**). This version has one local profile, **Mammy & Daddy**. It keeps
-Eva's public Letterboxd watchlist, film posters and availability, recipes, app
-search and organisation, and the full-screen painting collection. Sideboard
-projects, the evening project suggestion, and music listening are removed.
+(API **25**). This version has one local profile, **Mammy & Daddy**, app
+search and organisation, Continue watching and the painting collection. Eva's
+Letterboxd card, the MESA recipes / Tonight print, the project sideboard and
+Now spinning belong to the London home and are not on this one.
+
+## Parents' home
+
+The home is meant to make them feel connected to the family. Under the apps,
+in this order:
+
+| Section | What it is | Source (all via one feed) |
+|---|---|---|
+| **Coming up** (hero) | A paper calendar: visits, birthdays, weekends away. Hidden when empty. | Family-only iCal + fixed events |
+| **Daniel, lately** | Loose photo prints of Daniel's ordinary life; OK = full screen. | A link-shared Google Photos album |
+| **Para Amélia** | A printed *Guia de TV*: Brazilian live news, the newest novela scene, an action film, Ária's programme. | Official YouTube channels, curated films |
+| **Tonight at home** | One film and one documentary for both of them, daily. | Curated pool, Cinemeta posters |
+| **Padraig's listening room** | LP sleeves (OK plays in Spotify), tonight's gig, latest podcast episodes. | Spotify links, YouTube search/channels |
+| **Match programme** | Wolves always; Ireland only around a match. | ESPN public API |
+| **Ideias de crochê** | Three pattern cards a day. | Wikimedia Commons (freely licensed) |
+| **Ária's corner** | Four picture books: Ms Rachel and other calm, allow-listed channels. | Channel allow-list |
+| **From the family album** | One framed old photograph a day. | A *separate*, curated album (never the library) |
+| **At the Seantí** | A gig poster when something relevant is on. | Curated (no stable venue feed exists) |
+
+Nothing moves on its own; the home only changes between visits. Sections with
+nothing to show are simply not there, and a broken source never shows an error.
+
+### How content gets to the TV
+
+```
+Google Photos album ──┐                      private repo mcm-parents-feed
+Family calendar ──────┤   GitHub Actions     (scheduled every 30 min)
+YouTube, ESPN, ... ───┴──► node src/main.mjs ──► feed.json in a secret gist
+                                                      │  (HTTPS, ETag)
+                                                      ▼
+            Fire TV: ParentFeedRepository ── cached feed + cached images ── ParentsHome
+```
+
+- **The TV only reads one JSON document** (`data/parents/ParentFeed.kt`). It
+  never signs in, never talks to Google Photos, and holds no API keys.
+- **Stale-while-revalidate.** Home draws from the cached feed at once, then
+  checks for a newer one in the background (at most every 5 minutes on resume,
+  every 30 while Home stays open). A feed is only replaced by one that parses
+  and validates; network errors and malformed feeds leave the cache untouched.
+- **Images** are Google's resized renditions (never originals), downloaded once
+  into private storage (`files/parents/img`, capped at 60 MB, pruned to what the
+  feed still uses) and decoded at drawn size, RGB_565, off the main thread.
+
+### Why the album needs a sync job
+
+Since March 2025 the Google Photos Library API only returns photos an app
+uploaded itself, and the Picker API needs someone to choose photos every time.
+Neither can follow an album Daniel adds to from his phone. A *link-shared*
+album's page carries its contents as structured data, which the feed job reads
+(media keys, sizes, dates); see the `mcm-parents-feed` README. **Privacy
+trade-off:** anyone with the album link can view that album. The link lives
+only in that repo's Actions secrets; the TV and this public repo never see it.
+
+**Routine: add photos to the album.** New photos appear on the TV within about
+30–40 minutes; removed ones leave it the same way. Nothing else is needed.
+
+### Pointing the TV at its feed (one-time, already done on the stick)
+
+The feed address is not in the APK or in Git. Push it to the app over ADB:
+
+```powershell
+'{"feedUrl":"https://gist.githubusercontent.com/<user>/<gist id>/raw/feed.json"}' |
+  Set-Content parents-config.json -Encoding ascii -NoNewline
+adb -s <fire-tv-ip>:5555 shell mkdir -p /sdcard/Android/data/com.example.tvlauncher/files
+adb -s <fire-tv-ip>:5555 push parents-config.json /sdcard/Android/data/com.example.tvlauncher/files/
+adb -s <fire-tv-ip>:5555 shell am force-stop com.example.tvlauncher
+adb -s <fire-tv-ip>:5555 shell am start -n com.example.tvlauncher/.MainActivity
+```
+
+MCM moves the address into private storage on its next start and deletes the
+pushed file. To revoke: delete or replace the gist (then push the new address).
+
+### Checking it
+
+```powershell
+adb -s <fire-tv-ip>:5555 logcat -s ParentFeed     # feed/image events; never addresses or tokens
+gh run list -R DanielPortelaByrne/mcm-parents-feed --workflow sync.yml
+gh workflow run sync.yml -R DanielPortelaByrne/mcm-parents-feed   # sync now
+```
+
+### Troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Daniel, lately missing entirely | TV has no feed address yet, or has never been online | Provision the address (above); connect to Wi-Fi |
+| "New photos from Daniel will appear here." | Album is empty, or the sync has not read it yet | Check the latest Actions run |
+| New photo not showing after an hour | Sync failing (red run) | `gh run view --log`; `LINK_REVOKED` = sharing turned off; `LAYOUT_CHANGED` = Google changed the page (see feed repo README) |
+| A section vanished | Its source failed and nothing was cached yet, or it is out of season | Nothing to do; it returns with data |
+| Sleeve/poster blank | That one image failed to download | It is retried on the next visit |
 
 The Bandit and Aries profile, HDMI shelf shortcuts, and 4.0-star film filter
 belong to the LG household's version. Mammy & Daddy is a local MCM profile;
