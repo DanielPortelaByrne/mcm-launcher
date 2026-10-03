@@ -35,3 +35,7 @@ local.properties
 
 # Kotlin compiler cache
 .kotlin/
+
+# Local Fire TV verification captures
+artifacts/fire-tv-*.png
+artifacts/fire-tv-*.xml
