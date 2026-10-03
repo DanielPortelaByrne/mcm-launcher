@@ -32,7 +32,10 @@ adb -s <fire-tv-ip>:5555 shell am start -n com.example.tvlauncher/.MainActivity
 
 App ID: `com.example.tvlauncher`. The APK is in
 `app/build/outputs/apk/debug/app-debug.apk`. Open MCM from the Fire TV app list.
-**The remote's Home button still opens Amazon Home**; it has not been remapped.
+**The remote's Home button still opens Amazon Home.** Home routing was tested
+on Fire OS 6.7.1.1, but the firmware blocked the launcher-disable and
+accessibility redirect methods. Trial settings were restored; see
+[the Home-routing test](docs/fire-tv.md#home-routing-test-2026-10-03).
 
 ## Compatibility and verification
 
