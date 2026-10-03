@@ -165,3 +165,18 @@ The build and all 96 unit tests passed before installation.
 This concerns Fire TV boot. Turning the television on while an independently
 powered Fire Stick stays running is a different event and is not covered by this
 boot callback.
+
+## Stremio check (2026-10-03)
+
+The stick had Stremio mobile 1.4.4. It was updated in place to the official
+Android TV 1.10.4 ARM build (package `com.stremio.one`, version code 31048580).
+The existing app data was retained. The APK is an ignored local artifact;
+Stremio is installed separately from MCM.
+
+Hardware checks confirmed that the film-card Play action resolves to the updated
+Stremio activity, but direct magnet handling remains on a loading spinner.
+A normal Stremio launch loads its catalogue, and the card's Open in Stremio
+action successfully opens the film's details and source list. Updating Stremio
+alone has not verified or fixed direct magnet playback.
+
+Official download: https://www.stremio.com/downloads
