@@ -242,9 +242,9 @@ class MainActivity : AppCompatActivity() {
         collection = HomeCollection(this, infoSheet, artModeOverlay, ::enterArtMode,
             { handleCapability(systemActions.openSettings()) }, { editAppsPanel.show(currentApps) },
             { IconCache.clear(); currentApps = emptyList(); refreshApps() })
-        registerReceiver(screenReceiver, android.content.IntentFilter().apply {
+        androidx.core.content.ContextCompat.registerReceiver(this, screenReceiver, android.content.IntentFilter().apply {
             addAction(Intent.ACTION_SCREEN_OFF); addAction(Intent.ACTION_SCREEN_ON)
-        }, RECEIVER_NOT_EXPORTED)
+        }, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         continueRow = com.example.tvlauncher.ui.ContinueRow(
             findViewById(R.id.continueSection), findViewById(R.id.continueContainer),
             com.example.tvlauncher.data.ContinueWatching(this), ::resumeItem
