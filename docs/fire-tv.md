@@ -1,11 +1,11 @@
 # Fire TV installation - Daniel's parents' house
 
-At Daniel's parents' house, the original Daniel, Daniel (UK), and Eva launcher
-was installed on the
+At Daniel's parents' house, MCM is installed on the
 Amazon Fire TV Stick AFTMM running Android 7.1.2 / API 25.
 
-Branch: `feature/fire-tv`. This uses the original native Android app,
-including Eva's watchlist, projects, recipes, and listening sections.
+Branch: `feature/fire-tv`. This uses the native Android app with one local
+**Mammy & Daddy** profile, Eva's watchlist and recipes. Sideboard, personal
+project suggestions and music listening were removed on 2026-10-03.
 The LG webOS app is maintained separately on `feature/lg-webos`.
 
 Compatibility fixes:

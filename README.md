@@ -1,21 +1,20 @@
 # MCM Launcher - Fire TV
 
-The original Daniel and Eva MCM launcher, adapted for the **Amazon Fire TV
+MCM launcher adapted for the **Amazon Fire TV
 Stick at Daniel's parents' house**. Maintained on `feature/fire-tv`.
 The active native Android app source is in `app/`.
 
 ## This household's version
 
 The installed device is an **AFTMM Fire TV Stick**, running Android **7.1.2**
-(API **25**). This version keeps the original **Daniel**, **Daniel (UK)**, and
-**Eva** profiles, Eva's public Letterboxd watchlist, film posters and availability,
-Sideboard projects, recipes, listening sections, app search and organisation,
-and the full-screen painting collection.
+(API **25**). This version has one local profile, **Mammy & Daddy**. It keeps
+Eva's public Letterboxd watchlist, film posters and availability, recipes, app
+search and organisation, and the full-screen painting collection. Sideboard
+projects, the evening project suggestion, and music listening are removed.
 
-This retains the original Android experience. The Bandit and Aries profile,
-removed sections, HDMI shelf shortcuts, and 4.0-star film filter belong to the
-LG household's version and are not applied here. Selecting a profile changes
-MCM's selected account; it does not sign into streaming apps.
+The Bandit and Aries profile, HDMI shelf shortcuts, and 4.0-star film filter
+belong to the LG household's version. Mammy & Daddy is a local MCM profile;
+it does not sign into streaming apps or expose saved Daniel/Eva accounts.
 
 ## Build and install
 
