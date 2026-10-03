@@ -1,15 +1,46 @@
-# MCM TV Launcher
+# MCM Launcher - TCL Google TV
 
-A private, bespoke Android TV HOME launcher, designed to belong in one
-specific living room rather than to look like a generic "TV launcher app".
-It replaces the stock Google TV home screen with a calm, D-pad-first
-composition built from installed apps. The home screen uses a floating
-navigation bar, an illustrated hero, a featured app rail, and a circular
-favourites rail. It has no ads or streaming-service integrations; featured
-cards are launchable apps beyond the favourites shelf.
+The original MCM launcher for **Daniel and Eva's home in London**, installed
+on their **TCL Google TV**. This is the native Android version, maintained on
+`feature/spatial-motion-experiment`.
 
-Not intended for Play Store distribution. Built for local sideload onto a
-household TCL Google TV.
+The launcher includes Daniel, Daniel (UK), and Eva profiles, Eva's public
+Letterboxd watchlist with film artwork and availability, the Sideboard projects,
+recipes, listening sections, installed-app discovery, app organisation, search,
+and the painting collection with full-screen Art mode. Profiles select the
+name shown in MCM; they do not sign in to streaming services.
+
+## Household versions
+
+| Household | Device | Branch | Main source |
+| --- | --- | --- | --- |
+| Daniel and Eva, London | TCL Google TV | [`feature/spatial-motion-experiment`](https://github.com/DanielPortelaByrne/mcm-launcher/tree/feature/spatial-motion-experiment) | `app/` |
+| Mariana and Sean's house | LG webOS TV | [`feature/lg-webos`](https://github.com/DanielPortelaByrne/mcm-launcher/tree/feature/lg-webos) | `webos/` |
+| Daniel's parents' house | Amazon Fire TV Stick | [`feature/fire-tv`](https://github.com/DanielPortelaByrne/mcm-launcher/tree/feature/fire-tv) | `app/` |
+
+The LG version uses the Bandit and Aries profile and highly rated public film
+picks. The Fire TV version retains the original Daniel and Eva experience,
+with compatibility fixes for its older Android system. Each branch has its own
+README and deployment notes. Device configuration is specific to each household.
+
+## Build and open
+
+Use JDK 17 and the Android SDK configured through `local.properties`.
+
+```powershell
+.\gradlew.bat :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.example.tvlauncher/.MainActivity
+```
+
+The APK is `app/build/outputs/apk/debug/app-debug.apk`; the application ID is
+`com.example.tvlauncher`. Select the target TCL explicitly when multiple ADB
+devices are connected. Installation alone does not change the system Home app;
+see the default-launcher and physical deployment notes below.
+
+The sections below retain the original design, architecture, and TCL setup
+reference. Earlier emulator observations are historical checks, not guarantees
+about a different TV or firmware.
 
 ## Design rationale
 
