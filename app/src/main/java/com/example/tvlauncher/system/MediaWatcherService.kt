@@ -81,6 +81,7 @@ class MediaWatcherService : NotificationListenerService() {
         handler.postDelayed(ticker, TICK_MS)
         connected = true
         Log.i(TAG, "MediaWatcherService connected")
+        com.example.tvlauncher.data.UsageLog.start(this)
     }
 
     override fun onListenerDisconnected() {
@@ -100,7 +101,7 @@ class MediaWatcherService : NotificationListenerService() {
             val callback = object : MediaController.Callback() {
                 override fun onPlaybackStateChanged(state: PlaybackState?) { record(controller) }
                 override fun onMetadataChanged(metadata: MediaMetadata?) { record(controller) }
-                override fun onSessionDestroyed() { record(controller); flush(controller.packageName); if (controller.packageName == STREMIO) finishHandoff(); watched.remove(controller.packageName) }
+                override fun onSessionDestroyed() { record(controller); com.example.tvlauncher.data.UsageLog.nowPlaying(controller.packageName, null); flush(controller.packageName); if (controller.packageName == STREMIO) finishHandoff(); watched.remove(controller.packageName) }
             }
             controller.registerCallback(callback, handler)
             watched[controller.packageName] = controller to callback
@@ -146,6 +147,8 @@ class MediaWatcherService : NotificationListenerService() {
         if (state.state !in TRACKED) return
         val title = (meta.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE) ?: meta.getString(MediaMetadata.METADATA_KEY_TITLE))?.trim()
         if (title.isNullOrBlank()) return
+        // For the usage log: what played, for how long (logged when it stops or changes).
+        com.example.tvlauncher.data.UsageLog.nowPlaying(controller.packageName, if (state.state == PlaybackState.STATE_PLAYING) listOfNotNull(title, (meta.getString(MediaMetadata.METADATA_KEY_ARTIST) ?: meta.getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE))?.trim()?.ifBlank { null }).joinToString(" · ") else null)
 
         var position = state.position
         if (state.state == PlaybackState.STATE_PLAYING && state.lastPositionUpdateTime > 0) {

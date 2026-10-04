@@ -16,8 +16,9 @@ import com.example.tvlauncher.ui.scrollFocusIntoView
 
 /**
  * Two things ready to go, beside the greeting: one for Amélia (her programme, or Brazilian TV live) and
- * one for Padraig (a record for the day). Shown whenever the calendar has nothing to say, so the first
- * screen always offers each of them something one press away.
+ * one for Padraig (a record from his shelf), each turning on to its next pick every little while. Shown
+ * whenever the calendar has nothing to say, so the first screen always offers each of them something one
+ * press away.
  */
 class HeroPicks(private val activity: Activity, private val images: FeedImages) {
     data class Card(val eyebrow: String, val pick: Pick, val title: String, val sub: String?, val square: Boolean)
@@ -27,6 +28,7 @@ class HeroPicks(private val activity: Activity, private val images: FeedImages) 
         clipChildren = false; clipToPadding = false
         visibility = View.GONE
         SectionTheme.tag(this, SectionTheme.Mood.EVENING)
+        setTag(com.example.tvlauncher.R.id.usage_where, "Beside the greeting")
     }
     private var shownKey: String? = null
 
@@ -36,12 +38,23 @@ class HeroPicks(private val activity: Activity, private val images: FeedImages) 
         val key = cards.joinToString { it.pick.link.uri + it.title }
         if (key == shownKey) return
         val hadFocus = view.findFocus() != null
+        val turning = shownKey != null && !hadFocus && view.isShown
         shownKey = key
+        if (!turning) { lay(cards); if (hadFocus) view.getChildAt(0)?.requestFocus(); return }
+        // A turn (the cards moving on by themselves) fades through, rather than snapping.
+        view.animate().cancel()
+        view.animate().alpha(0f).setDuration(220).withEndAction {
+            lay(cards)
+            view.animate().alpha(1f).setDuration(320).start()
+        }.start()
+    }
+
+    private fun lay(cards: List<Card>) {
+        view.alpha = 1f
         view.removeAllViews()
         cards.take(2).forEachIndexed { i, c ->
             view.addView(card(c), LinearLayout.LayoutParams(-1, Kit.dp(activity, 88)).apply { if (i > 0) topMargin = Kit.dp(activity, 12) })
         }
-        if (hadFocus) view.getChildAt(0)?.requestFocus()
     }
 
     private fun card(c: Card): View {

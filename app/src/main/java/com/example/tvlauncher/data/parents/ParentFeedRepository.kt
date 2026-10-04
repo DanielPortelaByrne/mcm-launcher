@@ -132,9 +132,13 @@ class ParentsConfig(private val context: Context) {
         val file = File(context.getExternalFilesDir(null) ?: return, PROVISION_FILE)
         if (!file.exists()) return
         try {
-            val url = org.json.JSONObject(file.readText()).optString("feedUrl")
+            val json = org.json.JSONObject(file.readText())
+            val url = json.optString("feedUrl")
             if (url.startsWith("https://")) { prefs.edit().putString("feedUrl", url).apply(); justProvisioned = true; Log.i(TAG, "Feed address provisioned") }
             else Log.w(TAG, "Provisioned config has no https feedUrl; ignored")
+            // The usage log's Sheet (UsageLog): optional, kept beside the feed address, never in Git.
+            val logUrl = json.optString("logUrl"); val logKey = json.optString("logKey")
+            if (logUrl.startsWith("https://") && logKey.isNotBlank()) { prefs.edit().putString("logUrl", logUrl).putString("logKey", logKey).apply(); Log.i(TAG, "Usage log provisioned") }
         } catch (e: Exception) {
             Log.w(TAG, "Provisioned config unreadable: ${e.javaClass.simpleName}")
         } finally { file.delete() }

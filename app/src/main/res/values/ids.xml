@@ -8,4 +8,6 @@
     <item name="section_mood" type="id" />
     <item name="section_heading" type="id" />
     <item name="motion_print" type="id" />
+    <!-- The part of the home a view belongs to, for the usage log (UsageLog.whereOf). -->
+    <item name="usage_where" type="id" />
 </resources>

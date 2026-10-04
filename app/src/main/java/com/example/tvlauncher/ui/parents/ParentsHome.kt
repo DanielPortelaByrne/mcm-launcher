@@ -80,6 +80,16 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
         return true
     }
 
+    /** Logs each family section that is at least half on screen (once per home visit). */
+    fun noteVisible(scrollY: Int, viewport: Int) {
+        for (s in ordered) {
+            if (!s.shown || s.view.height == 0) continue
+            val top = pageTop(s.view); val bottom = top + s.view.height
+            val onScreen = minOf(bottom, scrollY + viewport) - maxOf(top, scrollY)
+            if (onScreen >= minOf(s.view.height, viewport) / 2) com.example.tvlauncher.data.UsageLog.sectionSeen(s.title)
+        }
+    }
+
     private fun pageTop(v: View): Int {
         var y = 0; var p: View? = v
         while (p != null && p.id != R.id.homeScroll) { y += p.top; p = p.parent as? View }
@@ -121,9 +131,10 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
             check(force = config.justProvisioned.also { config.justProvisioned = false })
         }
         main.removeCallbacks(periodic); main.postDelayed(periodic, PERIOD_MS)
+        main.removeCallbacks(turnHero); main.postDelayed(turnHero, HERO_TURN_MS)
     }
 
-    fun pause() { resumed = false; main.removeCallbacks(periodic) }
+    fun pause() { resumed = false; main.removeCallbacks(periodic); main.removeCallbacks(turnHero) }
 
     /** Back: closes the photo viewer if it is up. */
     fun onBack(): Boolean { if (!viewer.isVisible) return false; viewer.hide(); return true }
@@ -140,6 +151,18 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
         }
     }
 
+    /** How far the hero cards have turned since the page opened. */
+    private var heroTurn = 0
+
+    /** Turns each hero card on to its next pick, unless someone is on one of them. */
+    private val turnHero = object : Runnable {
+        override fun run() {
+            if (!resumed || closed) return
+            if (heroPicks.view.findFocus() == null) { heroTurn++; bindHero(repository.cached, System.currentTimeMillis()) }
+            main.postDelayed(this, HERO_TURN_MS)
+        }
+    }
+
     /** Worker thread. */
     private fun check(force: Boolean) {
         val outcome = repository.refresh(force = force, minIntervalMs = MIN_CHECK_MS)
@@ -150,7 +173,7 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
     private fun render(feed: ParentFeed?) {
         val now = System.currentTimeMillis()
         comingUp.bind(feed?.comingUp.orEmpty(), now)
-        heroPicks.bind(if (comingUp.view.visibility == View.VISIBLE || feed == null) emptyList() else heroCards(feed, now))
+        bindHero(feed, now)
         daniel.bind(feed?.danielLately, feedUrl != null && feed != null, now)
         amelia.bind(feed?.forAmelia)
         tonight.bind(feed?.tonight.orEmpty())
@@ -167,15 +190,19 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
     /** Called after each render, so the header can show only the family tabs that lead somewhere. */
     var onRendered: (() -> Unit)? = null
 
+    private fun bindHero(feed: ParentFeed?, now: Long) =
+        heroPicks.bind(if (comingUp.view.visibility == View.VISIBLE || feed == null) emptyList() else heroCards(feed, now))
+
     /**
-     * Amélia's card is her own programme (the newest Domingo Legal), or Brazilian TV live; Padraig's is a
-     * record for the day, turning over daily through his shelf.
+     * Amélia's card turns through her own programmes (the newest Domingo Legal first) and Brazilian TV live;
+     * Padraig's through his shelf, starting from the day's record. Both move on every [HERO_TURN_MS].
      */
     private fun heroCards(feed: ParentFeed, now: Long): List<HeroPicks.Card> {
-        val forHer = feed.forAmelia?.shows?.firstOrNull()?.let { HeroPicks.Card("Para Amélia", it, it.title, it.subtitle, false) }
-            ?: feed.forAmelia?.live?.firstOrNull()?.let { HeroPicks.Card("Para Amélia", it, "${it.title} ao vivo", "Agora, do Brasil", false) }
+        val hers = feed.forAmelia?.shows.orEmpty().map { HeroPicks.Card("Para Amélia", it, it.title, it.subtitle, false) } +
+            feed.forAmelia?.live.orEmpty().map { HeroPicks.Card("Para Amélia", it, "${it.title} ao vivo", "Agora, do Brasil", false) }
+        val forHer = hers.takeIf { it.isNotEmpty() }?.let { it[Math.floorMod(heroTurn, it.size)] }
         val records = feed.listening?.records.orEmpty()
-        val forHim = records.takeIf { it.isNotEmpty() }?.let { it[Math.floorMod(ParentsFormat.dayIndex(now), it.size)] }
+        val forHim = records.takeIf { it.isNotEmpty() }?.let { it[Math.floorMod(ParentsFormat.dayIndex(now) + heroTurn, it.size)] }
             ?.let { HeroPicks.Card("For Padraig", it, it.title, "Put on a record · Spotify", true) }
         return listOfNotNull(forHer, forHim)
     }
@@ -206,5 +233,6 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
         const val TAG = "ParentFeed"
         const val PERIOD_MS = 30 * 60_000L
         const val MIN_CHECK_MS = 5 * 60_000L
+        const val HERO_TURN_MS = 20_000L
     }
 }

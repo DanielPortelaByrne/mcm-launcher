@@ -6,6 +6,8 @@
          permission, granted automatically, no runtime prompt. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The "one moment" note shown over PrivadoVPN while it is switched to Brazil (granted with appops). -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Lists the TV's Google accounts for the header avatar menu (runtime-prompted once). -->

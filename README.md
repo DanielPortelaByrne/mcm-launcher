@@ -162,3 +162,28 @@ See [Fire TV deployment notes](docs/fire-tv.md) for details.
 
 The inherited `webos/` directory is not the Fire TV build target. Make Fire TV
 changes in `app/`; maintain the LG port on its own branch.
+
+## TV do Brasil (+SBT through PrivadoVPN)
+
+Amélia's guide starts with **TV do Brasil**, which opens +SBT (SBT live and on demand; it only plays from
+Brazil). If PrivadoVPN is not connected, MCM covers the screen with a note in Portuguese, opens PrivadoVPN
+(which connects by itself) and opens +SBT once the tunnel is up. Fire OS lets no app press another app's
+buttons (accessibility services are refused, and adb will not accept connections from the stick itself),
+so this relies on PrivadoVPN's own settings, made on the stick:
+
+- **Settings → Auto Connect: on**, **Best Server: Disabled** (always the last used location: Brazil, São Paulo).
+- **Split Tunnelling: on**, **Mode: Tunnel**, apps: **+SBT** only. Nothing else goes through Brazil, and the
+  free 10 GB a month is spent only on +SBT (about 2 GB an hour), so the VPN may stay connected.
+
++SBT is sideloaded and lightly patched: the Android TV build **1.25.42** (`br.com.sbt.mais`, APKMirror bundle).
+Newer builds (1.26+) carry Google Play's anti-tamper wrapper and crash on Fire TV. SBT's own live channel is
+broken at SBT's end (its ad-inserted stream times out; the direct stream behind it is a dead event feed) and
++SBT opens on it, so `tools/sbt/mcm_sbt.js` reorders the channel list to put it last: +SBT opens on SBT News.
+`tools/sbt/build.sh <bundle.apkm> [device]` rebuilds it (re-signed with the local debug key; the APKs land in
+`artifacts/sbt/`). Keep +SBT logged out: logged out it skips "Quem vai assistir?" and opens straight on live TV.
+After reinstalling +SBT, restart PrivadoVPN so its split tunnel picks up the new install. The note needs the
+overlay permission:
+
+```sh
+adb -s <fire-tv-ip>:5555 shell appops set com.example.tvlauncher SYSTEM_ALERT_WINDOW allow
+```

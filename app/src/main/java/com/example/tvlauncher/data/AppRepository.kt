@@ -50,13 +50,20 @@ class AppRepository(private val context: Context) {
         val resolved = pm.queryIntentActivities(leanbackIntent, 0) +
             pm.queryIntentActivities(launcherIntent, 0)
 
+        // A stand-in (SmartTube for YouTube) takes the replaced app's name and icon, and the replaced app
+        // leaves the list.
+        val hidden = StandIns.hidden(pm)
+        val byPackage = resolved.associateBy { it.activityInfo.packageName }
+
         return resolved
             .filter { it.activityInfo.packageName != selfPackage }
             .filter { it.activityInfo.packageName != settingsPackage }
             .filter { !ownedOnly || isOwned(it.activityInfo.packageName) }
+            .filter { it.activityInfo.packageName !in hidden }
             .mapNotNull { ri ->
                 try {
                     val packageName = ri.activityInfo.packageName
+                    val looks = StandIns.REPLACES[packageName]?.takeIf { it in hidden }?.let { byPackage[it] } ?: ri
                     // Built directly from the resolved ActivityInfo rather than
                     // PackageManager.getLaunchIntentForPackage(), which only
                     // resolves CATEGORY_LAUNCHER and silently drops
@@ -66,12 +73,13 @@ class AppRepository(private val context: Context) {
                         component = ComponentName(packageName, ri.activityInfo.name)
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
-                    val icon = IconCache.getOrPut("$packageName#${IconStyle.cacheKey(context)}") {
-                        val original = ri.loadIcon(pm)
-                        if (IconStyle.isMcm(context)) RoundIcon.mcm(context, original, packageName) else RoundIcon.from(context, original)
+                    val looksPackage = looks.activityInfo.packageName
+                    val icon = IconCache.getOrPut("$packageName#$looksPackage#${IconStyle.cacheKey(context)}") {
+                        val original = looks.loadIcon(pm)
+                        if (IconStyle.isMcm(context)) RoundIcon.mcm(context, original, looksPackage) else RoundIcon.from(context, original)
                     }
                     AppEntry(
-                        label = DISPLAY_NAMES[ri.activityInfo.packageName] ?: ri.loadLabel(pm).toString(),
+                        label = DISPLAY_NAMES[looksPackage] ?: looks.loadLabel(pm).toString(),
                         packageName = packageName,
                         icon = icon,
                         banner = null,   // banners are never shown; loading them cost start-up time

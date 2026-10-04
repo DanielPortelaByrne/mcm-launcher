@@ -131,7 +131,7 @@ object Kit {
     }
 
     /** A section on the page: its heading and body. Hidden whole when there is nothing to show. */
-    class Section(val context: Context, title: String, subtitle: String? = null, mood: com.example.tvlauncher.design.SectionTheme.Mood) {
+    class Section(val context: Context, val title: String, subtitle: String? = null, mood: com.example.tvlauncher.design.SectionTheme.Mood) {
         // Always built with a subtitle slot, so a section can say something later ("7 photos · last added today").
         private val header = com.example.tvlauncher.design.SectionHeader.build(context, title, subtitle ?: " ")
         val subtitleView: TextView? = (header as LinearLayout).getChildAt(1) as? TextView
@@ -142,6 +142,7 @@ object Kit {
             addView(header)
             addView(body, LinearLayout.LayoutParams(-1, -2))
             com.example.tvlauncher.design.SectionTheme.tag(this, mood)
+            setTag(com.example.tvlauncher.R.id.usage_where, title)
             visibility = View.GONE
         }
         var shown: Boolean
@@ -156,17 +157,20 @@ object Kit {
 internal object Opener {
     fun open(activity: Activity, link: Link, label: String) {
         val pm = activity.packageManager
-        for (pkg in link.packages) {
+        val where = com.example.tvlauncher.data.UsageLog.whereOf(activity.currentFocus)
+        val packages = com.example.tvlauncher.data.StandIns.preferring(pm, link.packages)
+        for (pkg in packages) {
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link.uri)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             if (intent.resolveActivity(pm) == null) continue
-            try { activity.startActivity(intent); Log.i("ParentFeed", "Opened ${link.uri.substringBefore('?').take(48)} in $pkg"); return }
+            try { activity.startActivity(intent); Log.i("ParentFeed", "Opened ${link.uri.substringBefore('?').take(48)} in $pkg"); com.example.tvlauncher.data.UsageLog.opened(where, label, pkg); return }
             catch (e: Exception) { Log.w("ParentFeed", "Open failed in $pkg: ${e.javaClass.simpleName}") }
         }
         // No listed app took the link: open the first installed one at its start, rather than doing nothing.
-        link.packages.firstNotNullOfOrNull { pm.getLeanbackLaunchIntentForPackage(it) ?: pm.getLaunchIntentForPackage(it) }?.let {
+        packages.firstNotNullOfOrNull { pm.getLeanbackLaunchIntentForPackage(it) ?: pm.getLaunchIntentForPackage(it) }?.let {
             try { activity.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) { }
         }
         Toast.makeText(activity, "Couldn't open $label on this TV", Toast.LENGTH_LONG).show()
+        com.example.tvlauncher.data.UsageLog.event("error", where = where, what = label, detail = "Couldn't open on this TV")
     }
 
     fun installed(activity: Activity, link: Link): Boolean =

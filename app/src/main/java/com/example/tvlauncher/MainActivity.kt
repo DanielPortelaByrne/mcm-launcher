@@ -140,6 +140,11 @@ class MainActivity : AppCompatActivity() {
 
         clockView = findViewById(R.id.clock)
         shelfContainer = findViewById(R.id.shelfContainer)
+        com.example.tvlauncher.data.UsageLog.start(this)
+        shelfContainer.setTag(R.id.usage_where, "Your apps")
+        findViewById<android.view.View>(R.id.featuredSection)?.setTag(R.id.usage_where, "More apps")
+        findViewById<android.view.View>(R.id.header)?.setTag(R.id.usage_where, "Header")
+        window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener { _, now -> com.example.tvlauncher.data.UsageLog.focusMoved(now) }
         featuredContainer = findViewById(R.id.featuredContainer)
         footerLeft = findViewById(R.id.footerLeft)
         footerRight = findViewById(R.id.footerRight)
@@ -209,7 +214,7 @@ class MainActivity : AppCompatActivity() {
             overlay = findViewById(R.id.allAppsOverlay),
             grid = findViewById(R.id.allAppsGrid),
             shelfBuilder = shelfBuilder,
-            onLaunch = ::launchApp,
+            onLaunch = { launchApp(it, "All apps") },
             onOpenEdit = {
                 allAppsPanel.hide()
                 editAppsPanel.show(currentApps)
@@ -231,7 +236,7 @@ class MainActivity : AppCompatActivity() {
             resultsGrid = findViewById(R.id.searchResultsGrid),
             noResults = findViewById(R.id.searchNoResults),
             shelfBuilder = shelfBuilder,
-            onLaunch = ::launchApp
+            onLaunch = { launchApp(it, "Search") }
         )
 
         artModeOverlay = ArtModeOverlay(findViewById(R.id.artModeOverlay)) {
@@ -285,6 +290,7 @@ class MainActivity : AppCompatActivity() {
             header.translationY = y.toFloat()
             shade.alpha = (y / (resources.displayMetrics.density * 48)).coerceIn(0f, 1f)
             if (!allAppsPanel.isVisible && !artModeOverlay.isVisible) {
+                parentsHome.noteVisible(y, homeScroll.height)
                 val place = parentsHome.placeAt(y, homeScroll.height / 3)
                 if (place != shownPlace) { shownPlace = place; headerBar.setSelected(place) }
             }
@@ -377,6 +383,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        com.example.tvlauncher.data.UsageLog.homeShown()
         bootMark("onResume")
         clockHandler.post(clockTick)
         networkMonitor.start()
@@ -405,6 +412,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        com.example.tvlauncher.data.UsageLog.homeLeft()
         clockHandler.removeCallbacks(clockTick)
         networkMonitor.stop()
         artModeOverlay.pause()
@@ -548,7 +556,7 @@ class MainActivity : AppCompatActivity() {
         val featuredTiles = featuredApps.map { entry ->
             ShelfTile.forApp(
                 entry = entry,
-                onLaunch = ::launchApp,
+                onLaunch = { launchApp(it, "More apps") },
                 onLongSelect = { promoteToShelf(entry); true },
                 onFocus = { focused -> if (focused) updateFooter(FooterContext.FEATURED_APP) }
             )
@@ -560,7 +568,7 @@ class MainActivity : AppCompatActivity() {
         val appTiles = selection.primary.mapIndexed { index, entry ->
             ShelfTile.forApp(
                 entry = entry,
-                onLaunch = ::launchApp,
+                onLaunch = { launchApp(it, "Your apps") },
                 onLongSelect = { enterOrganiseMode(index); true },
                 onFocus = { focused -> if (focused) onShelfTileFocused(index, isAllAppsTile = false) }
             )
@@ -644,7 +652,7 @@ class MainActivity : AppCompatActivity() {
         if (intent == null) { Toast.makeText(this, "Couldn't open ${item.title}", Toast.LENGTH_SHORT).show(); return }
         try { startActivity(intent) } catch (e: Exception) {
             Log.e(TAG, "Resume failed for ${item.title}", e)
-            currentApps.firstOrNull { it.packageName == item.packageName }?.let { launchApp(it) }
+            currentApps.firstOrNull { it.packageName == item.packageName }?.let { launchApp(it, "Continue watching") }
                 ?: Toast.makeText(this, "Couldn't open ${item.title}", Toast.LENGTH_SHORT).show()
         }
     }
@@ -660,19 +668,22 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) { /* notification access not granted, or no session: just open the app */ }
     }
 
-    private fun launchApp(entry: AppEntry) {
+    private fun launchApp(entry: AppEntry, where: String) {
         Log.i(TAG, "Launching ${entry.packageName}")
         try {
             startActivity(entry.launchIntent)
+            com.example.tvlauncher.data.UsageLog.opened(where, entry.label, entry.packageName)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to launch ${entry.packageName}", e)
             Toast.makeText(this, "Couldn't open ${entry.label}", Toast.LENGTH_SHORT).show()
+            com.example.tvlauncher.data.UsageLog.event("error", where = where, what = entry.label, app = entry.packageName, detail = "Couldn't open")
         }
     }
 
     // --- Header navigation ---------------------------------------------------
 
     private fun onNavTabSelected(tab: NavTab) {
+        com.example.tvlauncher.data.UsageLog.event("nav", where = "Header", what = tab.name.lowercase().replaceFirstChar { it.uppercase() })
         when (tab) {
             NavTab.HOME -> {
                 if (allAppsPanel.isVisible) allAppsPanel.hide()

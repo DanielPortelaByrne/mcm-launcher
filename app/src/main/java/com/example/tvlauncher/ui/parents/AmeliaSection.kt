@@ -15,8 +15,9 @@ import com.example.tvlauncher.design.SectionTheme
 import com.example.tvlauncher.design.Type
 
 /**
- * "Para Amélia": a printed Brazilian TV guide laid out across the page, one column per programme -- live
- * Brazilian TV, her programme (Domingo Legal), the newest novela scene, an action film. Left and Right
+ * "Para Amélia": a printed Brazilian TV guide laid out across the page, one column per programme -- SBT
+ * live (+SBT, through the Brazil VPN), live Brazilian TV, her programme (Domingo Legal), the newest novela
+ * scene, an action film. Left and Right
  * move along it, one press opens the thing itself, and Down leaves straight away. Portuguese, because it
  * is hers.
  */
@@ -30,7 +31,7 @@ class AmeliaSection(private val activity: Activity, private val images: FeedImag
     private val items = mutableListOf<View>()
     private var shownKey: String? = null
 
-    private class Programme(val label: String, val pick: Pick, val title: String, val sub: String?)
+    private class Programme(val label: String, val pick: Pick?, val title: String, val sub: String?, val open: (() -> Unit)? = null)
 
     init {
         guide.background = Kit.framed(activity)
@@ -48,6 +49,8 @@ class AmeliaSection(private val activity: Activity, private val images: FeedImag
 
     fun bind(a: ForAmelia?) {
         val programmes = listOfNotNull(
+            // +SBT first: SBT itself, live, the channel she misses most (it connects to Brazil on the way in).
+            Programme("TV do Brasil", null, "SBT ao vivo", "Domingo Legal, novelas e mais") { BrazilTv.open(activity) }.takeIf { BrazilTv.installed(activity) },
             a?.live?.firstOrNull()?.let { Programme("Ao vivo", it, "${it.title} ao vivo", "Agora, do Brasil") },
             a?.shows?.firstOrNull()?.let { Programme("Programa", it, it.title, it.subtitle) },
             a?.novelas?.firstOrNull()?.let { Programme("Novela", it, it.title, it.subtitle) },
@@ -58,7 +61,7 @@ class AmeliaSection(private val activity: Activity, private val images: FeedImag
         streak.text = a?.duolingoStreak?.let {
             "Duolingo · ${java.text.NumberFormat.getIntegerInstance(java.util.Locale.forLanguageTag("pt-BR")).format(it)} dias 🔥"
         }.orEmpty()
-        val key = programmes.joinToString { it.pick.link.uri }
+        val key = programmes.joinToString { it.pick?.link?.uri ?: it.title }
         if (key == shownKey) return
         val focused = items.indexOfFirst { it.isFocused }
         shownKey = key
@@ -68,6 +71,16 @@ class AmeliaSection(private val activity: Activity, private val images: FeedImag
         }
         Kit.trapEdges(items)
         if (focused >= 0) items.getOrNull(focused)?.requestFocus()
+    }
+
+    /** +SBT's own TV banner (or icon) on SBT's dark ground, for the column that opens the app itself. */
+    private fun appArt(image: ImageView) {
+        val pm = activity.packageManager
+        val art = try { pm.getApplicationBanner(BrazilTv.APP) ?: pm.getApplicationIcon(BrazilTv.APP) } catch (_: Exception) { null } ?: return
+        image.scaleType = ImageView.ScaleType.FIT_CENTER
+        (image.background as? GradientDrawable)?.setColor(0xFF151515.toInt())
+        val pad = Kit.dp(activity, 18); image.setPadding(pad, pad, pad, pad)
+        image.setImageDrawable(art)
     }
 
     private fun column(p: Programme): View {
@@ -87,8 +100,9 @@ class AmeliaSection(private val activity: Activity, private val images: FeedImag
         col.addView(Kit.line(activity, p.title, Type.Style.HEADING, Kit.PAPER_INK).apply { textSize = 18f })
         col.addView(Kit.line(activity, p.sub.orEmpty(), Type.Style.CAPTION, Kit.PAPER_INK_DIM).apply { textSize = 14f })
         Kit.paperRowFocus(col, guide, guideMat, { items })
-        col.setOnClickListener { Opener.open(activity, p.pick.link, p.title) }
-        p.pick.image?.let { url -> images.load(url, Kit.dp(activity, 190), Kit.dp(activity, 100)) { it?.let { b -> image.setImageBitmap(b) } } }
+        col.setOnClickListener { p.open?.invoke() ?: p.pick?.let { Opener.open(activity, it.link, p.title) } }
+        p.pick?.image?.let { url -> images.load(url, Kit.dp(activity, 190), Kit.dp(activity, 100)) { it?.let { b -> image.setImageBitmap(b) } } }
+        if (p.pick == null) appArt(image)
         items += col
         return col
     }
