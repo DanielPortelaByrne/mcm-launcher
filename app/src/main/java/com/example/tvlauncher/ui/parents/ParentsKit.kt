@@ -159,18 +159,24 @@ internal object Opener {
         val pm = activity.packageManager
         val where = com.example.tvlauncher.data.UsageLog.whereOf(activity.currentFocus)
         val packages = com.example.tvlauncher.data.StandIns.preferring(pm, link.packages)
-        for (pkg in packages) {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link.uri)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (intent.resolveActivity(pm) == null) continue
-            try { activity.startActivity(intent); Log.i("ParentFeed", "Opened ${link.uri.substringBefore('?').take(48)} in $pkg"); com.example.tvlauncher.data.UsageLog.opened(where, label, pkg); return }
-            catch (e: Exception) { Log.w("ParentFeed", "Open failed in $pkg: ${e.javaClass.simpleName}") }
+        // The first listed app that takes the link, or (failing that) the first installed one opened at its start.
+        val pick = packages.firstNotNullOfOrNull { pkg ->
+            Intent(Intent.ACTION_VIEW, Uri.parse(link.uri)).setPackage(pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .takeIf { it.resolveActivity(pm) != null }?.let { pkg to it }
+        } ?: packages.firstNotNullOfOrNull { pkg -> (pm.getLeanbackLaunchIntentForPackage(pkg) ?: pm.getLaunchIntentForPackage(pkg))?.let { pkg to it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) } }
+        if (pick == null) {
+            Toast.makeText(activity, "Couldn't open $label on this TV", Toast.LENGTH_LONG).show()
+            com.example.tvlauncher.data.UsageLog.event("error", where = where, what = label, detail = "Couldn't open on this TV")
+            return
         }
-        // No listed app took the link: open the first installed one at its start, rather than doing nothing.
-        packages.firstNotNullOfOrNull { pm.getLeanbackLaunchIntentForPackage(it) ?: pm.getLaunchIntentForPackage(it) }?.let {
-            try { activity.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) { }
+        val (pkg, intent) = pick
+        val start = {
+            try { activity.startActivity(intent); Log.i("ParentFeed", "Opened ${link.uri.substringBefore('?').take(48)} in $pkg"); com.example.tvlauncher.data.UsageLog.opened(where, label, pkg) }
+            catch (e: Exception) { Log.w("ParentFeed", "Open failed in $pkg: ${e.javaClass.simpleName}"); Toast.makeText(activity, "Couldn't open $label on this TV", Toast.LENGTH_LONG).show() }
         }
-        Toast.makeText(activity, "Couldn't open $label on this TV", Toast.LENGTH_LONG).show()
-        com.example.tvlauncher.data.UsageLog.event("error", where = where, what = label, detail = "Couldn't open on this TV")
+        // Apps that only play from abroad get their VPN first.
+        val route = com.example.tvlauncher.system.VpnPilot.routeFor(activity, pkg)
+        if (route != null) com.example.tvlauncher.system.VpnPilot.connectThen(activity, route) { start() } else start()
     }
 
     fun installed(activity: Activity, link: Link): Boolean =

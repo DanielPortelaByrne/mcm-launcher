@@ -163,17 +163,27 @@ See [Fire TV deployment notes](docs/fire-tv.md) for details.
 The inherited `webos/` directory is not the Fire TV build target. Make Fire TV
 changes in `app/`; maintain the LG port on its own branch.
 
-## TV do Brasil (+SBT through PrivadoVPN)
+## Apps that need another country (VpnPilot)
 
-Amélia's guide starts with **TV do Brasil**, which opens +SBT (SBT live and on demand; it only plays from
-Brazil). If PrivadoVPN is not connected, MCM covers the screen with a note in Portuguese, opens PrivadoVPN
-(which connects by itself) and opens +SBT once the tunnel is up. Fire OS lets no app press another app's
-buttons (accessibility services are refused, and adb will not accept connections from the stick itself),
-so this relies on PrivadoVPN's own settings, made on the stick:
+Some of the parents' apps only play from abroad: Amélia's Brazilian TV (**+SBT**, **Globoplay**, **RecordPlus**)
+and Padraig's **BBC Sounds** (UK). Each person has their own PrivadoVPN account, in their own copy of the app:
 
-- **Settings → Auto Connect: on**, **Best Server: Disabled** (always the last used location: Brazil, São Paulo).
-- **Split Tunnelling: on**, **Mode: Tunnel**, apps: **+SBT** only. Nothing else goes through Brazil, and the
-  free 10 GB a month is spent only on +SBT (about 2 GB an hour), so the VPN may stay connected.
+- **PrivadoVPN Brasil** (`io.privado.android.br`): Amélia's account, location São Paulo, Split Tunnelling in
+  Tunnel mode with +SBT, Globoplay and RecordPlus only.
+- **PrivadoVPN UK** (`io.privado.android.uk`): Padraig's account, location London, Tunnel mode with BBC Sounds only.
+
+`tools/privado-copy/build.sh <PrivadoVPN.apk> <br|uk> "<label>"` builds a copy: its own package and label,
+and its widget service (`WidgetVpnService`) opened to MCM only (a signature permission; MCM and the copies are
+signed with the same local key). Re-running it updates a copy in place and keeps its sign-in; a new copy is
+signed in with PrivadoVPN's TV code (code.privadovpn.com). The original PrivadoVPN app is not installed.
+
+Opening any of those apps from MCM (app tiles, family cards, TV do Brasil) goes through `VpnPilot`: a note on
+screen (Portuguese for Amélia, English for Padraig), the other copy is told to disconnect and this one to
+connect (CURRENT_CONNECT_STATE 2 / 1, as their widget does), and the app opens once the new VPN is up
+(~6-13 s). Android runs one VPN at a time and does not say whose it is, so MCM remembers which route it brought
+up. Fire OS lets no app press another app's buttons (accessibility services are refused, adb will not accept
+connections from the stick itself), which is why the copies are driven through their widget service. Each
+free account has 10 GB a month, spent only by its own apps.
 
 +SBT is sideloaded and lightly patched: the Android TV build **1.25.42** (`br.com.sbt.mais`, APKMirror bundle).
 Newer builds (1.26+) carry Google Play's anti-tamper wrapper and crash on Fire TV. SBT's own live channel is

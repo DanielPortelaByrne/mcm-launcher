@@ -45,3 +45,4 @@ tools/sbt/apktool_*.jar
 # Local only: the usage log key and the Sheet script with it filled in; rebuilt +SBT APKs (SBT's files)
 artifacts/usage-log/
 artifacts/sbt/
+artifacts/privado/

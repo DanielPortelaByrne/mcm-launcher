@@ -9,6 +9,9 @@ set -euo pipefail
 APKM=$1; DEV=${2:-}
 HERE=$(cd "$(dirname "$0")" && pwd); WORK=$(mktemp -d); OUT=$HERE/../../artifacts/sbt
 SDK=${ANDROID_HOME:-$HOME/AppData/Local/Android/Sdk}; BT=$(ls -d "$SDK"/build-tools/* | tail -1)
+# Windows (Git Bash): the SDK tools want Windows paths, and apksigner is a .bat.
+win() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else echo "$1"; fi; }
+SIGNER="$BT/apksigner"; [ -f "$SIGNER.bat" ] && SIGNER="$SIGNER.bat"
 APKTOOL=${APKTOOL:-$(ls "$HERE"/apktool_*.jar 2>/dev/null | tail -1)}
 [ -f "$APKTOOL" ] || { echo "Put apktool_<version>.jar (github.com/iBotPeaches/Apktool releases) in $HERE or set APKTOOL"; exit 1; }
 unzip -q "$APKM" -d "$WORK/apkm"
@@ -33,7 +36,7 @@ PY
 done
 mkdir -p "$OUT"; rm -f "$OUT"/*.apk
 for f in "$WORK"/*-raw.apk; do o="$OUT/$(basename "${f%-raw.apk}").apk"
-  "$BT/zipalign" -f -p 4 "$f" "$o"
-  "$BT/apksigner" sign --ks "$HOME/.android/debug.keystore" --ks-pass pass:android --key-pass pass:android "$o"; done
+  "$BT/zipalign" -f -p 4 "$(win "$f")" "$(win "$o")"
+  "$SIGNER" sign --ks "$(win "$HOME/.android/debug.keystore")" --ks-pass pass:android --key-pass pass:android "$(win "$o")"; done
 rm -f "$OUT"/*.idsig; rm -rf "$WORK"; ls -la "$OUT"
 [ -n "$DEV" ] && adb -s "$DEV" install-multiple -r "$OUT"/base.apk "$OUT"/split_*.apk

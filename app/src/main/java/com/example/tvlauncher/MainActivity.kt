@@ -670,6 +670,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchApp(entry: AppEntry, where: String) {
         Log.i(TAG, "Launching ${entry.packageName}")
+        // Apps that only play from abroad (BBC Sounds, the Brazilian TV apps) get their VPN first.
+        val route = com.example.tvlauncher.system.VpnPilot.routeFor(this, entry.packageName)
+        if (route != null) com.example.tvlauncher.system.VpnPilot.connectThen(this, route) { startApp(entry, where) } else startApp(entry, where)
+    }
+
+    private fun startApp(entry: AppEntry, where: String) {
         try {
             startActivity(entry.launchIntent)
             com.example.tvlauncher.data.UsageLog.opened(where, entry.label, entry.packageName)

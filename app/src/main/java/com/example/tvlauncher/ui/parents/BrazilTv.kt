@@ -7,8 +7,8 @@ import com.example.tvlauncher.system.VpnPilot
 
 /**
  * +SBT, Brazil's SBT live and on demand. It only plays from Brazil, so opening it from Amélia's guide first
- * makes sure PrivadoVPN is connected to its Brazil server ([VpnPilot]). PrivadoVPN carries only +SBT
- * (split tunnelling), so it can stay connected afterwards: nothing else in the house goes through Brazil.
+ * makes sure Amélia's PrivadoVPN is the VPN up, on Brazil ([VpnPilot.BRASIL]). It carries only her
+ * Brazilian apps (split tunnelling), so it can stay connected: nothing else in the house goes through Brazil.
  */
 object BrazilTv {
     const val APP = "br.com.sbt.mais"
@@ -20,6 +20,7 @@ object BrazilTv {
         val launch = activity.packageManager.getLeanbackLaunchIntentForPackage(APP) ?: activity.packageManager.getLaunchIntentForPackage(APP) ?: return
         com.example.tvlauncher.data.UsageLog.opened(com.example.tvlauncher.data.UsageLog.whereOf(activity.currentFocus), "+SBT (TV do Brasil)", APP)
         val start = { activity.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-        if (VpnPilot.vpnUp(activity)) start() else VpnPilot.connectThen(activity, start)
+        val route = VpnPilot.routeFor(activity, APP)
+        if (route == null) start() else VpnPilot.connectThen(activity, route, start)
     }
 }
