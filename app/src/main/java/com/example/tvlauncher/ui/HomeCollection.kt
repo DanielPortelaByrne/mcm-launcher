@@ -21,7 +21,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     private val watchlist = Watchlist(activity)
     private var film: Film? = null
     private val title = com.example.tvlauncher.design.Type.text(activity, "Finding tonight's film…", com.example.tvlauncher.design.Type.Style.HEADING)
-    private val status = com.example.tvlauncher.design.Type.text(activity, "Syncing Eva's watchlist", com.example.tvlauncher.design.Type.Style.CAPTION)
+    private val status = com.example.tvlauncher.design.Type.text(activity, "Syncing the film list", com.example.tvlauncher.design.Type.Style.CAPTION)
     private val card = LinearLayout(activity)
     private val info = FilmInfo(activity)
     private val availability = com.example.tvlauncher.design.Type.text(activity, "", com.example.tvlauncher.design.Type.Style.CAPTION)
@@ -73,7 +73,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         card.addView(column, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
         // Letterboxd's dots and the rating sit in the top-right corner of the card.
         column.addView(badge.view, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END; bottomMargin = px(R.dimen.space_1) })
-        column.addView(com.example.tvlauncher.design.Type.text(activity, "Eva's pick for tonight", com.example.tvlauncher.design.Type.Style.EYEBROW))
+        column.addView(com.example.tvlauncher.design.Type.text(activity, "Tonight's pick", com.example.tvlauncher.design.Type.Style.EYEBROW))
         com.example.tvlauncher.design.Type.apply(title, com.example.tvlauncher.design.Type.Style.HEADING)
         title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
         column.addView(title, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(R.dimen.space_2) })

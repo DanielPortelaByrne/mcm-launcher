@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_LOGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <!-- Lists the TV's Google accounts for the header avatar menu (runtime-prompted once). -->
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
     <!-- Lets the launcher switch its remote-button service back on if the TV drops it (e.g. after a reboot).

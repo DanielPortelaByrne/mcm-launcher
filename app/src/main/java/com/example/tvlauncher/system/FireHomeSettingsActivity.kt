@@ -46,7 +46,7 @@ class FireHomeSettingsActivity : Activity() {
     }
     private fun refresh() {
         status.text = when {
-            !FireHomeService.supported() -> "Home redirect supports Fire OS 6 only."
+            !FireHomeService.supported() -> "Home redirect supports Fire OS 6 and 7 only."
             checkSelfPermission(Manifest.permission.READ_LOGS) != PackageManager.PERMISSION_GRANTED -> "Home button setup needs the one-time log permission."
             !FireHomeService.enabled(this) -> "Home button: Amazon Home"
             FireHomeService.prefs(this).getLong("pause_until", 0) > System.currentTimeMillis() -> "Home button: paused for Amazon Home"

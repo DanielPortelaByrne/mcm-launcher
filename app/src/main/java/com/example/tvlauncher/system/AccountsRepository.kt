@@ -31,15 +31,8 @@ class AccountsRepository(private val context: Context) {
      * system account picker, so this is the union of what the system currently
      * exposes and what has been picked here before (kept only while still on the TV).
      */
-    fun accounts(): List<TvAccount> {
-        val remembered = configured() + prefs.getStringSet("known", emptySet()).orEmpty().map { entry ->
-            TvAccount(entry.substringBefore('|'), entry.substringAfter('|', "").ifBlank { null })
-        }
-        val names = remembered.associate { it.email to it.name }
-        val visible = visibleAccounts().map { TvAccount(it.email, names[it.email]) }
-        val photos = configured().associate { it.email to it.photo }
-        return (remembered + visible).distinctBy { it.email }.sortedBy { it.email }.map { it.copy(photo = photos[it.email]) }
-    }
+    // This household uses one local profile; old saved/system accounts must not reappear.
+    fun accounts(): List<TvAccount> = configured()
 
     /**
      * Accounts listed in assets/home/accounts.json. Android hides Google accounts from apps and the

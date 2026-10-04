@@ -100,7 +100,7 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
         card.addView(right, LinearLayout.LayoutParams(context.px(610), -2))
         reveal += right
 
-        right.addView(Type.text(context, "Eva's pick for tonight", Type.Style.EYEBROW))
+        right.addView(Type.text(context, "Tonight's pick", Type.Style.EYEBROW))
         right.addView(Type.text(context, title, Type.Style.TITLE).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) })
         // One meta line: runtime, genres, director (the year is already in the title).
         page?.let { pg ->

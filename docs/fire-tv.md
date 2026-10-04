@@ -1,11 +1,12 @@
-# Fire TV installation - Daniel's parents' house
+# Fire TV installation - Camila & Brian
 
-At Daniel's parents' house, the original Daniel, Daniel (UK), and Eva launcher
-was installed on the
-Amazon Fire TV Stick AFTMM running Android 7.1.2 / API 25.
+Branch: `feature/camila-brian`, for Camila and Brian's Fire TV Stick AFTSS
+(Fire OS 7.7.1.7, Android 9 / API 28). One local **Camila & Brian** profile,
+films from Letterboxd's *Movies everyone should watch at least once* list, and
+recipes. Sideboard, personal project suggestions and music listening are removed.
 
-Branch: `feature/fire-tv`. This uses the original native Android app,
-including Eva's watchlist, projects, recipes, and listening sections.
+The history below (2026-10-03) was recorded on the parents' AFTMM stick
+(Android 7.1.2 / API 25) before this branch split from `feature/fire-tv`.
 The LG webOS app is maintained separately on `feature/lg-webos`.
 
 Compatibility fixes:
@@ -147,3 +148,31 @@ No root, bootloader change, firmware flash, external relay, or shell boot hook
 is used. `tools/fire-tv-home-trial.sh` remains a bounded diagnostic prototype;
 do not run it alongside the permanent service. The two older restore scripts
 address the abandoned default-Home/accessibility trials, not this log monitor.
+
+## Explicit startup launch (2026-10-03)
+
+Boot broadcasts now request an explicit MCM launch as well as starting the
+monitor. The service waits for credential storage to unlock, with bounded
+one-second retries for up to two minutes. It records the boot count after a
+successful request so the delayed normal boot broadcast does not interrupt a
+subsequently opened app. App updates and ordinary service restarts do not request
+this launch. Turning Home routing off also disables startup launch.
+
+Verified with a real reboot and no remote or simulated key input: Amazon Home
+appeared during initial startup, then MCM became the resumed activity. The saved
+`opened_boot` matched the current boot count, and the Home monitor was foreground.
+The build and all 96 unit tests passed before installation.
+
+This concerns Fire TV boot. Turning the television on while an independently
+powered Fire Stick stays running is a different event and is not covered by this
+boot callback.
+
+## Fire OS 7 (2026-10-04)
+
+Installed on the AFTSS stick (Fire OS 7.7.1.7, API 28). Fire OS 7 logs Home in
+the same `START u0 {... cat=[android.intent.category.HOME] ... HomeActivity_vNext}`
+form, so the matcher is unchanged. Android 9 needed three service changes: a
+notification channel, `startForegroundService` from boot, and the
+`FOREGROUND_SERVICE` permission. Verified: build and unit tests, routing toggled on
+through Menu, Home from Amazon Home returned MCM as the resumed activity. Not yet
+verified: a real reboot.

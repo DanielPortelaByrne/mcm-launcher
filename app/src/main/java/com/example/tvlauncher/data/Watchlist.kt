@@ -10,7 +10,7 @@ import java.util.concurrent.Executors
 
 data class Film(val title: String, val path: String)
 
-/** Public watchlist only. A complete fetch replaces the last known good cache atomically. */
+/** A popular public Letterboxd list ("Movies everyone should watch at least once"). A complete fetch replaces the last known good cache atomically. */
 class Watchlist(context: Context) {
     private val prefs = context.getSharedPreferences("letterboxd", Context.MODE_PRIVATE)
     private val worker = Executors.newSingleThreadExecutor()
@@ -48,11 +48,11 @@ class Watchlist(context: Context) {
                 val collected = linkedMapOf<String, Film>()
                 var page = 1
                 while (true) {
-                    val html = fetch("https://letterboxd.com/evacawley/watchlist/page/$page/")
+                    val html = fetch("https://letterboxd.com/$LIST_PATH/page/$page/")
                     val entries = parse(html)
                     if (entries.isEmpty()) error("Watchlist page $page could not be read")
                     entries.forEach { collected[it.path] = it }
-                    val next = Regex("class=\"next\"[^>]*href=\"/evacawley/watchlist/page/(\\d+)/\"").find(html)
+                    val next = Regex("class=\"next\"[^>]*href=\"/$LIST_PATH/page/(\\d+)/\"").find(html)
                     if (next == null) break
                     val nextPage = next.groupValues[1].toInt()
                     check(nextPage == page + 1 && nextPage <= 500) { "Unexpected watchlist pagination" }
@@ -64,7 +64,7 @@ class Watchlist(context: Context) {
                 result.forEach { array.put(JSONObject().put("title", it.title).put("path", it.path)) }
                 prefs.edit().putString("films", array.toString()).putLong("updated", System.currentTimeMillis()).apply()
                 films = result
-                onResult("${result.size} films from Eva's watchlist")
+                onResult("${result.size} films from Letterboxd")
             } catch (_: Exception) {
                 onResult(if (films.isEmpty()) "Watchlist unavailable · select to retry" else "${films.size} saved films · refresh unavailable")
             } finally { loading = false }
@@ -74,6 +74,7 @@ class Watchlist(context: Context) {
     fun close() { worker.shutdownNow() }
 
     companion object {
+        private const val LIST_PATH = "fcbarcelona/list/movies-everyone-should-watch-at-least-once"
         fun parse(html: String): List<Film> = Regex("<div\\b[^>]*data-item-name=\"([^\"]+)\"[^>]*data-item-link=\"(/film/[^\"]+/)\"[^>]*>").findAll(html).map {
             Film(Html.fromHtml(it.groupValues[1], Html.FROM_HTML_MODE_LEGACY).toString(), it.groupValues[2])
         }.distinctBy { it.path }.toList()

@@ -13,11 +13,32 @@ import android.os.IBinder
 import android.util.Log
 import com.example.tvlauncher.MainActivity
 
-/** Fire OS 6 only. Reads Home launch events locally; never records log contents. */
+/** Fire OS 6 and 7 (Android 7.1 to 9). Reads Home launch events locally; never records log contents. */
 class FireHomeService : Service() {
     @Volatile private var running = false
     @Volatile private var reader: Process? = null
     private var worker: Thread? = null
+    private val bootHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private var bootAttempt = 0
+    private val bootLaunch = object : Runnable {
+        override fun run() {
+            if (!running || !enabled(this@FireHomeService)) return
+            val boot = android.provider.Settings.Global.getInt(contentResolver, "boot_count", 0)
+            if (prefs(this@FireHomeService).getInt("opened_boot", -1) == boot) return
+            if (getSystemService(android.os.UserManager::class.java).isUserUnlocked) {
+                try {
+                    startActivity(Intent(this@FireHomeService, MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT))
+                    prefs(this@FireHomeService).edit().putInt("opened_boot", boot).apply()
+                    Log.i(TAG, "MCM opened at startup")
+                    return
+                } catch (e: Exception) {
+                    Log.w(TAG, "Startup launch waiting: ${e.javaClass.simpleName}")
+                }
+            }
+            if (++bootAttempt < 120) bootHandler.postDelayed(this, 1000)
+        }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -29,8 +50,10 @@ class FireHomeService : Service() {
         if (!running) {
             val control = PendingIntent.getActivity(this, 0,
                 Intent(this, FireHomeSettingsActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+            if (Build.VERSION.SDK_INT >= 26) getSystemService(android.app.NotificationManager::class.java).createNotificationChannel(
+                android.app.NotificationChannel(CHANNEL, "MCM Home button", android.app.NotificationManager.IMPORTANCE_MIN))
             @Suppress("DEPRECATION")
-            val notification = Notification.Builder(this)
+            val notification = (if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL) else Notification.Builder(this))
                 .setSmallIcon(android.R.drawable.ic_menu_view)
                 .setContentTitle("MCM Home button enabled")
                 .setContentText("Open Home button settings to pause or turn off")
@@ -38,6 +61,11 @@ class FireHomeService : Service() {
             startForeground(3101, notification)
             running = true
             worker = Thread({ monitor() }, "McmHomeMonitor").also { it.start() }
+        }
+        if (intent?.getBooleanExtra("open_at_boot", false) == true) {
+            bootAttempt = 0
+            bootHandler.removeCallbacks(bootLaunch)
+            bootHandler.post(bootLaunch)
         }
         return START_STICKY
     }
@@ -71,6 +99,7 @@ class FireHomeService : Service() {
 
     override fun onDestroy() {
         running = false
+        bootHandler.removeCallbacks(bootLaunch)
         reader?.destroy()
         worker?.interrupt()
         stopForeground(true)
@@ -80,7 +109,8 @@ class FireHomeService : Service() {
 
     companion object {
         const val TAG = "McmFireHome"
-        fun supported() = Build.MANUFACTURER.equals("Amazon", true) && Build.VERSION.SDK_INT == 25
+        private const val CHANNEL = "fire_home"
+        fun supported() = Build.MANUFACTURER.equals("Amazon", true) && Build.VERSION.SDK_INT in 25..28
         fun prefs(context: Context): android.content.SharedPreferences {
             val storage = context.createDeviceProtectedStorageContext()
             // Move the initial implementation's preference once, while credential storage is available.
@@ -91,8 +121,11 @@ class FireHomeService : Service() {
             return storage.getSharedPreferences("fire_home", Context.MODE_PRIVATE)
         }
         fun enabled(context: Context) = prefs(context).getBoolean("enabled", false)
-        fun startIfEnabled(context: Context) {
-            if (supported() && enabled(context)) context.startService(Intent(context, FireHomeService::class.java))
+        fun startIfEnabled(context: Context, openAtBoot: Boolean = false) {
+            if (!supported() || !enabled(context) || context.checkSelfPermission(Manifest.permission.READ_LOGS) != PackageManager.PERMISSION_GRANTED) return
+            val intent = Intent(context, FireHomeService::class.java).putExtra("open_at_boot", openAtBoot)
+            // Android 8+ only lets a background app start a service that goes to the foreground at once.
+            if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
         }
     }
 }
@@ -108,7 +141,7 @@ class FireHomeBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED || intent.action == Intent.ACTION_BOOT_COMPLETED || intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
             Log.i(FireHomeService.TAG, "Restart after ${intent.action}")
-            FireHomeService.startIfEnabled(context)
+            FireHomeService.startIfEnabled(context, intent.action != Intent.ACTION_MY_PACKAGE_REPLACED)
         }
     }
 }

@@ -72,9 +72,11 @@ class AccountMenu(
                 onPick(account)
             })
         }
-        menu.addView(divider())
-        menu.addView(row(null, context.getString(R.string.accounts_switch), null, false, quiet = true) { onSwitchProfile() })
-        menu.addView(row(null, context.getString(R.string.accounts_manage), null, false, quiet = true) { onManage() })
+        if (list.size > 1) {
+            menu.addView(divider())
+            menu.addView(row(null, context.getString(R.string.accounts_switch), null, false, quiet = true) { onSwitchProfile() })
+            menu.addView(row(null, context.getString(R.string.accounts_manage), null, false, quiet = true) { onManage() })
+        }
     }
 
     private fun row(avatar: Drawable?, title: String, subtitle: String?, checked: Boolean, quiet: Boolean = false, action: () -> Unit): View {

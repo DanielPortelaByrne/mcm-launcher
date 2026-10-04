@@ -1,21 +1,21 @@
-# MCM Launcher - Fire TV
+# MCM Launcher - Fire TV (Camila & Brian)
 
-The original Daniel and Eva MCM launcher, adapted for the **Amazon Fire TV
-Stick at Daniel's parents' house**. Maintained on `feature/fire-tv`.
-The active native Android app source is in `app/`.
+MCM launcher for **Camila and Brian's Amazon Fire TV Stick**. Maintained on
+`feature/camila-brian`, branched from `feature/fire-tv` before that branch was
+personalised for Daniel's parents. The native Android app source is in `app/`.
 
 ## This household's version
 
-The installed device is an **AFTMM Fire TV Stick**, running Android **7.1.2**
-(API **25**). This version keeps the original **Daniel**, **Daniel (UK)**, and
-**Eva** profiles, Eva's public Letterboxd watchlist, film posters and availability,
-Sideboard projects, recipes, listening sections, app search and organisation,
-and the full-screen painting collection.
+The installed device is a **Fire TV Stick (AFTSS)** running **Fire OS 7.7.1.7**
+(Android **9**, API **28**), reached over ADB through Tailscale. This version has
+one local profile, **Camila & Brian**. Film picks come from Letterboxd's popular
+public list *Movies everyone should watch at least once*, with posters and
+availability. It keeps recipes, app search and organisation, and the
+full-screen painting collection. The sideboard projects, the evening project
+suggestion, and Now spinning (music listening) are removed.
 
-This retains the original Android experience. The Bandit and Aries profile,
-removed sections, HDMI shelf shortcuts, and 4.0-star film filter belong to the
-LG household's version and are not applied here. Selecting a profile changes
-MCM's selected account; it does not sign into streaming apps.
+Camila & Brian is a local MCM profile; it does not sign into streaming apps or
+expose any saved accounts.
 
 ## Build and install
 
@@ -33,9 +33,14 @@ adb -s <fire-tv-ip>:5555 shell am start -n com.example.tvlauncher/.MainActivity
 App ID: `com.example.tvlauncher`. The APK is in
 `app/build/outputs/apk/debug/app-debug.apk`. Open MCM from the Fire TV app list.
 **Home routing is enabled on the installed Fire TV.** MCM runs a local Home-event
-monitor and restarts it at boot. Reboot startup and Home from Amazon/Settings
-were verified on the stick. Amazon Home can appear briefly before MCM returns.
+monitor and restarts it at boot. Home from Amazon Home was verified on this stick;
+reboot startup has not yet been tested on Fire OS 7. Amazon Home can appear briefly
+before MCM returns.
 No root or always-on computer is required.
+
+MCM also opens automatically once per Fire TV boot while Home routing is enabled.
+It waits for app storage to unlock; late boot callbacks do not reopen it over
+another app. Turning Home routing off also disables this startup launch.
 
 Press **Menu in MCM** to turn routing on/off, open Amazon Home with a one-minute
 pause, or open Fire TV settings. On a new installation, grant the one-time
@@ -47,7 +52,9 @@ adb -s <fire-tv-ip>:5555 shell am force-stop com.example.tvlauncher
 adb -s <fire-tv-ip>:5555 shell am start -n com.example.tvlauncher/.MainActivity
 ```
 
-This implementation supports Amazon devices on Android API 25 (Fire OS 6).
+This implementation supports Amazon devices on Android API 25 to 28 (Fire OS 6
+and 7). On Android 8+ the monitor starts as a foreground service with its own
+notification channel.
 It filters Home events locally and does not save or transmit logs.
 See [persistent Home routing](docs/fire-tv.md#persistent-home-routing-2026-10-03)
 for verification and recovery.
