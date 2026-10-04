@@ -75,15 +75,26 @@
                     style="@style/HeaderNavTab"
                     android:text="@string/nav_home" />
 
+                <!-- The family's own places on the page: each jumps there with the header kept in view. -->
+                <TextView
+                    android:id="@+id/navDaniel"
+                    style="@style/HeaderNavTab"
+                    android:text="@string/nav_daniel" />
+
+                <TextView
+                    android:id="@+id/navAmelia"
+                    style="@style/HeaderNavTab"
+                    android:text="@string/nav_amelia" />
+
+                <TextView
+                    android:id="@+id/navPadraig"
+                    style="@style/HeaderNavTab"
+                    android:text="@string/nav_padraig" />
+
                 <TextView
                     android:id="@+id/navApps"
                     style="@style/HeaderNavTab"
                     android:text="@string/nav_apps" />
-
-                <TextView
-                    android:id="@+id/navLiveTv"
-                    style="@style/HeaderNavTab"
-                    android:text="@string/nav_live_tv" />
 
                 <TextView
                     android:id="@+id/navArt"
@@ -92,9 +103,11 @@
 
                 <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
 
+                <!-- A Fire TV Stick has no inputs to switch: hidden here (kept for its id). -->
                 <ImageView
                     android:id="@+id/iconInputs"
                     style="@style/HeaderIcon"
+                    android:visibility="gone"
                     android:contentDescription="@string/inputs"
                     android:src="@drawable/ic_input" />
 
@@ -165,6 +178,24 @@
                     android:shadowRadius="8"
                     android:text="@string/home_subtitle"
                     android:textColor="@color/text_muted" />
+
+                <!-- Tells them the page goes on: the family sections start below the apps. -->
+                <TextView
+                    android:id="@+id/heroMoreBelow"
+                    style="@style/Text.Caption"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_3"
+                    android:maxWidth="420dp"
+                    android:drawableStart="@drawable/ic_chevron_down"
+                    android:drawablePadding="@dimen/space_2"
+                    android:drawableTint="@color/accent"
+                    android:gravity="center_vertical"
+                    android:shadowColor="#99000000"
+                    android:shadowDy="1"
+                    android:shadowRadius="6"
+                    android:text="@string/home_more_below"
+                    android:textColor="@color/accent" />
             </LinearLayout>
         </FrameLayout>
 

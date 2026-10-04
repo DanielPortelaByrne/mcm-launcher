@@ -10,7 +10,8 @@ import androidx.core.content.ContextCompat
 import com.example.tvlauncher.R
 import com.example.tvlauncher.design.LauncherTheme
 
-enum class NavTab { HOME, APPS, LIVE_TV, ART }
+/** HOME is the top of the page; DANIEL, AMELIA and PADRAIG are places further down it. */
+enum class NavTab { HOME, DANIEL, AMELIA, PADRAIG, APPS, ART }
 
 /**
  * Wires the header's four nav labels and five right-hand icons. Focus is the

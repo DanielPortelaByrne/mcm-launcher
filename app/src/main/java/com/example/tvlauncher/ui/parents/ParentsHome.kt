@@ -8,7 +8,9 @@ import android.view.Gravity
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.view.View
 import com.example.tvlauncher.R
+import com.example.tvlauncher.ui.NavTab
 import com.example.tvlauncher.data.parents.FeedImages
 import com.example.tvlauncher.data.parents.FileFeedStore
 import com.example.tvlauncher.data.parents.HttpFeedFetcher
@@ -40,7 +42,8 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
 
     private val comingUp = ComingUpCard(activity, sheet)
     private val daniel = DanielLatelySection(activity, images, viewer)
-    private val amelia = AmeliaSection(activity, images) { repository.cached?.aria?.firstOrNull() }
+    private val heroPicks = HeroPicks(activity, images)
+    private val amelia = AmeliaSection(activity, images)
     private val tonight = TonightAtHomeSection(activity, images, sheet)
     private val listening = ListeningRoomSection(activity, images)
     private val match = MatchProgrammeSection(activity, sheet)
@@ -49,14 +52,56 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
     private val archive = FamilyArchiveSection(activity, images, viewer)
     private val seanti = SeantiSection(activity, images)
 
+    private val ordered get() = listOf(daniel.section, listening.section, amelia.section, match.section, tonight.section, aria.section, crochet.section, archive.section, seanti.section)
+
     val overlayVisible: Boolean get() = viewer.isVisible
 
+    /** The header's family tabs, and the sections they lead to. */
+    private val places get() = mapOf(NavTab.DANIEL to daniel.section, NavTab.PADRAIG to listening.section, NavTab.AMELIA to amelia.section)
+
+    /** True when the tab has somewhere to go (its section has content). */
+    fun hasPlace(tab: NavTab): Boolean = places[tab]?.shown == true
+
+    /** The tab whose section the page is showing at [scrollY], or HOME above them all. */
+    fun placeAt(scrollY: Int, reach: Int): NavTab {
+        var at = NavTab.HOME
+        for ((tab, s) in places.entries.sortedBy { it.value.view.top }) {
+            if (s.shown && pageTop(s.view) <= scrollY + reach) at = tab
+        }
+        return at
+    }
+
+    /** Pans the page so [tab]'s section sits just under the header, and puts focus on its first thing. */
+    fun jumpTo(tab: NavTab, scroll: com.example.tvlauncher.ui.CalmScrollView, headerSpace: Int): Boolean {
+        val s = places[tab]?.takeIf { it.shown } ?: return false
+        com.example.tvlauncher.design.Motion.scrollVerticalTo(scroll, pageTop(s.view) - headerSpace)
+        // Focus after the pan has started, so the focus listener's own scroll does not fight it.
+        s.view.postDelayed({ firstFocusable(s.view)?.requestFocus() }, 60)
+        return true
+    }
+
+    private fun pageTop(v: View): Int {
+        var y = 0; var p: View? = v
+        while (p != null && p.id != R.id.homeScroll) { y += p.top; p = p.parent as? View }
+        return y
+    }
+
+    private fun firstFocusable(v: View): View? = v.getFocusables(View.FOCUS_DOWN).firstOrNull { it.isShown }
+
     init {
-        activity.findViewById<FrameLayout>(R.id.homeHero).addView(comingUp.view,
-            FrameLayout.LayoutParams(Kit.dp(activity, 408), -2, Gravity.END or Gravity.CENTER_VERTICAL))
+        val hero = activity.findViewById<FrameLayout>(R.id.homeHero)
+        hero.addView(comingUp.view, FrameLayout.LayoutParams(Kit.dp(activity, 408), -2, Gravity.END or Gravity.CENTER_VERTICAL))
+        hero.addView(heroPicks.view, FrameLayout.LayoutParams(Kit.dp(activity, 408), -2, Gravity.END or Gravity.CENTER_VERTICAL))
+        // Order of what matters most to them: Daniel's life, then Padraig's music (he looks for it first),
+        // then Amélia's programmes, the football, a shared film, Ária, crochet, old photographs.
         val sections = activity.findViewById<LinearLayout>(R.id.discoverSections)
-        listOf(daniel.section, amelia.section, tonight.section, listening.section, match.section, crochet.section, aria.section, archive.section, seanti.section)
-            .forEachIndexed { i, s -> sections.addView(s.view, i, LinearLayout.LayoutParams(-1, -2)) }
+        ordered.forEachIndexed { i, s -> sections.addView(s.view, i, LinearLayout.LayoutParams(-1, -2)) }
+        // "More apps" (every other installed app, mostly Amazon's) moves below the family sections, so the
+        // first scroll down reaches Daniel's photos rather than a row of app shortcuts.
+        activity.findViewById<View>(R.id.featuredSection)?.let { more ->
+            (more.parent as? android.view.ViewGroup)?.removeView(more)
+            sections.addView(more, ordered.size)
+        }
         greet()
         ParentsWork.executor.execute {
             feedUrl = config.feedUrl()
@@ -105,6 +150,7 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
     private fun render(feed: ParentFeed?) {
         val now = System.currentTimeMillis()
         comingUp.bind(feed?.comingUp.orEmpty(), now)
+        heroPicks.bind(if (comingUp.view.visibility == View.VISIBLE || feed == null) emptyList() else heroCards(feed, now))
         daniel.bind(feed?.danielLately, feedUrl != null && feed != null, now)
         amelia.bind(feed?.forAmelia)
         tonight.bind(feed?.tonight.orEmpty())
@@ -115,6 +161,23 @@ class ParentsHome(private val activity: Activity, sheet: InfoSheet, root: FrameL
         archive.bind(feed?.familyArchive.orEmpty(), now)
         seanti.bind(feed?.localEvents.orEmpty(), now)
         if (feed != null) keepImages(feed)
+        onRendered?.invoke()
+    }
+
+    /** Called after each render, so the header can show only the family tabs that lead somewhere. */
+    var onRendered: (() -> Unit)? = null
+
+    /**
+     * Amélia's card is her own programme (the newest Domingo Legal), or Brazilian TV live; Padraig's is a
+     * record for the day, turning over daily through his shelf.
+     */
+    private fun heroCards(feed: ParentFeed, now: Long): List<HeroPicks.Card> {
+        val forHer = feed.forAmelia?.shows?.firstOrNull()?.let { HeroPicks.Card("Para Amélia", it, it.title, it.subtitle, false) }
+            ?: feed.forAmelia?.live?.firstOrNull()?.let { HeroPicks.Card("Para Amélia", it, "${it.title} ao vivo", "Agora, do Brasil", false) }
+        val records = feed.listening?.records.orEmpty()
+        val forHim = records.takeIf { it.isNotEmpty() }?.let { it[Math.floorMod(ParentsFormat.dayIndex(now), it.size)] }
+            ?.let { HeroPicks.Card("For Padraig", it, it.title, "Put on a record · Spotify", true) }
+        return listOfNotNull(forHer, forHim)
     }
 
     private var keptFor: String? = null

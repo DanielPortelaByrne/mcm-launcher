@@ -54,7 +54,8 @@ private fun panVertically(sv: CalmScrollView, view: View, density: Float) {
     //    Your apps never slide away while you move between them.
     if (bounds.bottom < (h * 0.92f)) { Motion.scrollVerticalTo(sv, 0); return }
     // 2) Inside the comfort zone: stay put, so moving sideways along a row never moves the page.
-    val comfortTop = sv.scrollY + (h * 0.05f).toInt()
+    // The header stays pinned over the top ~15% of the screen, so anything above that line counts as hidden.
+    val comfortTop = sv.scrollY + (h * 0.18f).toInt()
     val comfortBottom = sv.scrollY + (h * 0.88f).toInt()
     if (bounds.top >= comfortTop && bounds.bottom <= comfortBottom) return
     // 3) Otherwise glide so the row settles about a third of the way down the screen, with the row above still peeking in.

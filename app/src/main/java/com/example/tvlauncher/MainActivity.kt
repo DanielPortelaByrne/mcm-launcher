@@ -149,8 +149,10 @@ class MainActivity : AppCompatActivity() {
         headerBar = HeaderBar(
             navTabs = mapOf(
                 NavTab.HOME to findViewById(R.id.navHome),
+                NavTab.DANIEL to findViewById(R.id.navDaniel),
+                NavTab.AMELIA to findViewById(R.id.navAmelia),
+                NavTab.PADRAIG to findViewById(R.id.navPadraig),
                 NavTab.APPS to findViewById(R.id.navApps),
-                NavTab.LIVE_TV to findViewById(R.id.navLiveTv),
                 NavTab.ART to findViewById(R.id.navArt)
             ),
             iconViews = listOf(
@@ -259,9 +261,39 @@ class MainActivity : AppCompatActivity() {
         backdrop.showCurrent()
         val homeScroll = findViewById<com.example.tvlauncher.ui.CalmScrollView>(R.id.homeScroll)
         pageVeil = backdrop.attachVeil(homeScroll)
+        // The header stays pinned to the top of the screen as the page moves under it (it is drawn above the
+        // page's cards), and the family tab of whichever section is in view lights as "you are here".
+        val header = findViewById<android.widget.FrameLayout>(R.id.header)
+        header.translationZ = resources.displayMetrics.density * 40
+        // Once the page moves, a band of the room's dark ground sits behind the pinned header (from the top of
+        // the screen to just below it), so scrolled content never shows around it. The capsule itself moves
+        // from the header's background into a child above that band.
+        val margin = resources.getDimensionPixelSize(R.dimen.page_margin)
+        val above = (header.layoutParams as android.view.ViewGroup.MarginLayoutParams).topMargin
+        val shade = android.view.View(this).apply {
+            background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0xF21A140E.toInt(), 0xF21A140E.toInt(), 0xF21A140E.toInt(), 0x001A140E))
+            alpha = 0f
+        }
+        header.addView(shade, 0, android.widget.FrameLayout.LayoutParams(-1, above + header.layoutParams.height + resources.getDimensionPixelSize(R.dimen.space_6)).apply {
+            topMargin = -above; leftMargin = -margin; rightMargin = -margin
+        })
+        header.addView(android.view.View(this).apply { background = header.background }, 1, android.widget.FrameLayout.LayoutParams(-1, -1))
+        header.background = null
         homeScroll.onScrolled = { y ->
             backdrop.onPageScrolled()
-       }
+            header.translationY = y.toFloat()
+            shade.alpha = (y / (resources.displayMetrics.density * 48)).coerceIn(0f, 1f)
+            if (!allAppsPanel.isVisible && !artModeOverlay.isVisible) {
+                val place = parentsHome.placeAt(y, homeScroll.height / 3)
+                if (place != shownPlace) { shownPlace = place; headerBar.setSelected(place) }
+            }
+        }
+        parentsHome.onRendered = {
+            listOf(NavTab.DANIEL to R.id.navDaniel, NavTab.AMELIA to R.id.navAmelia, NavTab.PADRAIG to R.id.navPadraig).forEach { (tab, id) ->
+                findViewById<android.view.View>(id).visibility = if (parentsHome.hasPlace(tab)) android.view.View.VISIBLE else android.view.View.GONE
+            }
+        }
         com.example.tvlauncher.design.SectionTheme.tag(findViewById(R.id.continueSection), com.example.tvlauncher.design.SectionTheme.Mood.FILM)
 
         findViewById<ImageView>(R.id.iconSearch).setOnClickListener { searchPanel.show(currentApps) }
@@ -301,7 +333,7 @@ class MainActivity : AppCompatActivity() {
     private fun placeHint() {
         val hint = findViewById<TextView>(R.id.pageHint)
         val header = findViewById<android.view.View>(R.id.header)
-        val icons = findViewById<android.view.View>(R.id.iconInputs)
+        val icons = findViewById<android.view.View>(R.id.iconNetwork)
         header.post {
             val h = IntArray(2).also { header.getLocationInWindow(it) }
             val i = IntArray(2).also { icons.getLocationInWindow(it) }
@@ -656,10 +688,19 @@ class MainActivity : AppCompatActivity() {
                 allAppsPanel.setApps(currentApps)
                 allAppsPanel.show()
             }
-            NavTab.LIVE_TV -> handleCapability(systemActions.openLiveTv(repository.loadLaunchableApps(ownedOnly = false)))
+            NavTab.DANIEL, NavTab.AMELIA, NavTab.PADRAIG -> {
+                if (allAppsPanel.isVisible) allAppsPanel.hide()
+                if (searchPanel.isVisible) searchPanel.hide()
+                if (parentsHome.jumpTo(tab, findViewById(R.id.homeScroll), headerSpace())) headerBar.setSelected(tab)
+            }
             NavTab.ART -> enterArtMode()
         }
     }
+
+    private var shownPlace = NavTab.HOME
+
+    /** Room left at the top of the screen for the pinned header, so a section lands just beneath it. */
+    private fun headerSpace(): Int = findViewById<android.view.View>(R.id.header).bottom + resources.getDimensionPixelSize(R.dimen.space_3)
 
     private fun enterArtMode() {
         artReturnFocus = currentFocus

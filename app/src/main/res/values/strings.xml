@@ -7,6 +7,10 @@
     <string name="nav_apps">Apps</string>
     <string name="nav_live_tv">Live TV</string>
     <string name="nav_art">Art</string>
+    <string name="nav_daniel">Daniel</string>
+    <string name="nav_amelia">Amélia</string>
+    <string name="nav_padraig">Padraig</string>
+    <string name="home_more_below">Below: Daniel\'s photos, music and Brazilian TV</string>
     <string name="home_eyebrow">THE LIVING ROOM</string>
     <string name="home_title">Hello, Mammy &amp; Daddy.</string>
     <string name="home_subtitle">Here\'s what the family\'s been up to.</string>
