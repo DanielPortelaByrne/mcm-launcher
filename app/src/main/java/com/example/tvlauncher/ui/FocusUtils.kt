@@ -18,7 +18,7 @@ import com.example.tvlauncher.design.Motion
  */
 fun requestFocusRobust(root: ViewGroup, target: View) {
     target.post { target.requestFocus() }
-    target.postDelayed({ if (root.findFocus() == null) target.requestFocus() }, 300)
+    target.postDelayed({ val f = root.findFocus(); if (f == null || f === root) target.requestFocus() }, 300)
 }
 
 /**

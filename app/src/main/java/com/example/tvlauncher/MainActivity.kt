@@ -443,8 +443,9 @@ class MainActivity : AppCompatActivity() {
                 val scrolling = focused is android.widget.ScrollView &&
                     ((direction == android.view.View.FOCUS_DOWN && focused.canScrollVertically(1)) || (direction == android.view.View.FOCUS_UP && focused.canScrollVertically(-1)))
                 if (!editingText && !scrolling) {
-                    if (focused == null || overlay.findFocus() == null) {
-                        overlay.requestFocus()           // focus strayed behind the overlay: bring it back
+                    if (focused == null || focused === overlay || overlay.findFocus() == null) {
+                        // Focus strayed behind the overlay, or the overlay itself took it (slow devices): hand it to a child.
+                        (android.view.FocusFinder.getInstance().findNextFocus(overlay, null, direction) ?: overlay).requestFocus()
                     } else {
                         // Only ever move to something inside the overlay; at its edges the key is simply absorbed.
                         android.view.FocusFinder.getInstance().findNextFocus(overlay, focused, direction)?.requestFocus(direction)
