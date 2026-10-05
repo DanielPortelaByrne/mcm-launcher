@@ -15,7 +15,7 @@ name shown in MCM; they do not sign in to streaming services.
 | Household | Device | Branch | Main source |
 | --- | --- | --- | --- |
 | Daniel and Eva, London | TCL Google TV | [`feature/spatial-motion-experiment`](https://github.com/DanielPortelaByrne/mcm-launcher/tree/feature/spatial-motion-experiment) | `app/` |
-| Mariana and Sean's house | LG webOS TV | [`feature/lg-webos`](https://github.com/DanielPortelaByrne/mcm-launcher/tree/feature/lg-webos) | `webos/` |
+| Mariana and Sean's house | LG webOS TV | Own repo: [`mcm-launcher-webos`](https://github.com/DanielPortelaByrne/mcm-launcher-webos) | repo root |
 | Daniel's parents' house | Amazon Fire TV Stick | [`feature/fire-tv`](https://github.com/DanielPortelaByrne/mcm-launcher/tree/feature/fire-tv) | `app/` |
 
 The LG version uses the Bandit and Aries profile and highly rated public film
