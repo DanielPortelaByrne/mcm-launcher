@@ -129,6 +129,12 @@ class JellyfinClient(context: Context) {
     /** Asks Jellyfin to rescan its libraries. Used when something has been downloaded that it has not yet picked up. Needs an admin sign-in. */
     fun refreshLibrary(): Boolean = request("POST", JellyfinApi.cleanBase(server) + "/Library/Refresh", json = "{}") != null
 
+    /**
+     * Deletes an item from Jellyfin and its files from disk. For what the download manager does not hold (added some other
+     * way). Needs a user allowed to delete media. True when Jellyfin accepted it.
+     */
+    fun deleteItem(itemId: String): Boolean = request("DELETE", JellyfinApi.cleanBase(server) + "/Items/" + java.net.URLEncoder.encode(itemId, "UTF-8")) != null
+
     /** How much space the library takes, in bytes; null when Jellyfin cannot be reached. */
     fun libraryBytes(): Long? {
         val uid = userId ?: return null

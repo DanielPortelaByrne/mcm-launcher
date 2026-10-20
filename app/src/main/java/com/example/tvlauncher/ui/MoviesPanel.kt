@@ -410,10 +410,13 @@ class MoviesPanel(
     /** Takes a downloaded title off disk after the owner confirms. Radarr or Sonarr is told too, so it is not fetched again. */
     private fun confirmDelete(e: Entry) {
         val ref = LibraryRef(e.title.name, e.title.year, e.title.tmdbId?.toLongOrNull(), e.title.imdbId)
-        infoSheet.show("DELETE", e.title.name, null, listOf("Removes every file for this title from the TV's storage, and from Radarr or Sonarr so it is not downloaded again. This cannot be undone."), null, listOf(
+        infoSheet.show("DELETE", e.title.name, null, listOf("Removes every file for this title from the storage, and from Radarr or Sonarr so it is not downloaded again. Titles those do not hold are removed from Jellyfin. This cannot be undone."), null, listOf(
             SheetAction("Delete", "Remove it from disk", primary = true) {
                 worker.execute {
-                    val removed = libraryRemover.delete(e.title.kind, ref)
+                    // Radarr or Sonarr first, so nothing fetches it again. A title they do not hold (added some other way, such as
+                    // public-domain films) is deleted from Jellyfin, which removes its files.
+                    val managed = libraryRemover.delete(e.title.kind, ref)
+                    val removed = managed || (e.library != null && jellyfin.deleteItem(e.library.id))
                     if (removed) jellyfin.refreshLibrary()
                     activity.runOnUiThread {
                         Toast.makeText(activity, if (removed) "Deleted ${e.title.name}" else "Couldn't delete ${e.title.name} right now", Toast.LENGTH_LONG).show()
