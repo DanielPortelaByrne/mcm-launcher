@@ -12,8 +12,24 @@ data class JellyfinItem(
     val mediaSourceId: String?,
     val resumeMs: Long = 0L,
     val played: Boolean = false,
-    val imdbId: String? = null
+    val imdbId: String? = null,
+    val tmdbId: String? = null,
+    val overview: String? = null,
+    val genres: List<String> = emptyList(),
+    val officialRating: String? = null,
+    val runtimeMin: Int? = null,
+    val hasBackdrop: Boolean = false,
+    /** For an episode: season and episode numbers. */
+    val season: Int? = null,
+    val episode: Int? = null,
+    val seriesName: String? = null
 ) {
+    val isSeries: Boolean get() = type == "Series"
+    val isEpisode: Boolean get() = type == "Episode"
+
+    /** "S1 E3" for an episode, else null. */
+    fun episodeLabel(): String? = if (season != null && episode != null) "S$season E$episode" else null
+
     /** Jellyfin names a single-file film's source after the film itself, so that is the safe default. */
     val sourceId: String get() = mediaSourceId ?: id
 
@@ -58,8 +74,23 @@ object JellyfinApi {
      * server's own provider-id filter (AnyProviderIdEquals) is ignored by Jellyfin 12.2: asking for one film
      * returns the whole library, so trusting its first answer would "find" the wrong film every time.
      */
-    fun libraryMoviesUrl(base: String, userId: String): String =
-        "$base/Items?userId=${enc(userId)}&Recursive=true&IncludeItemTypes=Movie&HasImdbId=true&Fields=ProviderIds&Limit=5000"
+    fun libraryUrl(base: String, userId: String): String =
+        "$base/Items?userId=${enc(userId)}&Recursive=true&IncludeItemTypes=Movie,Series&SortBy=DateCreated&SortOrder=Descending" +
+            "&Fields=ProviderIds,Overview,Genres,OfficialRating,RunTimeTicks&Limit=5000"
+
+    /** Where to pick up a series: the next unwatched episode, or the first one when nothing has been watched. */
+    fun nextUpUrl(base: String, userId: String, seriesId: String): String =
+        "$base/Shows/NextUp?userId=${enc(userId)}&seriesId=${enc(seriesId)}&Limit=1"
+
+    fun firstEpisodeUrl(base: String, userId: String, seriesId: String): String =
+        "$base/Shows/${enc(seriesId)}/Episodes?userId=${enc(userId)}&Limit=1"
+
+    fun backdropUrl(base: String, id: String, maxWidth: Int = 1280): String = "$base/Items/${enc(id)}/Images/Backdrop?maxWidth=$maxWidth&quality=85"
+
+    /** The film or series with these ids (a TMDB id is used when the IMDb one is missing), or null. Never a title match. */
+    fun findByIds(items: List<JellyfinItem>, imdbId: String?, tmdbId: String?, series: Boolean): JellyfinItem? = items.firstOrNull {
+        (if (series) it.isSeries else it.isMovie) && ((imdbId != null && it.imdbId.equals(imdbId, ignoreCase = true)) || (tmdbId != null && it.tmdbId == tmdbId))
+    }
 
     /** The film with this IMDb id, or null. Never falls back to a title match or "the first result". */
     fun findByImdb(items: List<JellyfinItem>, imdbId: String): JellyfinItem? =
@@ -170,7 +201,16 @@ object JellyfinApi {
             // Jellyfin counts in 100-nanosecond ticks.
             resumeMs = (data?.optLong("PlaybackPositionTicks", 0L) ?: 0L) / 10_000L,
             played = data?.optBoolean("Played", false) ?: false,
-            imdbId = o.optJSONObject("ProviderIds")?.optString("Imdb")?.ifBlank { null }
+            imdbId = o.optJSONObject("ProviderIds")?.optString("Imdb")?.ifBlank { null },
+            tmdbId = o.optJSONObject("ProviderIds")?.optString("Tmdb")?.ifBlank { null },
+            overview = o.optString("Overview").ifBlank { null },
+            genres = o.optJSONArray("Genres")?.let { g -> (0 until g.length()).map { g.optString(it) } }.orEmpty(),
+            officialRating = o.optString("OfficialRating").ifBlank { null },
+            runtimeMin = (o.optLong("RunTimeTicks", 0L) / 600_000_000L).toInt().takeIf { it > 0 },
+            hasBackdrop = (o.optJSONArray("BackdropImageTags")?.length() ?: 0) > 0,
+            season = if (o.has("ParentIndexNumber")) o.optInt("ParentIndexNumber") else null,
+            episode = if (o.has("IndexNumber")) o.optInt("IndexNumber") else null,
+            seriesName = o.optString("SeriesName").ifBlank { null }
         )
     }
 }

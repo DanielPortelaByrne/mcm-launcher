@@ -12,11 +12,28 @@ class JellyfinApiTest {
         {"Id":"s4","Name":"A Series","Type":"Series","ProviderIds":{"Imdb":"tt9999999"}}
     ],"TotalRecordCount":4}"""
 
-    @Test fun library_request_lists_films_with_provider_ids() {
-        val url = JellyfinApi.libraryMoviesUrl("http://deck:8096", "user1")
+    @Test fun library_request_lists_films_and_series_with_their_details() {
+        val url = JellyfinApi.libraryUrl("http://deck:8096", "user1")
         assertTrue(url.startsWith("http://deck:8096/Items?"))
-        assertTrue(url.contains("IncludeItemTypes=Movie"))
-        assertTrue(url.contains("Fields=ProviderIds"))
+        assertTrue(url.contains("IncludeItemTypes=Movie,Series"))
+        assertTrue(url.contains("ProviderIds") && url.contains("Overview") && url.contains("Genres"))
+    }
+
+    @Test fun finds_a_series_by_tmdb_when_it_has_no_imdb_id() {
+        val items = JellyfinApi.parseItems("""{"Items":[
+          {"Id":"m1","Name":"Same id, a film","Type":"Movie","ProviderIds":{"Tmdb":"77"}},
+          {"Id":"s1","Name":"Show","Type":"Series","ProviderIds":{"Tmdb":"77"},"Genres":["Drama"],"OfficialRating":"15","RunTimeTicks":27000000000,"BackdropImageTags":["x"]}]}""")
+        val show = JellyfinApi.findByIds(items, null, "77", series = true)!!
+        assertEquals("s1", show.id); assertEquals(listOf("Drama"), show.genres); assertEquals("15", show.officialRating)
+        assertEquals(45, show.runtimeMin); assertTrue(show.hasBackdrop)
+        assertEquals("m1", JellyfinApi.findByIds(items, null, "77", series = false)!!.id)
+        assertNull(JellyfinApi.findByIds(items, "tt1", "99", series = true))
+    }
+
+    @Test fun reads_an_episode_label() {
+        val ep = JellyfinApi.parseItems("""{"Items":[{"Id":"e1","Name":"Pilot","Type":"Episode","ParentIndexNumber":1,"IndexNumber":3,"SeriesName":"Show"}]}""").single()
+        assertTrue(ep.isEpisode); assertEquals("S1 E3", ep.episodeLabel()); assertEquals("Show", ep.seriesName)
+        assertTrue(JellyfinApi.nextUpUrl("http://d", "u", "s1").contains("seriesId=s1"))
     }
 
     /** Jellyfin 12.2 ignores AnyProviderIdEquals and returns every film; matching must be done on the TV. */

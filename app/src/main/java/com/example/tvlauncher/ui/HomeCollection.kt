@@ -328,14 +328,8 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     }
 
     /** Plays the library copy in the launcher's own player: the file as stored first, then a copy Jellyfin re-encodes for this TV. */
-    private fun playFromJellyfin(item: com.example.tvlauncher.data.jellyfin.JellyfinItem, current: Film) {
-        val headers = jellyfin.playbackHeaders()
-        fun ranked(label: String, url: String) = com.example.tvlauncher.data.stream.RankedStream(
-            com.example.tvlauncher.data.stream.StreamCandidate("jellyfin:${item.id}:$label", "Jellyfin", label, url, null, com.example.tvlauncher.data.stream.StreamMetadata(), headers = headers),
-            100, 0L, false, com.example.tvlauncher.data.stream.Verdict.RECOMMENDED, null, emptyList()
-        )
-        PlayerActivity.launch(activity, listOf(ranked("Original file", jellyfin.streamUrl(item)), ranked("Converted for this TV", jellyfin.transcodeUrl(item))), current.title, details?.imdbId)
-    }
+    private fun playFromJellyfin(item: com.example.tvlauncher.data.jellyfin.JellyfinItem, current: Film) =
+        JellyfinPlayback.play(activity, jellyfin, item, current.title, details?.imdbId ?: "jf:${item.id}")
 
     /** Plays [chosen] first, then up to two of the next-best playable versions as automatic fallbacks. */
     private fun play(chosen: com.example.tvlauncher.data.stream.RankedStream, result: com.example.tvlauncher.data.stream.SmartResult, current: Film) {

@@ -83,14 +83,32 @@ class JellyfinClient(context: Context) {
     @Volatile private var library: List<JellyfinItem> = emptyList()
     @Volatile private var libraryAt = 0L
 
-    /** Every film with an IMDb id, kept for a few minutes so flicking through picks costs one request, not many. */
-    fun movies(force: Boolean = false): List<JellyfinItem> {
+    /** Every film and series, newest first, kept for a few minutes so flicking through picks costs one request, not many. */
+    fun library(force: Boolean = false): List<JellyfinItem> {
         val uid = userId ?: return emptyList()
         if (!force && libraryAt != 0L && System.currentTimeMillis() - libraryAt < LIBRARY_TTL_MS) return library
-        val body = request("GET", JellyfinApi.libraryMoviesUrl(JellyfinApi.cleanBase(server), uid)) ?: return library
+        val body = request("GET", JellyfinApi.libraryUrl(JellyfinApi.cleanBase(server), uid)) ?: return library
         library = JellyfinApi.parseItems(body); libraryAt = System.currentTimeMillis()
         return library
     }
+
+    fun movies(force: Boolean = false): List<JellyfinItem> = library(force).filter { it.isMovie }
+
+    /** The library copy of a title from elsewhere, matched on IMDb or TMDB id. */
+    fun find(imdbId: String?, tmdbId: String?, series: Boolean): JellyfinItem? = JellyfinApi.findByIds(library(), imdbId, tmdbId, series)
+
+    /** The episode to play for a series: the next unwatched one, else the first. Null when it has none or Jellyfin is unreachable. */
+    fun episodeToPlay(seriesId: String): JellyfinItem? {
+        val uid = userId ?: return null
+        val base = JellyfinApi.cleanBase(server)
+        val next = request("GET", JellyfinApi.nextUpUrl(base, uid, seriesId))?.let { JellyfinApi.parseItems(it).firstOrNull() }
+        return next ?: request("GET", JellyfinApi.firstEpisodeUrl(base, uid, seriesId))?.let { JellyfinApi.parseItems(it).firstOrNull() }
+    }
+
+    /** The signed-in user's name, to save typing it into the request service. */
+    fun userName(): String? = request("GET", JellyfinApi.cleanBase(server) + "/Users/Me")?.let { try { JSONObject(it).optString("Name").ifBlank { null } } catch (_: Exception) { null } }
+
+    fun backdropUrl(id: String) = JellyfinApi.backdropUrl(JellyfinApi.cleanBase(server), id)
 
     /** The film in the library with this IMDb id, or null when there is none (or Jellyfin cannot be reached). */
     fun findMovieByImdb(imdbId: String): JellyfinItem? = JellyfinApi.findByImdb(movies(), imdbId)
