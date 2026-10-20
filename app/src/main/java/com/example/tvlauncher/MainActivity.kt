@@ -426,6 +426,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         if (artModeOverlay.isVisible) artModeOverlay.hide()
         allAppsPanel.hide(); liveTvPanel.hide(); moviesPanel.hide(); editAppsPanel.hide(); searchPanel.hide(); accountMenu.hide()
+        syncObscured()
         headerBar.setSelected(NavTab.HOME)
         collection.homeReturned()
         findViewById<TextView>(R.id.navHome).requestFocus()
@@ -507,8 +508,15 @@ class MainActivity : AppCompatActivity() {
         page.pivotX = page.width / 2f; page.pivotY = page.height / 2f
         val scale = if (cover) com.example.tvlauncher.design.Motion.PAGE_RECEDE else 1f
         val ms = if (!on) 0 else if (cover) com.example.tvlauncher.design.Motion.FADE_MS else com.example.tvlauncher.design.Motion.SHEET_OUT_MS + 60
+        // A page that is part-way through coming back must be drawn again, and focusable, from the first frame.
+        if (!cover) page.visibility = android.view.View.VISIBLE
+        // withLayer(): the full-screen fade runs through one hardware layer for its duration and the layer is dropped at its end.
         page.animate().alpha(if (cover) 0f else 1f).scaleX(scale).scaleY(scale)
-            .setDuration(ms).setInterpolator(com.example.tvlauncher.design.Motion.SETTLE).start()
+            .setDuration(ms).setInterpolator(com.example.tvlauncher.design.Motion.SETTLE).withLayer()
+            // Movies covers the screen outright: once the page has faded out, stop laying it out and drawing it at all.
+            // (Other panels leave it as a transparent but focusable view, so closing them can hand focus straight back.)
+            .withEndAction { if (obscured && moviesPanel.isVisible) page.visibility = android.view.View.GONE }
+            .start()
         // The edge veil is painting laid over the page, so it goes wherever the page goes.
         pageVeil?.animate()?.alpha(if (cover) 0f else 1f)?.setDuration(ms)?.setInterpolator(com.example.tvlauncher.design.Motion.SETTLE)?.start()
         // A page that covers the screen outright (Movies) makes the painting behind it invisible, so stop drawing and blurring it.
@@ -679,6 +687,7 @@ class MainActivity : AppCompatActivity() {
                 if (moviesPanel.isVisible) moviesPanel.hide()
                 if (editAppsPanel.isVisible) editAppsPanel.hide()
                 if (searchPanel.isVisible) searchPanel.hide()
+                syncObscured()
                 headerBar.setSelected(NavTab.HOME)
                 collection.homeReturned()
                 findViewById<TextView>(R.id.navHome).requestFocus()
@@ -712,6 +721,7 @@ class MainActivity : AppCompatActivity() {
         // (the avatar), and the focus tracker would record that as the page's last focus.
         val back = lastMainFocus
         hide()
+        syncObscured()   // brings the page back (visible) now, so the focus handed back below has somewhere to land
         headerBar.setSelected(NavTab.HOME)
         collection.homeReturned()
         if (back != null && back.isAttachedToWindow && back.isShown && back.isFocusable) back.post { back.requestFocus() } else restoreShelfFocus()

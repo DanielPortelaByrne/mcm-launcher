@@ -674,11 +674,14 @@ class MoviesPanel(
     // --- Featured title ----------------------------------------------------------------------------
 
     private fun buildHero() {
-        val hero = FrameLayout(activity).apply { setBackgroundColor(0xFF1A140E.toInt()) }
+        // No background of its own: the panel's ground colour already sits behind the picture, so an opaque fill here
+        // would only be one more full-width layer to paint. The two fades over the picture are one drawable.
+        val hero = HeroFrame(activity, dp(330))
         heroImage = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
         hero.addView(heroImage, FrameLayout.LayoutParams(-1, -1))
-        hero.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xF21A140E.toInt(), 0xB31A140E.toInt(), 0x001A140E)) }, FrameLayout.LayoutParams(-1, -1))
-        hero.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x001A140E, 0xFF1A140E.toInt())) }, FrameLayout.LayoutParams(-1, -1))
+        hero.addView(View(activity).apply {
+            background = ScrimDrawable(intArrayOf(0xF21A140E.toInt(), 0xB31A140E.toInt(), 0x001A140E), intArrayOf(0x001A140E, 0xFF1A140E.toInt()))
+        }, FrameLayout.LayoutParams(-1, -1))
         // Three painted stripes on the hero's lower edge: the room's own mid-century signature.
         hero.addView(Stripes(activity), FrameLayout.LayoutParams(dp(90), dp(8), Gravity.BOTTOM or Gravity.START).apply { leftMargin = px(R.dimen.page_margin); bottomMargin = dp(4) })
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(px(R.dimen.page_margin), dp(96), 0, dp(30)) }
@@ -694,7 +697,8 @@ class MoviesPanel(
         heroButtons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; visibility = View.INVISIBLE }
         column.addView(heroButtons, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(12) })
         hero.addView(column, FrameLayout.LayoutParams(-1, -1))
-        content.addView(hero, LinearLayout.LayoutParams(-1, dp(330)))
+        hero.content = column
+        content.addView(hero, LinearLayout.LayoutParams(-1, -2))
     }
 
     private fun setHero(e: Entry, related: List<Title>) {
@@ -720,8 +724,9 @@ class MoviesPanel(
 
         val backdrop = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
         detail.addView(backdrop, FrameLayout.LayoutParams(-1, -1))
-        detail.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFA1A140E.toInt(), 0xD91A140E.toInt(), 0x661A140E)) }, FrameLayout.LayoutParams(-1, -1))
-        detail.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x001A140E, 0xF21A140E.toInt())) }, FrameLayout.LayoutParams(-1, -1))
+        detail.addView(View(activity).apply {
+            background = ScrimDrawable(intArrayOf(0xFA1A140E.toInt(), 0xD91A140E.toInt(), 0x661A140E), intArrayOf(0x001A140E, 0xF21A140E.toInt()))
+        }, FrameLayout.LayoutParams(-1, -1))
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
             images.load(u, maxWidth = 1280) { b -> backdrop.setImageBitmap(b); backdrop.animate().alpha(1f).setDuration(300).start() }
         }
@@ -766,12 +771,16 @@ class MoviesPanel(
         val scroll = android.widget.ScrollView(activity).apply { isVerticalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(column, FrameLayout.LayoutParams(-1, -2)) }
         detail.addView(scroll, FrameLayout.LayoutParams(-1, -1))
         setupPrimary(primary, e)
+        // The title page covers the screen, so the page beneath it is not drawn at all while it is open (it keeps its
+        // place and its scroll position, so Back returns to exactly where it was).
+        body.visibility = View.INVISIBLE
         requestFocusRobust(detail, primary)
     }
 
     private fun closeDetail(restoreFocus: Boolean) {
         if (!detailOpen) return
         detail.visibility = View.GONE; detail.removeAllViews()
+        body.visibility = View.VISIBLE
         body.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         if (restoreFocus) returnFocus?.takeIf { it.isAttachedToWindow }?.let { f -> f.post { f.requestFocus() } }
     }
@@ -1162,6 +1171,41 @@ class MoviesPanel(
             paint.color = context.getColor(R.color.butter); canvas.drawCircle(s * 0.5f, s * 0.38f, s * 0.27f, paint)
             paint.color = context.getColor(R.color.terracotta); canvas.drawRoundRect(RectF(s * 0.06f, s * 0.70f, s * 0.94f, s * 0.82f), s * 0.06f, s * 0.06f, paint)
             paint.color = context.getColor(R.color.deep_teal); canvas.drawRoundRect(RectF(s * 0.06f, s * 0.86f, s * 0.94f, s * 0.98f), s * 0.06f, s * 0.06f, paint)
+        }
+    }
+
+    /**
+     * Two fades of the page's ground colour (one across, one down) painted in a single pass, so a picture needs one
+     * layer over it rather than two full-screen ones. Each array lists the stops of its fade, evenly spaced.
+     */
+    private class ScrimDrawable(private val across: IntArray, private val down: IntArray) : Drawable() {
+        private val paint = Paint().apply { isDither = true }
+        override fun onBoundsChange(b: android.graphics.Rect) {
+            val x = android.graphics.LinearGradient(b.left.toFloat(), 0f, b.right.toFloat(), 0f, across, null, android.graphics.Shader.TileMode.CLAMP)
+            val y = android.graphics.LinearGradient(0f, b.top.toFloat(), 0f, b.bottom.toFloat(), down, null, android.graphics.Shader.TileMode.CLAMP)
+            paint.shader = android.graphics.ComposeShader(x, y, android.graphics.PorterDuff.Mode.SRC_OVER)
+        }
+        override fun draw(canvas: Canvas) { canvas.drawRect(bounds, paint) }
+        override fun setAlpha(alpha: Int) { paint.alpha = alpha }
+        override fun setColorFilter(colorFilter: android.graphics.ColorFilter?) { paint.colorFilter = colorFilter }
+        @Deprecated("Deprecated in Java") override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
+    }
+
+    /**
+     * The featured title's frame. It is as tall as its text and buttons need, never shorter than [minHeight], so a long
+     * title or overview makes the frame taller instead of squeezing the buttons out of the bottom. Only [content]
+     * decides the height; the picture and fade simply fill whatever it comes to.
+     */
+    private class HeroFrame(context: Context, private val minHeight: Int) : FrameLayout(context) {
+        var content: View? = null
+        override fun onMeasure(widthSpec: Int, heightSpec: Int) {
+            val width = MeasureSpec.getSize(widthSpec)
+            var height = minHeight
+            content?.let {
+                it.measure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED))
+                height = maxOf(height, it.measuredHeight)
+            }
+            super.onMeasure(MeasureSpec.makeMeasureSpec(width, MeasureSpec.EXACTLY), MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY))
         }
     }
 

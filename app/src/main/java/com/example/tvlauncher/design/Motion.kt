@@ -267,7 +267,9 @@ object Motion {
         if (!animationsOn(container)) return
         container.animate().cancel()
         container.alpha = 0f
-        container.animate().alpha(1f).setDuration(SHEET_IN_MS).setInterpolator(SETTLE).start()
+        // A full-screen fade is drawn through one offscreen texture rather than re-drawing every child each frame;
+        // withLayer() puts the hardware layer on for this animation only and restores the previous layer type at its end.
+        container.animate().alpha(1f).setDuration(SHEET_IN_MS).setInterpolator(SETTLE).withLayer().start()
         card?.let {
             val rise = kotlin.math.min(abs(risePx), 12f * container.resources.displayMetrics.density) * (if (risePx < 0) -1f else 1f)
             it.animate().cancel()
