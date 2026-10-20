@@ -66,8 +66,8 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 /**
- * MCM Cinema: the Movies page, laid out like a streaming service but dressed like the rest of the room. A wordmark and
- * tabs sit along the top (Home, Films, Series, Documentaries, My library, and search); each tab is a page of poster
+ * MCM Cinema: the Movies page, laid out like a streaming service but dressed like the rest of the room. An icon rail on the
+ * left opens Home, Films, Series, Documentaries, My library, Downloads and Search; each destination is a page of poster
  * rows under a featured title. Services and genres have pages of their own. The first row of Home is the owner's
  * Jellyfin library; everything else is what is trending and popular across the big UK services. A poster opens its
  * title page: Watch now when it is in the library, Queue download when it is not.
@@ -115,7 +115,11 @@ class MoviesPanel(
     private var current: Dest = Dest.Home
     private val trail = ArrayDeque<Dest>()
     private var returnFocus: View? = null
-    private val tabs = LinkedHashMap<TextView, Dest>()
+    private val tabs = LinkedHashMap<LinearLayout, Dest>()
+    private val navigationLabels = LinkedHashMap<LinearLayout, Pair<ImageView, TextView>>()
+    private var navigationExpanded = false
+    private var lastContentFocus: View? = null
+    private var navigationFocusListener: android.view.ViewTreeObserver.OnGlobalFocusChangeListener? = null
     private var topBuilt = false
     private var searchPending: Runnable? = null
 
@@ -140,12 +144,16 @@ class MoviesPanel(
     }
 
     fun hide() { closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++ }
-    fun close() { worker.shutdownNow(); images.close() }
+    fun close() {
+        navigationFocusListener?.let { if (top.viewTreeObserver.isAlive) top.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
+        worker.shutdownNow(); images.close()
+    }
 
     /** Back closes a title's page, then steps back through where the viewer has been, then lets the panel close. */
     fun back(): Boolean {
         if (detailOpen) { closeDetail(restoreFocus = true); return true }
         if (trail.isNotEmpty()) { current = trail.removeLast(); styleTabs(); build(); return true }
+        if (!top.hasFocus()) { activeNavigationItem()?.requestFocus(); return true }
         if (current != Dest.Home) { current = Dest.Home; styleTabs(); build(); return true }
         return false
     }
@@ -155,46 +163,121 @@ class MoviesPanel(
         current = dest; styleTabs(); build()
     }
 
-    // --- The bar along the top ---------------------------------------------------------------------
+    // --- Left navigation ---------------------------------------------------------------------------
 
     private fun buildTop() {
-        val margin = px(R.dimen.page_margin)
-        top.gravity = Gravity.CENTER_VERTICAL
-        // The bar floats over the page. Its own fade (solid at the top, clear below) keeps the tabs readable over a
-        // featured picture or over rows scrolling beneath, and ends in the page's ground colour so there is no seam.
-        top.setPadding(margin, dp(20), margin, dp(30))
-        top.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xF21A140E.toInt(), 0xCC1A140E.toInt(), 0x001A140E)).apply { setDither(true) }
+        top.orientation = LinearLayout.VERTICAL
+        top.gravity = Gravity.TOP
+        top.setPadding(dp(12), dp(18), dp(12), dp(18))
+        top.background = android.graphics.drawable.ColorDrawable(0xFF1A140E.toInt())
+        top.elevation = dp(12).toFloat()
         page.setOnScrollChangeListener { _, _, _, _, _ -> fillNear() }
-        top.addView(BrandMark(activity), LinearLayout.LayoutParams(dp(40), dp(40)))
-        val word = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        word.addView(TextView(activity).apply { text = "MCM"; textSize = 11f; letterSpacing = 0.34f; setTextColor(activity.getColor(R.color.butter)); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
-        word.addView(TextView(activity).apply { text = "Cinema"; textSize = 24f; setTextColor(activity.getColor(R.color.ivory)); typeface = Typeface.create("serif", Typeface.NORMAL) })
-        top.addView(word, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12); marginEnd = dp(20) })
-        listOf("Home" to Dest.Home, "Films" to Dest.Films, "Series" to Dest.Series, "Documentaries" to Dest.Docs, "My library" to Dest.Library, "Downloads" to Dest.Downloads).forEach { (label, dest) ->
-            top.addView(tab(label, dest), LinearLayout.LayoutParams(-2, dp(40)).apply { marginEnd = dp(3) })
+        (page as? CinemaContentScrollView)?.navigationTarget = { activeNavigationItem() }
+        top.addView(BrandMark(activity).apply { contentDescription = "MCM Cinema" },
+            LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(8); bottomMargin = dp(16) })
+
+        val destinations = listOf(
+            Triple("Search", R.drawable.ic_search, Dest.Search),
+            Triple("Home", R.drawable.ic_cinema_home, Dest.Home),
+            Triple("Films", R.drawable.ic_cinema_films, Dest.Films),
+            Triple("Series", R.drawable.ic_live_tv, Dest.Series),
+            Triple("Documentaries", R.drawable.ic_cinema_documentaries, Dest.Docs),
+            Triple("My library", R.drawable.ic_cinema_library, Dest.Library),
+            Triple("Downloads", R.drawable.ic_cinema_downloads, Dest.Downloads)
+        )
+        destinations.forEach { (label, icon, dest) ->
+            top.addView(navigationItem(label, icon, dest), LinearLayout.LayoutParams(-1, dp(44)).apply { bottomMargin = dp(4) })
         }
-        top.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
-        storageView = TextView(activity).apply { textSize = 11f; gravity = Gravity.END; setLineSpacing(0f, 1.05f); setTextColor(activity.getColor(R.color.text_faint)); visibility = View.GONE }
-        top.addView(storageView, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(16) })
-        top.addView(tab("Search", Dest.Search), LinearLayout.LayoutParams(-2, dp(40)))
+        top.addView(View(activity), LinearLayout.LayoutParams(1, 0, 1f))
+        storageView = TextView(activity).apply {
+            textSize = 11f; maxLines = 2; setLineSpacing(0f, 1.05f)
+            setTextColor(activity.getColor(R.color.text_faint)); visibility = View.GONE
+            setPadding(dp(16), dp(8), 0, 0)
+        }
+        top.addView(storageView, LinearLayout.LayoutParams(-1, -2))
+        navigationFocusListener = android.view.ViewTreeObserver.OnGlobalFocusChangeListener { _, focused ->
+            if (isWithin(focused, page)) lastContentFocus = focused
+            setNavigationExpanded(isWithin(focused, top))
+            styleTabs()
+        }.also { top.viewTreeObserver.addOnGlobalFocusChangeListener(it) }
+        setNavigationExpanded(false)
+        styleTabs()
     }
 
-    private fun tab(label: String, dest: Dest): TextView {
-        val view = Type.text(activity, label, Type.Style.BODY).apply {
-            gravity = Gravity.CENTER; isFocusable = true; isClickable = true; maxLines = 1; textSize = 15f
-            setPadding(dp(11), 0, dp(11), 0); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    private fun navigationItem(label: String, icon: Int, dest: Dest): LinearLayout {
+        val row = LinearLayout(activity).apply {
+            id = View.generateViewId()
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true; isClickable = true; contentDescription = label
+            setPadding(dp(16), 0, dp(12), 0)
         }
-        tabs[view] = dest
-        view.setOnFocusChangeListener { _, _ -> styleTabs() }
-        view.setOnClickListener { go(dest) }
-        return view
+        val image = ImageView(activity).apply { setImageResource(icon); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        val name = Type.text(activity, label, Type.Style.BODY).apply {
+            textSize = 14f; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+            visibility = View.GONE; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        row.addView(image, LinearLayout.LayoutParams(dp(24), dp(24)))
+        row.addView(name, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(16) })
+        tabs[row] = dest
+        navigationLabels[row] = image to name
+        row.setOnFocusChangeListener { _, _ -> styleTabs() }
+        row.setOnClickListener { if (current !== dest) go(dest) }
+        row.setOnKeyListener { _, code, event ->
+            when {
+                code == android.view.KeyEvent.KEYCODE_DPAD_LEFT -> true
+                code == android.view.KeyEvent.KEYCODE_DPAD_UP && row === tabs.keys.first() -> true
+                code == android.view.KeyEvent.KEYCODE_DPAD_DOWN && row === tabs.keys.last() -> true
+                code == android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (event.action == android.view.KeyEvent.ACTION_DOWN) focusContent()
+                    true
+                }
+                else -> false
+            }
+        }
+        return row
     }
 
-    private fun styleTabs() = tabs.forEach { (v, d) ->
-        val selected = d === current
-        val radius = dp(20).toFloat()
-        v.background = if (v.hasFocus()) LauncherTheme.tileBackgroundFocused(activity, radius) else if (selected) LauncherTheme.selectedPill(activity, radius) else null
-        v.setTextColor(activity.getColor(if (v.hasFocus()) R.color.ink else if (selected) R.color.ivory else R.color.ivory_text_dim))
+    private fun focusContent() {
+        val previous = lastContentFocus?.takeIf { it.isAttachedToWindow && it.isShown && it.isEnabled && it.isFocusable }
+        if (previous?.requestFocus() == true) return
+        val candidates = ArrayList<View>()
+        content.addFocusables(candidates, View.FOCUS_FORWARD)
+        candidates.firstOrNull { it.isShown && it.isEnabled }?.requestFocus()
+    }
+
+    private fun activeNavigationItem(): View? = tabs.entries.firstOrNull {
+        it.value === current || (it.value === Dest.Home && (current is Dest.OnService || current is Dest.InGenre))
+    }?.key
+
+    private fun isWithin(view: View?, parent: View): Boolean {
+        var node = view
+        while (node != null) {
+            if (node === parent) return true
+            node = node.parent as? View
+        }
+        return false
+    }
+
+    private fun setNavigationExpanded(expanded: Boolean) {
+        if (navigationExpanded == expanded) return
+        navigationExpanded = expanded
+        top.layoutParams = top.layoutParams.apply { width = dp(if (expanded) 224 else 80) }
+        navigationLabels.values.forEach { (_, name) -> name.visibility = if (expanded) View.VISIBLE else View.GONE }
+        storageView.visibility = if (expanded && storageView.text.isNotBlank()) View.VISIBLE else View.GONE
+    }
+
+    private fun styleTabs() = tabs.forEach { (view, dest) ->
+        val selected = dest === current || (dest === Dest.Home && (current is Dest.OnService || current is Dest.InGenre))
+        view.isSelected = selected
+        val focused = view.hasFocus()
+        val radius = dp(12).toFloat()
+        view.background = when {
+            focused -> LauncherTheme.tileBackgroundFocused(activity, radius)
+            selected -> LauncherTheme.selectedPill(activity, radius)
+            else -> null
+        }
+        val colour = activity.getColor(if (focused) R.color.ink else if (selected) R.color.ivory else R.color.ivory_text_dim)
+        navigationLabels[view]?.let { (image, name) -> image.setColorFilter(colour); name.setTextColor(colour) }
     }
 
     // --- Building a page ---------------------------------------------------------------------------
@@ -202,10 +285,9 @@ class MoviesPanel(
     private fun build() {
         val gen = ++generation
         searchPending?.let { ui.removeCallbacks(it) }
-        content.removeAllViews(); page.scrollTo(0, 0); heroSet = false; pending.clear()
-        // Pages that open on a featured picture run under the floating bar; the others start clear of it.
-        val underBar = when (current) { Dest.Home, Dest.Films, Dest.Series, Dest.Docs, Dest.Library -> true; else -> false }
-        content.setPadding(0, if (underBar) 0 else dp(92), 0, dp(48))
+        content.removeAllViews(); page.scrollTo(0, 0); heroSet = false; pending.clear(); lastContentFocus = null
+        // The rail sits beside the page, so no space is reserved for a top bar.
+        content.setPadding(0, dp(24), 0, dp(48))
         jellyfin.takeIf { it.isConnected }?.let { j -> worker.execute { j.library() } }   // so poster badges are ready without waiting
         when (val d = current) {
             Dest.Home -> { buildHero(); libraryRow(gen, "My library", 18); serviceTiles(); genreTiles(); shelves(Catalog.homePage(), gen) }
@@ -605,13 +687,13 @@ class MoviesPanel(
 
     // --- Storage -----------------------------------------------------------------------------------
 
-    /** "10.8 GB in library / 601 GB free", small, beside Search. Each half appears only if it could be read. */
+    /** Storage information is visible in the expanded menu, without crowding the collapsed icon rail. */
     private fun loadStorage() {
         worker.execute {
             val used = jellyfin.takeIf { it.isConnected }?.libraryBytes()
             val free = seerr.takeIf { it.isSignedIn }?.freeSpaceBytes()
             val lines = listOfNotNull(used?.let { "${ByteSize.format(it)} in library" }, free?.let { "${ByteSize.format(it)} free" })
-            activity.runOnUiThread { storageView.text = lines.joinToString("\n"); storageView.visibility = if (lines.isEmpty()) View.GONE else View.VISIBLE }
+            activity.runOnUiThread { storageView.text = lines.joinToString("\n"); storageView.visibility = if (navigationExpanded && lines.isNotEmpty()) View.VISIBLE else View.GONE }
         }
     }
 
@@ -684,7 +766,7 @@ class MoviesPanel(
         }, FrameLayout.LayoutParams(-1, -1))
         // Three painted stripes on the hero's lower edge: the room's own mid-century signature.
         hero.addView(Stripes(activity), FrameLayout.LayoutParams(dp(90), dp(8), Gravity.BOTTOM or Gravity.START).apply { leftMargin = px(R.dimen.page_margin); bottomMargin = dp(4) })
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(px(R.dimen.page_margin), dp(96), 0, dp(30)) }
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(px(R.dimen.page_margin), dp(32), 0, dp(30)) }
         column.addView(Type.text(activity, "FEATURED", Type.Style.EYEBROW))
         heroTitle = Type.text(activity, "", Type.Style.TITLE).apply { textSize = 34f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
         heroMeta = Type.text(activity, "", Type.Style.CAPTION).apply { maxLines = 1 }
@@ -1151,7 +1233,7 @@ class MoviesPanel(
     private val surfaces16 by lazy { FastFocus.Surfaces(activity, dp(16).toFloat()) }
 
     /** Glides the page and the row to the focused card, the same way for every card. */
-    private fun reveal(view: View) = FastFocus.reveal(view, if (detailOpen) null else page, dp(104), dp(56), dp(44))
+    private fun reveal(view: View) = FastFocus.reveal(view, if (detailOpen) null else page, dp(24), dp(56), dp(44))
 
     private fun dp(v: Int) = Math.round(v * activity.resources.displayMetrics.density)
     private fun px(res: Int) = activity.resources.getDimensionPixelSize(res)
@@ -1241,3 +1323,4 @@ class MoviesPanel(
         @Deprecated("Deprecated in Java") override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
     }
 }
+
