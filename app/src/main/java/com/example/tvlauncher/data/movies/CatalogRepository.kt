@@ -13,13 +13,16 @@ class CatalogRepository(context: Context) {
 
     /** One shelf: from cache when fresh, otherwise the network, falling back to a stale copy if that fails. */
     fun shelf(spec: ShelfSpec): Shelf {
-        val key = "shelf:" + spec.heading
-        val cached = prefs.getString(key, null)
+        val body = Catalog.requestBody(spec)
+        // Keyed by what is asked, not the heading: "Films" means something different on every service's page.
+        val key = "shelf:" + body.hashCode()
+        val keep = spec.query == null   // what someone typed is not worth keeping
+        val cached = if (keep) prefs.getString(key, null) else null
         val savedAt = prefs.getLong("$key:at", 0L)
         if (cached != null && System.currentTimeMillis() - savedAt < TTL_MS) return Shelf(spec.heading, Catalog.dedupe(Catalog.parse(cached)))
-        val fresh = fetch(Catalog.requestBody(spec))
+        val fresh = fetch(body)
         if (fresh != null && Catalog.parse(fresh).isNotEmpty()) {
-            prefs.edit().putString(key, fresh).putLong("$key:at", System.currentTimeMillis()).apply()
+            if (keep) prefs.edit().putString(key, fresh).putLong("$key:at", System.currentTimeMillis()).apply()
             return Shelf(spec.heading, Catalog.dedupe(Catalog.parse(fresh)))
         }
         return Shelf(spec.heading, if (cached != null) Catalog.dedupe(Catalog.parse(cached)) else emptyList())

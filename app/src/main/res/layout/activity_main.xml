@@ -474,25 +474,41 @@
         android:focusable="true"
         android:visibility="gone">
 
-        <ScrollView
-            android:id="@+id/moviesPage"
+        <LinearLayout
+            android:id="@+id/moviesBody"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:clipChildren="false"
-            android:clipToPadding="false"
-            android:fadingEdgeLength="@dimen/edge_fade"
-            android:requiresFadingEdge="vertical"
-            android:scrollbars="none">
+            android:orientation="vertical">
 
             <LinearLayout
-                android:id="@+id/moviesContent"
+                android:id="@+id/moviesTop"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:clipChildren="false"
                 android:clipToPadding="false"
-                android:orientation="vertical"
-                android:paddingBottom="@dimen/space_6" />
-        </ScrollView>
+                android:orientation="horizontal" />
+
+            <ScrollView
+                android:id="@+id/moviesPage"
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_weight="1"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:fadingEdgeLength="@dimen/edge_fade"
+                android:requiresFadingEdge="vertical"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/moviesContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:orientation="vertical"
+                    android:paddingBottom="@dimen/space_6" />
+            </ScrollView>
+        </LinearLayout>
 
         <FrameLayout
             android:id="@+id/movieDetail"

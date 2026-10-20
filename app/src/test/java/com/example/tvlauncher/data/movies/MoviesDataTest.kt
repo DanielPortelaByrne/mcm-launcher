@@ -38,18 +38,40 @@ class MoviesDataTest {
     }
 
     @Test fun builds_a_request_for_a_shelf() {
-        val body = JSONObject(Catalog.requestBody(Catalog.SHELVES[3]))   // documentaries
-        assertTrue(body.getString("query").contains("sortBy: TRENDING"))
+        val docs = Catalog.documentariesPage()[1]
+        val body = JSONObject(Catalog.requestBody(docs))
+        assertTrue(body.getString("query").contains("sortBy: POPULAR"))
         val f = body.getJSONObject("variables").getJSONObject("f")
         assertEquals("doc", f.getJSONArray("genres").getString(0))
         assertEquals(6, f.getJSONArray("packages").length())
+        assertEquals("MOVIE", f.getJSONArray("objectTypes").getString(0))
         assertEquals("GB", body.getJSONObject("variables").getString("c"))
-        assertTrue(JSONObject(Catalog.requestBody(Catalog.SHELVES[4])).getString("query").contains("sortBy: POPULAR"))
+        assertTrue(JSONObject(Catalog.requestBody(Catalog.homePage()[0])).getString("query").contains("sortBy: TRENDING"))
     }
 
-    @Test fun covers_the_big_western_services() {
-        val all = Catalog.SHELVES.flatMap { it.packages }.toSet()
-        listOf(Catalog.NETFLIX, Catalog.HBO_MAX, Catalog.PARAMOUNT, Catalog.PRIME, Catalog.DISNEY, Catalog.APPLE).forEach { assertTrue(it, it in all) }
+    @Test fun search_asks_for_anything_not_just_what_streams() {
+        val f = JSONObject(Catalog.requestBody(Catalog.searchSpecs("sleep")[0])).getJSONObject("variables").getJSONObject("f")
+        assertEquals("sleep", f.getString("searchQuery")); assertFalse(f.has("packages"))
+        assertEquals(listOf("Films", "Series"), Catalog.searchSpecs("x").map { it.heading })
+    }
+
+    @Test fun covers_the_big_western_services_and_every_page_is_distinct() {
+        val all = Catalog.homePage().flatMap { it.packages }.toSet()
+        listOf("Netflix", "HBO Max", "Paramount+", "Prime Video", "Disney+", "Apple TV+").forEach { n -> assertTrue(n, Catalog.SERVICES.any { it.label == n && it.code in all }) }
+        // the same heading can recur on different pages, so each shelf must be told apart by what it asks for
+        val bodies = Catalog.servicePage(Catalog.NETFLIX).map { Catalog.requestBody(it) } + Catalog.servicePage(Catalog.DISNEY).map { Catalog.requestBody(it) }
+        assertEquals(bodies.size, bodies.toSet().size)
+        assertTrue(Catalog.homePage().first().ranked); assertTrue(Catalog.genrePage(Catalog.GENRES[0]).size >= 9)
+    }
+
+    @Test fun reads_where_a_title_streams() {
+        val json = """{"data":{"popularTitles":{"edges":[{"node":{"id":"x","objectType":"MOVIE","content":{"title":"T"},
+          "offers":[{"monetizationType":"FLATRATE","package":{"clearName":"Netflix"}},{"monetizationType":"RENT","package":{"clearName":"Apple TV Store"}},
+          {"monetizationType":"FLATRATE","package":{"clearName":"Disney Plus"}},{"monetizationType":"ADS","package":{"clearName":"Netflix"}}]}}]}}}"""
+        val t = Catalog.parse(json).single()
+        assertEquals(listOf("Netflix", "Disney+"), t.services)
+        assertEquals("Streaming on Netflix and Disney+", t.streamingLine())
+        assertNull(Catalog.parse(answer)[0].streamingLine())
     }
 
     @Test fun seerr_request_bodies() {

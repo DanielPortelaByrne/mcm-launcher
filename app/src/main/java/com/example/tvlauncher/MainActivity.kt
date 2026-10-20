@@ -253,6 +253,8 @@ class MainActivity : AppCompatActivity() {
         moviesPanel = com.example.tvlauncher.ui.MoviesPanel(
             activity = this,
             overlay = findViewById(R.id.moviesOverlay),
+            body = findViewById(R.id.moviesBody),
+            top = findViewById(R.id.moviesTop),
             page = findViewById(R.id.moviesPage),
             content = findViewById(R.id.moviesContent),
             detail = findViewById(R.id.movieDetail),
