@@ -143,13 +143,20 @@ class MoviesPanel(
     private var cinemaBackdropIndex = 0
 
     private fun showCinemaBackdrop() {
-        val bg = cinemaBackdropView ?: ImageView(activity).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP; isFocusable = false; isClickable = false; alpha = 0.7f
-            (overlay as? ViewGroup)?.addView(this, 0, FrameLayout.LayoutParams(-1, -1))
-            cinemaBackdropView = this
+        val host = overlay as? ViewGroup
+        var bg = cinemaBackdropView
+        if (bg == null && host != null) {
+            val created = ImageView(activity)
+            created.scaleType = ImageView.ScaleType.CENTER_CROP
+            created.isFocusable = false
+            created.isClickable = false
+            created.alpha = 0.7f
+            host.addView(created, 0, FrameLayout.LayoutParams(-1, -1))
+            cinemaBackdropView = created
+            bg = created
         }
         cinemaBackdropIndex = (cinemaBackdropIndex + 1) % cinemaBackdrops.size
-        bg.setImageResource(cinemaBackdrops[cinemaBackdropIndex])
+        bg?.setImageResource(cinemaBackdrops[cinemaBackdropIndex])
     }
 
     fun show() {
