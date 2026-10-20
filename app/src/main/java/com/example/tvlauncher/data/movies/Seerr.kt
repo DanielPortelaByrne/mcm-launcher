@@ -100,6 +100,12 @@ class SeerrClient(context: Context) {
         } finally { c.disconnect() }
     } catch (e: Exception) { Log.w(TAG, "request failed: ${e.javaClass.simpleName}"); RequestOutcome.FAILED }
 
+    /** Withdraws a request from Seerr, including one no release has been found for yet. True when Seerr accepted it. */
+    fun cancelRequest(id: Int): Boolean = try {
+        val c = open("DELETE", "$base/api/v1/request/$id")
+        try { val code = c.responseCode; if (code == 401) signOut(); code in 200..299 } finally { c.disconnect() }
+    } catch (e: Exception) { Log.w(TAG, "cancelRequest failed: ${e.javaClass.simpleName}"); false }
+
     fun availability(kind: Kind, tmdbId: Long): Availability = try {
         val c = open("GET", base + SeerrApi.path(kind, tmdbId))
         try { if (c.responseCode == 200) SeerrApi.parseAvailability(c.inputStream.bufferedReader().use { it.readText() }) else Availability.NONE } finally { c.disconnect() }

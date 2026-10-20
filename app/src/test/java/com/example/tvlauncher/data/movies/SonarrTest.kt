@@ -5,6 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SonarrTest {
+    @Test fun reads_monitored_episodes_with_no_file_as_wanted_and_groups_them_by_series() {
+        val json = """{"records":[
+            {"id":21,"seasonNumber":2,"episodeNumber":4,"series":{"title":"The Pitt","tmdbId":2,"id":7}},
+            {"id":22,"seasonNumber":2,"episodeNumber":5,"series":{"title":"The Pitt","tmdbId":2,"id":7}},
+            {"id":30,"seasonNumber":1,"episodeNumber":1,"series":{"title":"No id"}}]}"""
+        val wanted = SonarrApi.wantedEpisodes(json)
+        assertEquals(listOf(21, 22), wanted.map { it.id })   // the one without a TMDB id is dropped, not shown as a broken row
+        assertEquals(WantedEpisode(21, 2L, "The Pitt", 2, 4), wanted.first())
+        assertEquals("""{"episodeIds":[21,22],"monitored":false}""", SonarrApi.monitorBody(listOf(21, 22), on = false))
+        assertTrue(SonarrApi.wantedEpisodes("junk").isEmpty())
+    }
+
     // the shape Seerr returned for this server: Sonarr is "localhost" as far as Seerr is concerned
     private val settings = """[{"apiKey":"abc123","baseUrl":"","port":8989,"is4k":false,"isDefault":true,"hostname":"localhost","useSsl":false,
         "activeProfileId":4,"activeDirectory":"/media/Shows","enableSeasonFolders":true,"seriesType":"standard","id":0}]"""

@@ -11,6 +11,9 @@ private const val TAG = "Sonarr"
 /** Where Sonarr is and how to add a series to it, as Seerr has it configured. */
 data class SonarrConfig(val baseUrl: String, val apiKey: String, val profileId: Int, val rootFolder: String, val seasonFolders: Boolean, val seriesType: String)
 
+/** One episode that has been asked for and has no file yet. [id] is Sonarr's id for it. */
+data class WantedEpisode(val id: Int, val seriesTmdbId: Long, val seriesTitle: String, val season: Int, val number: Int)
+
 enum class EpisodeState { NONE, REQUESTED, DOWNLOADED }
 
 enum class EpisodeOutcome { QUEUED, ALREADY, NOT_CONFIGURED, NOT_FOUND, FAILED }
@@ -70,7 +73,16 @@ object SonarrApi {
         }
     } catch (_: Exception) { emptyMap() }
 
-    fun monitorBody(ids: List<Int>): String = JSONObject().put("episodeIds", JSONArray(ids)).put("monitored", true).toString()
+    fun monitorBody(ids: List<Int>, on: Boolean = true): String = JSONObject().put("episodeIds", JSONArray(ids)).put("monitored", on).toString()
+
+    /** Monitored episodes with no file: asked for, but nothing has been grabbed for them yet. */
+    fun wantedEpisodes(json: String): List<WantedEpisode> = try {
+        val records = JSONObject(json).getJSONArray("records")
+        (0 until records.length()).map { records.getJSONObject(it) }.map { r ->
+            val series = r.optJSONObject("series")
+            WantedEpisode(r.optInt("id"), series?.optLong("tmdbId") ?: 0L, series?.optString("title").orEmpty(), r.optInt("seasonNumber"), r.optInt("episodeNumber"))
+        }.filter { it.id > 0 && it.seriesTmdbId > 0 }
+    } catch (_: Exception) { emptyList() }
 
     fun searchBody(ids: List<Int>): String = JSONObject().put("name", "EpisodeSearch").put("episodeIds", JSONArray(ids)).toString()
 }
@@ -112,6 +124,19 @@ class SonarrClient(private val seerr: SeerrClient) {
         if (ids.isEmpty()) return EpisodeOutcome.NOT_FOUND
         if (call(c, "PUT", "/api/v3/episode/monitor", SonarrApi.monitorBody(ids)) == null) return EpisodeOutcome.FAILED
         return if (call(c, "POST", "/api/v3/command", SonarrApi.searchBody(ids)) == null) EpisodeOutcome.FAILED else EpisodeOutcome.QUEUED
+    }
+
+    /** Monitored episodes with no file: what has been asked for but not yet grabbed. Null when Sonarr cannot be reached. */
+    fun wanted(): List<WantedEpisode>? {
+        val c = config() ?: return null
+        return call(c, "GET", "/api/v3/wanted/missing?page=1&pageSize=250&includeSeries=true&monitored=true")?.let { SonarrApi.wantedEpisodes(it) }
+    }
+
+    /** Stops wanting these episodes, so nothing more is searched for them. Anything already downloaded is kept. */
+    fun unwant(ids: List<Int>): Boolean {
+        if (ids.isEmpty()) return true
+        val c = config() ?: return false
+        return call(c, "PUT", "/api/v3/episode/monitor", SonarrApi.monitorBody(ids, on = false)) != null
     }
 
     private fun seriesId(c: SonarrConfig, tmdbId: Long): Int? = call(c, "GET", "/api/v3/series")?.let { SonarrApi.findSeries(it, tmdbId) }

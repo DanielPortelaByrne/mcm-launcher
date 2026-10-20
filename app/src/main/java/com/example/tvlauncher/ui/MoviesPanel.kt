@@ -42,7 +42,9 @@ import com.example.tvlauncher.data.movies.Kind
 import com.example.tvlauncher.data.movies.ByteSize
 import com.example.tvlauncher.data.movies.EpisodeOutcome
 import com.example.tvlauncher.data.movies.EpisodeState
+import com.example.tvlauncher.data.movies.LibraryRemover
 import com.example.tvlauncher.data.movies.QueueClient
+import com.example.tvlauncher.data.movies.WantedEpisode
 import com.example.tvlauncher.data.movies.QueueItem
 import com.example.tvlauncher.data.movies.QueueSource
 import com.example.tvlauncher.data.movies.RequestOutcome
@@ -343,6 +345,9 @@ class MoviesPanel(
 
     private fun titleKey(r: SeerrRequest) = r.tmdbId * 2 + if (r.kind == Kind.SHOW) 1 else 0
 
+    /** Requests still on their way to a finished file: waiting to be approved, looking for a release, or downloading. */
+    private val pendingStages = setOf(Stage.WAITING_APPROVAL, Stage.SEARCHING, Stage.DOWNLOADING)
+
     private fun buildDownloads(gen: Int) {
         val margin = px(R.dimen.page_margin)
         pageTitle("Downloads")
@@ -364,14 +369,28 @@ class MoviesPanel(
                 val requests = seerr.requests().filter { titleKey(it) !in inQueue }
                 queue.orEmpty().forEach { q -> val k = q.tmdbId * 2 + if (q.source == QueueSource.SONARR) 1 else 0; if (q.tmdbId > 0 && !knownTitles.containsKey(k)) seerr.titleInfo(if (q.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE, q.tmdbId)?.let { knownTitles[k] = it } }
                 requests.forEach { r -> if (!knownTitles.containsKey(titleKey(r))) seerr.titleInfo(r.kind, r.tmdbId)?.let { knownTitles[titleKey(r)] = it } }
+                // Single episodes asked for one at a time: monitored in Sonarr with nothing grabbed yet. A series already listed above is not repeated.
+                val listed = inQueue + requests.map { titleKey(it) }
+                val wanted = sonarr.wanted().orEmpty().groupBy { it.seriesTmdbId }.filterKeys { it * 2 + 1 !in listed }
+                wanted.keys.forEach { tmdb -> if (!knownTitles.containsKey(tmdb * 2 + 1)) seerr.titleInfo(Kind.SHOW, tmdb)?.let { knownTitles[tmdb * 2 + 1] = it } }
+                val wantedEpisodes = wanted.values.flatten()
                 activity.runOnUiThread {
                     if (gen != generation) return@runOnUiThread
                     val focused = (0 until holder.childCount).firstOrNull { holder.getChildAt(it).hasFocus() }
                     holder.removeAllViews()
-                    val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) }
+                    val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) } +
+                        wanted.map { (tmdb, eps) -> wantedRow(tmdb, eps) { refresh() } }
                     if (rows.isEmpty()) holder.addView(note(if (queue == null) "Couldn't reach the download queue just now." else "Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
                     queue?.let { q -> holder.addView(Type.text(activity, "${q.count { it.isDownloading }} downloading  ·  ${q.count { it.isWaiting }} waiting", Type.Style.CAPTION).apply { setPadding(margin, dp(4), 0, 0) }) }
                     rows.forEachIndexed { i, r -> holder.addView(r, LinearLayout.LayoutParams(-1, dp(104)).apply { setMargins(margin, if (i > 0) dp(14) else dp(10), margin, 0) }) }
+                    // Everything not yet finished, including requests no release has been found for. Kept last so first focus stays on the top row.
+                    val pendingQueue = queue.orEmpty().filter { it.isDownloading || it.isWaiting }
+                    val pendingRequests = requests.filter { it.stage in pendingStages }
+                    if (pendingQueue.isNotEmpty() || pendingRequests.isNotEmpty() || wantedEpisodes.isNotEmpty()) {
+                        val total = pendingQueue.size + pendingRequests.size + wantedEpisodes.size
+                        holder.addView(pill("Cancel all pending ($total)", accent = false).apply { setOnClickListener { cancelAllPending(pendingQueue, pendingRequests, wantedEpisodes) { refresh() } } },
+                            LinearLayout.LayoutParams(dp(380), dp(56)).apply { setMargins(margin, dp(18), 0, 0) })
+                    }
                     if (firstLoad) { firstLoad = false; holder.getChildAt(if (holder.getChildAt(0) is TextView) 1 else 0)?.let { requestFocusRobust(overlay as ViewGroup, it) } }
                     else focused?.let { holder.getChildAt(it)?.requestFocus() }
                     loadStorage()
@@ -384,6 +403,46 @@ class MoviesPanel(
     }
 
     private val queueClient by lazy { QueueClient(seerr) }
+
+    private val libraryRemover by lazy { LibraryRemover(seerr) }
+
+    /** Takes a downloaded title off disk after the owner confirms. Radarr or Sonarr is told too, so it is not fetched again. */
+    private fun confirmDelete(e: Entry) {
+        val tmdb = e.title.tmdbId?.toLongOrNull()
+        if (tmdb == null) { Toast.makeText(activity, "Can't be removed from here", Toast.LENGTH_LONG).show(); return }
+        infoSheet.show("DELETE", e.title.name, null, listOf("Removes every file for this title from the TV's storage, and from Radarr or Sonarr so it is not downloaded again. This cannot be undone."), null, listOf(
+            SheetAction("Delete", "Remove it from disk", primary = true) {
+                worker.execute {
+                    val removed = libraryRemover.delete(e.title.kind, tmdb)
+                    if (removed) jellyfin.refreshLibrary()
+                    activity.runOnUiThread {
+                        Toast.makeText(activity, if (removed) "Deleted ${e.title.name}" else "Couldn't delete ${e.title.name} right now", Toast.LENGTH_LONG).show()
+                        if (removed && detailOpen) { closeDetail(restoreFocus = true); build() }
+                    }
+                }
+            },
+            SheetAction("Keep it") { }
+        ))
+    }
+
+    /** Cancels every pending download and withdraws every pending request, after the owner confirms. Anything already finished is left alone. */
+    private fun cancelAllPending(items: List<QueueItem>, requests: List<SeerrRequest>, wanted: List<WantedEpisode>, refresh: () -> Unit) {
+        infoSheet.show("DOWNLOADS", "Cancel all pending", "${items.size + requests.size + wanted.size} waiting or downloading", listOf(
+            "Stops everything in the queue, takes it out of the download client and deletes anything already downloaded for it. " +
+                "Requests and episodes that have no release yet are withdrawn. Finished titles are not touched."), null, listOf(
+            SheetAction("Cancel all", "Stop every pending download", primary = true) {
+                worker.execute {
+                    val failed = items.count { !queueClient.cancel(it) } + requests.count { !seerr.cancelRequest(it.id) } +
+                        if (sonarr.unwant(wanted.map { it.id })) 0 else 1
+                    activity.runOnUiThread {
+                        Toast.makeText(activity, if (failed == 0) "Cancelled everything pending" else "$failed couldn't be cancelled right now", Toast.LENGTH_LONG).show()
+                        refresh()
+                    }
+                }
+            },
+            SheetAction("Keep them") { }
+        ))
+    }
 
     /** A row for something in the download queue: what it is, where it stands, and a bar. Pressing it offers to cancel. */
     private fun queueRow(item: QueueItem, refresh: () -> Unit): View {
@@ -419,6 +478,42 @@ class MoviesPanel(
                     }
                 },
                 SheetAction("Keep it") { }
+            ))
+        }
+        return row
+    }
+
+    /** Episodes of one series asked for one at a time, with no release found or grabbed yet. Pressing it offers to stop looking for them. */
+    private fun wantedRow(tmdb: Long, episodes: List<WantedEpisode>, refresh: () -> Unit): View {
+        val info = knownTitles[tmdb * 2 + 1]
+        val title = info?.first ?: episodes.first().seriesTitle.ifBlank { "Title $tmdb" }
+        val sorted = episodes.sortedWith(compareBy({ it.season }, { it.number }))
+        val listed = sorted.take(3).joinToString(", ") { "S${it.season} E${it.number}" } + if (sorted.size > 3) " +${sorted.size - 3}" else ""
+        val status = "Waiting for a release · $listed"
+        val radius = dp(14).toFloat()
+        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(12), dp(8), dp(16), dp(8)) }
+        val posterBox = FrameLayout(activity).apply { background = GradientDrawable().apply { cornerRadius = dp(6).toFloat(); setColor(0xFF3A2C1E.toInt()) } }
+        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        posterBox.addView(image, FrameLayout.LayoutParams(-1, -1))
+        info?.second?.let { u -> images.load(u) { b -> image.setImageDrawable(androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, b).apply { cornerRadius = dp(6).toFloat() }) } }
+        row.addView(posterBox, LinearLayout.LayoutParams(dp(56), dp(84)))
+
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
+        val titleView = Type.text(activity, title, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        val line = Type.text(activity, status, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }
+        column.addView(titleView); column.addView(line, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
+        column.addView(ProgressBar(activity, null, activity.getColor(R.color.terracotta)), LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
+        row.addView(column, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
+        FastFocus.bind(row, surfaces16, listOf(titleView, line), rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
+        row.setOnClickListener {
+            infoSheet.show("WANTED", title, null, listOf(status, "Cancelling stops looking for these episodes. Anything already downloaded is kept."), null, listOf(
+                SheetAction("Cancel", "Stop looking for them", primary = true) {
+                    worker.execute {
+                        val done = sonarr.unwant(episodes.map { it.id })
+                        activity.runOnUiThread { Toast.makeText(activity, if (done) "Stopped looking for $title" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
+                    }
+                },
+                SheetAction("Keep them") { }
             ))
         }
         return row
@@ -633,6 +728,9 @@ class MoviesPanel(
         val backButton = pill("Back", accent = false).apply { setOnClickListener { closeDetail(restoreFocus = true) } }
         buttons.addView(primary, LinearLayout.LayoutParams(dp(230), dp(52)))
         buttons.addView(backButton, LinearLayout.LayoutParams(dp(120), dp(52)).apply { marginStart = dp(10) })
+        // Anything on disk can be taken off it, a series or a film, from its own page.
+        if (e.library != null) buttons.addView(pill("Delete", accent = false).apply { setOnClickListener { confirmDelete(e) } },
+            LinearLayout.LayoutParams(dp(140), dp(52)).apply { marginStart = dp(10) })
         text.addView(buttons, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(16) })
         topRow.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
 
