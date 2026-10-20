@@ -31,6 +31,7 @@ object SectionHeader {
             })
             setPadding(0, if (topGap) r.getDimensionPixelSize(R.dimen.section_gap) else 0, 0, r.getDimensionPixelSize(R.dimen.heading_gap))
             layoutParams = LinearLayout.LayoutParams(-1, -2)
+            setTag(R.id.section_heading, true)
         }
     }
 }

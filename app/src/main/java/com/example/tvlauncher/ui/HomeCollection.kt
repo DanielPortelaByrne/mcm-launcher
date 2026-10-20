@@ -60,6 +60,13 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     private val filmSheet = com.example.tvlauncher.ui.room.FilmSheet(activity, sheet)
     private val thumbDecoder = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val connectSheet = com.example.tvlauncher.ui.room.StremioConnectSheet(activity, sheet)
+
+    // Jellyfin first: when the film is already in the owner's own library, PLAY uses that and Stremio is not asked.
+    private val jellyfin = com.example.tvlauncher.data.jellyfin.JellyfinClient(activity)
+    private val jellyfinSheet = com.example.tvlauncher.ui.room.JellyfinConnectSheet(activity, sheet)
+    private val jellyfinWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var jellyfinItem: com.example.tvlauncher.data.jellyfin.JellyfinItem? = null
+    private var jellyfinFor: String? = null
     private var disposed = false
 
     init {
@@ -86,6 +93,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         column.addView(status)
         panel(card, 20)
         card.setOnClickListener { showFilm() }
+        com.example.tvlauncher.design.SectionTheme.tag(card, com.example.tvlauncher.design.SectionTheme.Mood.FILM)
         activity.findViewById<FrameLayout>(R.id.homeHero).addView(card, FrameLayout.LayoutParams(dp(408), dp(184), Gravity.END or Gravity.CENTER_VERTICAL))
 
         val sections = activity.findViewById<LinearLayout>(R.id.discoverSections)
@@ -97,36 +105,40 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         val radius = px(R.dimen.radius_small).toFloat()
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(0, px(R.dimen.space_2), 0, px(R.dimen.space_2)) }
         sections.addView(com.example.tvlauncher.ui.CalmHorizontalScrollView(activity).apply {
+            com.example.tvlauncher.design.SectionTheme.tag(this, com.example.tvlauncher.design.SectionTheme.Mood.GALLERY)
             isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false
             setPadding(margin, 0, margin, 0)
             isHorizontalFadingEdgeEnabled = true; setFadingEdgeLength(px(R.dimen.edge_fade))
             addView(row)
         }, LinearLayout.LayoutParams(-1, -2).apply { marginStart = -margin; marginEnd = -margin })
         art.library.paintings.forEachIndexed { index, painting ->
-            val image = ImageView(activity).apply {
-                scaleType = ImageView.ScaleType.CENTER_CROP
+            val frame = FrameLayout(activity).apply {
                 clipToOutline = true
                 outlineProvider = object : android.view.ViewOutlineProvider() {
                     override fun getOutline(v: View, outline: android.graphics.Outline) { outline.setRoundRect(0, 0, v.width, v.height, radius) }
                 }
                 background = LauncherTheme.surface(activity, R.color.surface_raised, R.dimen.radius_small)
             }
+            val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+            frame.addView(image, FrameLayout.LayoutParams(-1, -1))
             val mat = LauncherTheme.imageMat(activity, radius).apply { alpha = 0 }
-            image.foreground = mat
+            frame.foreground = mat
             val tile = LinearLayout(activity).apply {
                 orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; clipChildren = false; clipToPadding = false
                 contentDescription = "View ${painting.title}"
             }
-            tile.addView(image, LinearLayout.LayoutParams(columnWidth, columnWidth * 9 / 16))
-            tile.addView(com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(activity, painting.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
+            tile.addView(frame, LinearLayout.LayoutParams(columnWidth, columnWidth * 9 / 16))
+            val titleText = com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(activity, painting.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
                 maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
-            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(R.dimen.space_2) })
+                alpha = com.example.tvlauncher.design.Motion.CAPTION_REST_ALPHA
+            }
+            tile.addView(titleText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = px(R.dimen.space_2) })
             tile.setOnFocusChangeListener { v, focused ->
-                LauncherTheme.fadeDrawable(image, mat, focused)
-                LauncherTheme.animateFocus(image, focused)
+                LauncherTheme.fadeDrawable(frame, mat, focused)
+                com.example.tvlauncher.design.Motion.focusImageCard(frame, image, titleText, focused)
                 scrollFocusIntoView(v, focused)
             }
-            tile.setOnClickListener { art.library.select(index); onArt() }
+            tile.setOnClickListener { com.example.tvlauncher.design.Motion.press(frame, com.example.tvlauncher.design.Motion.CARD_SCALE); art.library.select(index); onArt() }
             row.addView(tile, LinearLayout.LayoutParams(columnWidth, -2).apply { if (index > 0) marginStart = px(R.dimen.card_gutter) })
             thumbDecoder.execute {
                 val bitmap = try { BitmapFactory.decodeResource(activity.resources, painting.resource, BitmapFactory.Options().apply { inSampleSize = 4 }) } catch (_: Exception) { null }
@@ -146,6 +158,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
             button.apply { gravity=Gravity.CENTER; panel(this, 26); setOnClickListener { action(button) } }
             actions.addView(button, LinearLayout.LayoutParams(px(R.dimen.card_column), px(R.dimen.control_height)).apply { if (actions.childCount > 0) marginStart = px(R.dimen.card_gutter) })
         }
+        com.example.tvlauncher.design.SectionTheme.tag(actions, com.example.tvlauncher.design.SectionTheme.Mood.GALLERY)
         sections.addView(actions, LinearLayout.LayoutParams(-1,-2))
     }
     fun homeReturned() {
@@ -154,9 +167,9 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
             if (!disposed) { status.text=message; if (film == null) { film=nextFilm(); render() } else status.visibility = View.GONE }
         } }
     }
-    fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); thumbDecoder.shutdownNow() }
+    fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); jellyfinWorker.shutdownNow(); thumbDecoder.shutdownNow() }
     private fun render() {
-        title.text=film?.title ?: "Your next film awaits"
+        com.example.tvlauncher.design.Motion.swapText(title, film?.title ?: "Your next film awaits")
         showDetails()
         status.visibility = if (watchlist.films.isNotEmpty()) View.GONE else View.VISIBLE
     }
@@ -167,25 +180,44 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         shownPath = current.path
         details = null
         posterBitmap = null
-        poster.setImageDrawable(null)
+        // The old poster steps back and waits, dimmed, for the new one (or the empty frame if there is none).
+        if (com.example.tvlauncher.design.Motion.animationsOn(poster) && poster.isShown && poster.drawable != null)
+            poster.animate().alpha(0f).scaleX(0.97f).scaleY(0.97f).setDuration(110).setInterpolator(com.example.tvlauncher.design.Motion.SETTLE)
+                .withEndAction { poster.setImageDrawable(null); settlePoster() }.start()
+        else poster.setImageDrawable(null)
         badge.set(null)
-        availability.text = "Checking UK availability…"
+        com.example.tvlauncher.design.Motion.swapText(availability, "Checking UK availability…")
         info.load(current) { details, bitmap ->
             activity.runOnUiThread {
                 if (disposed || film?.path != current.path) return@runOnUiThread
                 this.details = details
-                availability.text = details?.availabilityLines()?.firstOrNull() ?: "Not streaming in the UK right now"
+                com.example.tvlauncher.design.Motion.swapText(availability, details?.cardLine() ?: "Not streaming in the UK right now")
                 badge.set(details?.ratingLabel())
-                if (bitmap != null) { poster.setImageBitmap(bitmap); posterBitmap = bitmap }
+                // No poster on Letterboxd: a printed cover in the room's colours instead of an empty frame.
+                val art = bitmap ?: com.example.tvlauncher.design.PosterArt.typographic(activity, current.title)
+                posterBitmap = art
+                poster.animate().cancel()
+                poster.setImageBitmap(art)
+                settlePoster()
                 // Head start: work out the best version now, so PLAY is ready by the time the sheet is opened.
-                details?.imdbId?.let { imdb -> if (smartFor != imdb) startSmart(current, imdb) }
+                details?.imdbId?.let { imdb ->
+                    startJellyfin(current, imdb)
+                    if (smartFor != imdb) startSmart(current, imdb)
+                }
             }
         }
+    }
+
+    /** Brings the poster frame forward to rest, from wherever the last change left it. */
+    private fun settlePoster() {
+        if (!com.example.tvlauncher.design.Motion.animationsOn(poster) || !poster.isShown) { poster.alpha = 1f; poster.scaleX = 1f; poster.scaleY = 1f; return }
+        poster.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(com.example.tvlauncher.design.Motion.SWOOSH).start()
     }
 
     private fun showFilm() {
         val current = film ?: return
         val imdb = details?.imdbId
+        if (imdb != null) startJellyfin(current, imdb, force = true)
         if (imdb != null && (smartFor != imdb || System.currentTimeMillis() - smartAt > 10 * 60_000L)) startSmart(current, imdb)
         val actions = com.example.tvlauncher.ui.room.FilmActions(
             play = { onPlayPressed(current) },
@@ -199,10 +231,30 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
             refresh = {
                 status.text = "Refreshing\u2026"
                 watchlist.refresh(true) { r -> activity.runOnUiThread { if (!disposed) { upcoming.clear(); film = nextFilm(); render(); status.text = r } } }
-            }
+            },
+            connectJellyfin = if (jellyfin.isConnected) null else ({
+                jellyfinSheet.show(jellyfin) { details?.imdbId?.let { startJellyfin(current, it, force = true) }; showFilm() }
+            })
         )
-        filmSheet.show(current.title, details?.ratingLabel(), posterBitmap, details?.page, whereLines(), actions)
+        filmSheet.show(current.title, details?.ratingLabel(), posterBitmap, details?.page, whereLines(), actions, from = poster)
         applySmart()
+    }
+
+    /** Asks the owner's Jellyfin whether it already has this film. Quiet when it does not, or is not reachable. */
+    private fun startJellyfin(current: Film, imdb: String, force: Boolean = false) {
+        if (!jellyfin.isConnected || (!force && jellyfinFor == imdb)) return
+        jellyfinFor = imdb; jellyfinItem = null
+        jellyfinWorker.execute {
+            val found = jellyfin.findMovieByImdb(imdb)
+            activity.runOnUiThread {
+                if (disposed || jellyfinFor != imdb) return@runOnUiThread
+                jellyfinItem = found
+                if (film?.path == current.path) {
+                    if (found != null) com.example.tvlauncher.design.Motion.swapText(availability, "In your library")
+                    if (sheet.isVisible) applySmart()
+                }
+            }
+        }
     }
 
     private fun startSmart(current: Film, imdb: String) {
@@ -220,6 +272,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     /** Streaming availability plus, when PLAY is unavailable, the honest reason. */
     private fun whereLines(): List<String> {
         val lines = details?.availabilityLines().orEmpty().toMutableList()
+        if (jellyfinItem != null && jellyfinFor == details?.imdbId) lines.add(0, "In your Jellyfin library")
         val imdb = details?.imdbId
         val result = smartResult?.takeIf { smartFor == imdb }
         if (result != null && result.best == null) smartMessage(result.status)?.let { lines += it }
@@ -231,8 +284,10 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         val imdb = details?.imdbId
         val result = smartResult?.takeIf { smartFor == imdb }
         val best = result?.best
-        val hasVersions = result != null && result.ranked.count { it.playable && it.verdict != com.example.tvlauncher.data.stream.Verdict.INCOMPATIBLE } > 1
+        val hasVersions = jellyfinItem?.takeIf { jellyfinFor == imdb } == null && result != null && result.ranked.count { it.playable && it.verdict != com.example.tvlauncher.data.stream.Verdict.INCOMPATIBLE } > 1
+        val inLibrary = jellyfinItem?.takeIf { jellyfinFor == imdb }
         val sub = when {
+            inLibrary != null -> "In your library"
             imdb == null -> "Film details still loading\u2026"
             smartLoading && result == null -> "Finding best version\u2026"
             best != null -> best.candidate.meta.shortLabel()
@@ -251,6 +306,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
 
     private fun onPlayPressed(current: Film) {
         val imdb = details?.imdbId
+        jellyfinItem?.takeIf { jellyfinFor == imdb }?.let { sheet.hide(); playFromJellyfin(it, current); return }
         val result = smartResult?.takeIf { smartFor == imdb }
         val best = result?.best
         when {
@@ -270,6 +326,10 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         com.example.tvlauncher.data.stream.SmartStatus.ERROR -> "Couldn't check streams right now."
         else -> null
     }
+
+    /** Plays the library copy in the launcher's own player: the file as stored first, then a copy Jellyfin re-encodes for this TV. */
+    private fun playFromJellyfin(item: com.example.tvlauncher.data.jellyfin.JellyfinItem, current: Film) =
+        JellyfinPlayback.play(activity, jellyfin, item, current.title, details?.imdbId ?: "jf:${item.id}")
 
     /** Plays [chosen] first, then up to two of the next-best playable versions as automatic fallbacks. */
     private fun play(chosen: com.example.tvlauncher.data.stream.RankedStream, result: com.example.tvlauncher.data.stream.SmartResult, current: Film) {

@@ -35,7 +35,7 @@
     <color name="on_focus">@color/ink</color>          <!-- text/icons on the lit state -->
     <color name="hairline">#24F3E9CF</color>
     <color name="scrim">#1A140E</color>
-    <color name="overlay_ground">#EB1C150F</color>     <!-- full-screen panels, over the blurred painting -->
+    <color name="overlay_ground">#D91C150F</color>     <!-- full-screen panels, over the blurred painting -->
     <color name="sheet_scrim">#8C1C150F</color>        <!-- around a centred sheet, over the blurred painting -->
 
     <!-- Paper ("things in the room": prints, recipe cards, the Tonight card) -->

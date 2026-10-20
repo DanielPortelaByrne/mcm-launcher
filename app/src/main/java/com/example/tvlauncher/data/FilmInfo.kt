@@ -23,6 +23,21 @@ data class FilmDetails(val posterUrl: String?, val stream: List<String>, val ren
         return lines
     }
 
+    /** One unhurried line for the hero card: the first service and how many more, never an ellipsis. */
+    fun cardLine(): String {
+        fun line(kind: String, all: List<String>): String {
+            val names = services(all)
+            return if (names.size <= 1) "$kind on ${names.first()}" else "$kind on ${names.first()} +${names.size - 1}"
+        }
+        return when {
+            stream.isNotEmpty() -> line("Streaming", stream)
+            rentBuy.isNotEmpty() -> line("Rent", rentBuy)
+            else -> "Not on UK services right now"
+        }
+    }
+
+    private fun services(all: List<String>) = all.distinct().filter { n -> all.none { m -> m != n && n.startsWith(m + " ") } }
+
     private fun summarise(all: List<String>): String {
         // "HBO Max Amazon Channel" is the same service as "HBO Max": list each service once.
         val names = all.distinct().filter { n -> all.none { m -> m != n && n.startsWith(m + " ") } }

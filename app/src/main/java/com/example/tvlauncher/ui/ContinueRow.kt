@@ -104,7 +104,7 @@ class ContinueRow(
             // No artwork from the app: a warm panel with the app's icon, instead of an empty dark box.
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(context.getColor(R.color.walnut), context.getColor(R.color.surface_raised)))
         }
-        val still = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        val still = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; colorFilter = com.example.tvlauncher.design.Motion.printFilter(0f) }
         frame.addView(still, FrameLayout.LayoutParams(-1, -1))
         val placeholder = ImageView(context).apply {
             app?.icon?.let { setImageDrawable(com.example.tvlauncher.design.RoundIcon.own(context, it)) } ?: setImageResource(R.drawable.ic_launcher)
@@ -124,17 +124,20 @@ class ContinueRow(
         val mat = LauncherTheme.imageMat(context, radius).apply { alpha = 0 }
         frame.foreground = mat
         root.addView(frame, LinearLayout.LayoutParams(width, width * 9 / 16))
-        root.addView(com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(context, item.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
+        val titleText = com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(context, item.title, com.example.tvlauncher.design.Type.Style.BODY)).apply {
             maxLines = 1; isSingleLine = true; ellipsize = TextUtils.TruncateAt.END
-        }, LinearLayout.LayoutParams(width, -2).apply { topMargin = px(R.dimen.space_2) })
+            alpha = com.example.tvlauncher.design.Motion.CAPTION_REST_ALPHA
+        }
+        root.addView(titleText, LinearLayout.LayoutParams(width, -2).apply { topMargin = px(R.dimen.space_2) })
 
         root.setOnFocusChangeListener { v, hasFocus ->
             LauncherTheme.fadeDrawable(frame, mat, hasFocus)
-            LauncherTheme.animateFocus(frame, hasFocus)
+            com.example.tvlauncher.design.Motion.focusImageCard(frame, still, titleText, hasFocus)
+            com.example.tvlauncher.design.Motion.printFocus(still, hasFocus)
             scrollFocusIntoView(v, hasFocus)
             if (hasFocus) PageHint.show(context.getString(R.string.hint_remove_card))
         }
-        root.setOnClickListener { com.example.tvlauncher.design.Motion.press(frame, 1.04f); launch(item) }
+        root.setOnClickListener { com.example.tvlauncher.design.Motion.press(frame, com.example.tvlauncher.design.Motion.CARD_SCALE); launch(item) }
         root.setOnLongClickListener { source.remove(item); refreshNow(); true }
 
         item.imageUri?.let { uri -> worker.execute { source.image(uri)?.let { bmp -> handler.post { still.setImageBitmap(bmp); placeholder.visibility = View.GONE } } } }

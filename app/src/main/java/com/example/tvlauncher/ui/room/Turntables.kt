@@ -197,9 +197,12 @@ class SleeveView(context: Context) : View(context) {
         val s = seed
         when {
             s == null -> {
-                // Nothing playing: an empty inner sleeve, plain paper.
+                // Nothing playing: an empty paper inner sleeve, its centre hole and thumb cut showing the card behind.
                 paint.color = 0xFFE3D7B6.toInt(); c.drawRect(art, paint)
-                paint.color = 0x14261E14; c.drawCircle(art.centerX(), art.centerY(), art.width() * 0.08f, paint)
+                paint.color = 0x1F261E14; c.drawRect(art.left, art.top, art.right, art.top + art.height() * 0.035f, paint)
+                paint.color = 0xFFCDBF9C.toInt()
+                c.drawCircle(art.centerX(), art.centerY(), art.width() * 0.13f, paint)
+                c.drawArc(RectF(art.centerX() - art.width() * 0.16f, art.top - art.width() * 0.1f, art.centerX() + art.width() * 0.16f, art.top + art.width() * 0.1f), 0f, 180f, true, paint)
             }
             bitmap != null -> c.drawBitmap(bitmap!!, null, art, Paint(Paint.FILTER_BITMAP_FLAG))
             else -> paintCover(c, art, s.hashCode() and 0x7fffffff)
@@ -233,7 +236,7 @@ class TurntableModule(private val context: Context, val person: Person, accent: 
     private val sleeve = SleeveView(context)
     private val name = com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(context, person.displayName, com.example.tvlauncher.design.Type.Style.EYEBROW))
     private val status = com.example.tvlauncher.design.Type.onPainting(com.example.tvlauncher.design.Type.text(context, "", com.example.tvlauncher.design.Type.Style.CAPTION))
-    private val title = com.example.tvlauncher.design.Type.text(context, "", com.example.tvlauncher.design.Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+    private val title = com.example.tvlauncher.design.Type.text(context, "", com.example.tvlauncher.design.Type.Style.BODY).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
     private val artist = com.example.tvlauncher.design.Type.text(context, "", com.example.tvlauncher.design.Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
     private var state: PersonalListeningState? = null
 
@@ -267,7 +270,7 @@ class TurntableModule(private val context: Context, val person: Person, accent: 
             background = com.example.tvlauncher.design.LauncherTheme.surface(context, com.example.tvlauncher.R.color.surface, com.example.tvlauncher.R.dimen.radius_small)
         }
         plaque.addView(title); plaque.addView(artist)
-        column.addView(plaque, LinearLayout.LayoutParams(context.px(148), -2).apply { topMargin = px(com.example.tvlauncher.R.dimen.space_2) })
+        column.addView(plaque, LinearLayout.LayoutParams(context.px(112), -2).apply { topMargin = px(com.example.tvlauncher.R.dimen.space_2) })
         root.addView(column, FrameLayout.LayoutParams(context.px(150), -2, Gravity.TOP or Gravity.START).apply { marginStart = context.px(276); topMargin = context.px(34) })
 
         root.setOnFocusChangeListener { v, hasFocus ->
@@ -282,14 +285,20 @@ class TurntableModule(private val context: Context, val person: Person, accent: 
 
     fun bind(newState: PersonalListeningState, artwork: Bitmap?, nowMs: Long) {
         val changedTrack = state?.trackTitle != newState.trackTitle || state?.artistName != newState.artistName
+        // A new record (not the first reading, and not the same one re-polled) is swapped in rather than cut to.
+        val animate = changedTrack && state != null
         state = newState
         deck.render(newState.status)
         val has = newState.status != ListeningStatus.NOTHING_AVAILABLE && newState.trackTitle != null
-        title.text = if (has) newState.trackTitle else "Nothing on the platter"
+        val newTitle = if (has) newState.trackTitle!! else "Nothing on the platter"
+        val newArtist = if (has) (newState.artistName ?: "") else ""
+        if (animate) { com.example.tvlauncher.design.Motion.swapText(title, newTitle); com.example.tvlauncher.design.Motion.swapText(artist, newArtist) }
+        else { title.text = newTitle; artist.text = newArtist }
         title.typeface = Typeface.create(if (has) "sans-serif-medium" else "serif", if (has) Typeface.NORMAL else Typeface.ITALIC)
-        artist.text = if (has) (newState.artistName ?: "") else ""
         artist.visibility = if (has) View.VISIBLE else View.GONE
-        if (changedTrack || artwork != null) sleeve.show(if (has) "${newState.trackTitle}|${newState.artistName}" else null, artwork)
+        val seed = if (has) "${newState.trackTitle}|${newState.artistName}" else null
+        if (animate) com.example.tvlauncher.design.Motion.swapImage(sleeve) { sleeve.show(seed, artwork) }
+        else if (changedTrack || artwork != null) sleeve.show(seed, artwork)
         tick(nowMs)
         view.contentDescription = "${person.displayName}. ${status.text}. ${title.text}, ${artist.text}"
     }

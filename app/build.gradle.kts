@@ -43,6 +43,9 @@ dependencies {
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    // Live channels and Jellyfin's converted films are HLS streams; without this module the player crashes on them.
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
+    implementation("androidx.media3:media3-exoplayer-dash:1.5.1")   // some free channels are DASH (.mpd) streams
 
     testImplementation("junit:junit:4.13.2")
     // Real org.json so addon-response parsing can be unit tested (the Android stubs return empty values).

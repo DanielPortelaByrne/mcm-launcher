@@ -71,7 +71,7 @@ class AppRepository(private val context: Context) {
                         if (IconStyle.isMcm(context)) RoundIcon.mcm(context, original, packageName) else RoundIcon.from(context, original)
                     }
                     AppEntry(
-                        label = ri.loadLabel(pm).toString(),
+                        label = DISPLAY_NAMES[ri.activityInfo.packageName] ?: ri.loadLabel(pm).toString(),
                         packageName = packageName,
                         icon = icon,
                         banner = null,   // banners are never shown; loading them cost start-up time
@@ -113,3 +113,6 @@ class AppRepository(private val context: Context) {
             android.graphics.drawable.ColorDrawable(0)
     }
 }
+
+/** Apps whose own label is too terse to read on its own ("5"). */
+private val DISPLAY_NAMES = mapOf("com.channel5.my5" to "Channel 5")

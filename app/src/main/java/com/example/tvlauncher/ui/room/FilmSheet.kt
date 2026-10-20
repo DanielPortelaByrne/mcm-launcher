@@ -31,7 +31,9 @@ class FilmActions(
     val versions: () -> Unit,
     val next: () -> Unit,
     val letterboxd: () -> Unit,
-    val refresh: () -> Unit
+    val refresh: () -> Unit,
+    /** Offered only while this TV is not yet signed in to Jellyfin. */
+    val connectJellyfin: (() -> Unit)? = null
 )
 
 /**
@@ -63,7 +65,8 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
     val isVisible: Boolean get() = sheet.isVisible
 
-    fun show(title: String, ratingLabel: String?, poster: Bitmap?, page: FilmPage?, whereLines: List<String>, actions: FilmActions) {
+    /** [from] is the poster on the page: when given, it lifts off the page and becomes the sheet's poster. */
+    fun show(title: String, ratingLabel: String?, poster: Bitmap?, page: FilmPage?, whereLines: List<String>, actions: FilmActions, from: View? = null) {
         this.page = page; this.whereLines = whereLines; this.rating = ratingLabel; selected = Tab.OVERVIEW
         tabViews.clear()
 
@@ -78,26 +81,36 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
         // ---- left: poster and rating ----
         val left = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; clipChildren = false }
-        left.addView(ImageView(context).apply {
+        val posterView = ImageView(context)
+        left.addView(posterView.apply {
             scaleType = ImageView.ScaleType.CENTER_CROP
             setBackgroundColor(0xFF3A2C1E.toInt())
             poster?.let { setImageBitmap(it) }
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dimen(R.dimen.radius_small).toFloat()) } }
         }, LinearLayout.LayoutParams(context.px(160), context.px(240)))
+        val reveal = mutableListOf<View>()
         ratingLabel?.let { label ->
             val badge = com.example.tvlauncher.ui.LetterboxdBadge(context).apply { set(label) }
             left.addView(badge.view, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dimen(R.dimen.space_3) })
+            reveal += badge.view
         }
         card.addView(left, LinearLayout.LayoutParams(context.px(160), -2).apply { marginEnd = dimen(R.dimen.space_5) })
 
         // ---- right: header, tabs, content, actions ----
         val right = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         card.addView(right, LinearLayout.LayoutParams(context.px(610), -2))
+        reveal += right
 
         right.addView(Type.text(context, "Eva's pick for tonight", Type.Style.EYEBROW))
         right.addView(Type.text(context, title, Type.Style.TITLE).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) })
-        page?.headline()?.takeIf { it.isNotBlank() }?.let { right.addView(Type.text(context, it, Type.Style.CAPTION).apply { setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
+        // One meta line: runtime, genres, director (the year is already in the title).
+        page?.let { pg ->
+            val genres = pg.genres.take(2).joinToString(", ").takeIf { it.isNotBlank() }
+            val parts = pg.headline(withYear = !Regex("""\(\d{4}\)\s*$""").containsMatchIn(title)).split(" · ").filter { it.isNotBlank() }.toMutableList()
+            genres?.let { parts.add(minOf(1, parts.size), it) }
+            parts.joinToString(" · ")
+        }?.takeIf { it.isNotBlank() }?.let { right.addView(Type.text(context, it, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
         page?.tagline?.withoutEmDashes()?.let { right.addView(Type.text(context, "“$it”", Type.Style.CAPTION).apply { typeface = Typeface.create("serif", Typeface.ITALIC); maxLines = 1; ellipsize = TextUtils.TruncateAt.END; setPadding(0, dimen(R.dimen.space_1), 0, 0) }) }
 
         val tabs = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
@@ -131,7 +144,7 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
         // Its own clipping frame: the surrounding views must not clip (so focus highlights are never cut off),
         // which would otherwise let scrolled text spill up over the tabs.
         val scrollHolder = FrameLayout(context).apply { clipChildren = true; addView(scroll, FrameLayout.LayoutParams(-1, -1)) }
-        right.addView(scrollHolder, LinearLayout.LayoutParams(-1, context.px(132)).apply { topMargin = dimen(R.dimen.space_2); bottomMargin = dimen(R.dimen.space_2) })
+        right.addView(scrollHolder, LinearLayout.LayoutParams(-1, context.px(132)).apply { topMargin = dimen(R.dimen.space_2); bottomMargin = dimen(R.dimen.space_4) })
 
         // primary row
         val primary = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
@@ -149,14 +162,18 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
         // Secondary actions: the same button, one step quieter.
         val quiet = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
-        listOf("Another film" to actions.next, "Letterboxd" to actions.letterboxd, "Refresh list" to actions.refresh).forEachIndexed { i, (label, run) ->
+        listOfNotNull<Pair<String, () -> Unit>>(
+            "Another film" to actions.next, "Letterboxd" to actions.letterboxd, "Refresh list" to actions.refresh,
+            actions.connectJellyfin?.let { "Link Jellyfin" to it }
+        ).forEachIndexed { i, (label, run) ->
             quiet.addView(pill(label, quiet = true).apply { setOnClickListener { hideThen(run) } }, LinearLayout.LayoutParams(-2, context.px(44)).apply { if (i > 0) marginStart = gap })
         }
         right.addView(quiet, LinearLayout.LayoutParams(-2, -2).apply { topMargin = gap })
 
         select(Tab.OVERVIEW)
         styleAllTabs()
-        sheet.showCustom(card, tabViews[Tab.OVERVIEW] ?: play)
+        val flight = if (from != null && poster != null) InfoSheet.Flight(from, posterView, reveal) else null
+        sheet.showCustom(card, tabViews[Tab.OVERVIEW] ?: play, flight)
     }
 
     /** PLAY's second line and whether Versions is offered. Safe to call while the sheet is open. */
@@ -195,7 +212,6 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
             Tab.OVERVIEW -> {
                 val story = p?.synopsis?.withoutEmDashes() ?: "No synopsis on Letterboxd yet."
                 content.addView(Type.reading(Type.text(context, story, Type.Style.BODY)))
-                p?.genres?.takeIf { it.isNotEmpty() }?.let { g -> content.addView(Type.text(context, g.joinToString(" · "), Type.Style.CAPTION, butter).apply { setPadding(0, dimen(R.dimen.space_2), 0, 0) }) }
             }
             Tab.CAST -> grid(p?.cast?.take(24)?.map { it.name to it.role?.takeUnless { r -> r.equals("Self", true) } }.orEmpty(), "No cast listed.")
             Tab.CREW -> {
@@ -254,7 +270,8 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
     /** A pill button: [accent] is the terracotta PLAY, [quiet] the small secondary row. Focus = solid ivory, no scaling. */
     private fun pill(label: String, sub: String? = null, accent: Boolean = false, quiet: Boolean = false): TextView {
-        val rest = LauncherTheme.surface(context, if (accent) R.color.action else if (quiet) R.color.surface_raised else R.color.surface_selected, R.dimen.radius_pill)
+        val rest = if (quiet) GradientDrawable().apply { cornerRadius = 999f; setColor(0) }
+            else LauncherTheme.surface(context, if (accent) R.color.action else R.color.surface_selected, R.dimen.radius_pill)
         val lit = LauncherTheme.surface(context, R.color.focus, R.dimen.radius_pill)
         val restText = if (quiet) dim else ivory
         val fade = android.graphics.drawable.TransitionDrawable(arrayOf(rest, lit)).apply { isCrossFadeEnabled = true }

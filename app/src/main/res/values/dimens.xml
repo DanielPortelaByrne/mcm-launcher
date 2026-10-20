@@ -60,7 +60,7 @@
 
     <!-- All apps / search grid: 7 columns x 123dp = 861dp -->
     <dimen name="all_apps_tile_width">123dp</dimen>
-    <dimen name="all_apps_tile_height">116dp</dimen>
+    <dimen name="all_apps_tile_height">132dp</dimen>
 
     <!-- Header -->
     <dimen name="header_padding_h">48dp</dimen>

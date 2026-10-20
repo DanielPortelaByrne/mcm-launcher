@@ -10,7 +10,7 @@ import androidx.core.content.ContextCompat
 import com.example.tvlauncher.R
 import com.example.tvlauncher.design.LauncherTheme
 
-enum class NavTab { HOME, APPS, LIVE_TV, ART }
+enum class NavTab { HOME, APPS, LIVE_TV, MOVIES, ART }
 
 /**
  * Wires the header's four nav labels and five right-hand icons. Focus is the

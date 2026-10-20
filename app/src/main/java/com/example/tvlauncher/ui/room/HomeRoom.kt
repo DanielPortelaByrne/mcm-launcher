@@ -14,6 +14,7 @@ import com.example.tvlauncher.data.home.Project
 import com.example.tvlauncher.data.home.Recipe
 import com.example.tvlauncher.data.home.RecipeDeck
 import com.example.tvlauncher.data.home.TonightPlanner
+import com.example.tvlauncher.design.SectionTheme
 
 /**
  * The personal part of the home screen, laid into the page as a small "room":
@@ -31,7 +32,7 @@ class HomeRoom(private val activity: Activity, private val sheet: InfoSheet) {
     private val deck = RecipeDeck(recipes)
     private val tonight = TonightCard(activity, { film ->
         sheet.show("Watch tonight", film.title, film.year?.toString(), listOfNotNull(film.note, "Eva's Letterboxd card above has the live watchlist, and where each film is showing."))
-    }, ::openProject, ::openRecipe)
+    }, { openProject(it) }, ::openRecipe)
     private val recipeCards = RecipeCardStack(activity, deck)
     private val nowSpinning = NowSpinning(activity, sheet)
     private var shownDay = -1
@@ -41,17 +42,21 @@ class HomeRoom(private val activity: Activity, private val sheet: InfoSheet) {
         val projects = projectSource.projects()
 
         sections.addView(heading("On the sideboard", "What you're making"), 0)
-        sections.addView(ProjectShelf(activity, projects, ::openProject).view, 1, LinearLayout.LayoutParams(-1, -2))
+        val shelf = ProjectShelf(activity, projects) { project, from -> openProject(project, from) }.view
+        SectionTheme.tag(shelf, SectionTheme.Mood.MAKING)
+        sections.addView(shelf, 1, LinearLayout.LayoutParams(-1, -2))
 
         sections.addView(heading("This evening", "A few gentle ideas"), 2)
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; gravity = Gravity.TOP }
         // 520 + 24 + 320 = the 864dp between the page margins.
         row.addView(tonight.view, LinearLayout.LayoutParams(dp(520), -2))
         row.addView(recipeCards.view, LinearLayout.LayoutParams(dp(320), dp(220)).apply { marginStart = dp(24) })
+        SectionTheme.tag(row, SectionTheme.Mood.EVENING)
         sections.addView(row, 3, LinearLayout.LayoutParams(-1, -2))
         linkTonightAndRecipes()
 
         sections.addView(heading("Now spinning", "Eva and Daniel, on the turntables"), 4)
+        SectionTheme.tag(nowSpinning.row, SectionTheme.Mood.SPINNING)
         sections.addView(nowSpinning.row, 5, LinearLayout.LayoutParams(-1, -2))
         refresh()
     }
@@ -88,9 +93,11 @@ class HomeRoom(private val activity: Activity, private val sheet: InfoSheet) {
         recipeCards.showRecipe(plan.recipe?.id)
     }
 
-    private fun openProject(project: Project) = sheet.show(
+    /** The project sheet shows the print itself, large, lifted off the sideboard when there is one to lift. */
+    private fun openProject(project: Project, from: View? = null) = sheet.show(
         "Project", project.title, project.status,
-        listOfNotNull("Next: ${project.nextAction}".takeIf { project.nextAction.isNotBlank() }, project.notes?.takeIf { it.isNotBlank() })
+        listOfNotNull("Next: ${project.nextAction}".takeIf { project.nextAction.isNotBlank() }, project.notes?.takeIf { it.isNotBlank() }),
+        image = ProjectArtView.render(activity, project.art, PRINT_DP), imageSizeDp = PRINT_DP to PRINT_DP, from = from
     )
 
     private fun openRecipe(recipe: Recipe) = sheet.show(
@@ -102,4 +109,6 @@ class HomeRoom(private val activity: Activity, private val sheet: InfoSheet) {
     private fun heading(title: String, subtitle: String): View = com.example.tvlauncher.design.SectionHeader.build(activity, title, subtitle)
 
     private fun dp(v: Int) = (v * activity.resources.displayMetrics.density).toInt()
+
+    private companion object { const val PRINT_DP = 220 }
 }

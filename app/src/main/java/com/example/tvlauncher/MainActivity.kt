@@ -81,6 +81,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var headerBar: HeaderBar
     private lateinit var allAppsPanel: AllAppsPanel
+    private lateinit var liveTvPanel: com.example.tvlauncher.ui.LiveTvPanel
+    private lateinit var moviesPanel: com.example.tvlauncher.ui.MoviesPanel
     private lateinit var editAppsPanel: EditAppsPanel
     private lateinit var searchPanel: SearchPanel
     private lateinit var artModeOverlay: ArtModeOverlay
@@ -150,7 +152,7 @@ class MainActivity : AppCompatActivity() {
                 NavTab.HOME to findViewById(R.id.navHome),
                 NavTab.APPS to findViewById(R.id.navApps),
                 NavTab.LIVE_TV to findViewById(R.id.navLiveTv),
-                NavTab.ART to findViewById(R.id.navArt)
+                NavTab.MOVIES to findViewById(R.id.navMovies)
             ),
             iconViews = listOf(
                 findViewById(R.id.iconSearch),
@@ -186,7 +188,10 @@ class MainActivity : AppCompatActivity() {
         }
         // Remember the last thing focused on the page itself, so closing any overlay returns exactly there.
         window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener { _, focused ->
-            if (focused != null && !anyOverlayVisible()) lastMainFocus = focused
+            if (focused != null && !anyOverlayVisible()) {
+                lastMainFocus = focused
+                if (::backdrop.isInitialized) backdrop.setMood(com.example.tvlauncher.design.SectionTheme.moodOf(focused) ?: com.example.tvlauncher.design.SectionTheme.Mood.NEUTRAL)
+            }
             // Runs before the new item's own focus listener, which sets the hint again if it has one.
             if (organiseIndex == null) com.example.tvlauncher.ui.PageHint.show(null)
         }
@@ -235,6 +240,30 @@ class MainActivity : AppCompatActivity() {
             if (artReturnFocus?.isAttachedToWindow == true) artReturnFocus?.requestFocus() else restoreShelfFocus()
         }
         infoSheet = InfoSheet(findViewById(R.id.infoSheet))
+        liveTvPanel = com.example.tvlauncher.ui.LiveTvPanel(
+            activity = this,
+            overlay = findViewById(R.id.liveTvOverlay),
+            top = findViewById(R.id.liveTvTop),
+            content = findViewById(R.id.liveTvContent),
+            jellyfin = com.example.tvlauncher.data.jellyfin.JellyfinClient(this),
+            connectSheet = com.example.tvlauncher.ui.room.JellyfinConnectSheet(this, infoSheet),
+            openTuner = { handleCapability(systemActions.openLiveTv(repository.loadLaunchableApps(ownedOnly = false))) },
+            onLaunchApp = ::launchApp
+        )
+        moviesPanel = com.example.tvlauncher.ui.MoviesPanel(
+            activity = this,
+            overlay = findViewById(R.id.moviesOverlay),
+            body = findViewById(R.id.moviesBody),
+            top = findViewById(R.id.moviesTop),
+            page = findViewById(R.id.moviesPage),
+            content = findViewById(R.id.moviesContent),
+            detail = findViewById(R.id.movieDetail),
+            jellyfin = com.example.tvlauncher.data.jellyfin.JellyfinClient(this),
+            jellyfinSheet = com.example.tvlauncher.ui.room.JellyfinConnectSheet(this, infoSheet),
+            seerr = com.example.tvlauncher.data.movies.SeerrClient(this),
+            seerrSheet = com.example.tvlauncher.ui.room.SeerrSignInSheet(this, infoSheet),
+            infoSheet = infoSheet
+        )
         bootMark("panels")
         collection = HomeCollection(this, infoSheet, artModeOverlay, ::enterArtMode,
             { handleCapability(systemActions.openSettings()) }, { editAppsPanel.show(currentApps) },
@@ -250,13 +279,23 @@ class MainActivity : AppCompatActivity() {
         homeRoom = HomeRoom(this, infoSheet)
         bootMark("room")
         backdrop = HomeBackdrop(findViewById(R.id.homePainting), artModeOverlay.library)
+        // The painting covers the whole window once it is up, so the window's own ink ground is just overdraw.
+        backdrop.onFirstPainting = { window.setBackgroundDrawable(null) }
         backdrop.showCurrent()
+        val homeScroll = findViewById<com.example.tvlauncher.ui.CalmScrollView>(R.id.homeScroll)
+        pageVeil = backdrop.attachVeil(homeScroll)
+        homeScroll.onScrolled = { y ->
+            backdrop.onPageScrolled()
+            com.example.tvlauncher.ui.SpatialNavigation.update(homeScroll.getChildAt(0) as android.view.ViewGroup, y, homeScroll.height)
+        }
+        com.example.tvlauncher.design.SectionTheme.tag(findViewById(R.id.continueSection), com.example.tvlauncher.design.SectionTheme.Mood.FILM)
 
         findViewById<ImageView>(R.id.iconSearch).setOnClickListener { searchPanel.show(currentApps) }
         findViewById<ImageView>(R.id.iconInputs).setOnClickListener { handleCapability(systemActions.openInputs()) }
         networkIcon.setOnClickListener { handleCapability(systemActions.openNetworkSettings()) }
         findViewById<ImageView>(R.id.iconSettings).setOnClickListener { handleCapability(systemActions.openSettings()) }
         com.example.tvlauncher.ui.PageHint.attach(findViewById(R.id.pageHint))
+        placeHint()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -270,6 +309,8 @@ class MainActivity : AppCompatActivity() {
                         editAppsPanel.hide()
                         renderShelf(lastShelfFocusIndex)
                     }
+                    moviesPanel.isVisible -> if (!moviesPanel.back()) closeOverlayAndRestore { moviesPanel.hide() }
+                    liveTvPanel.isVisible -> closeOverlayAndRestore { liveTvPanel.hide() }
                     allAppsPanel.isVisible -> closeOverlayAndRestore { allAppsPanel.hide() }
                     organiseIndex != null -> cancelOrganise()
                     else -> {
@@ -279,6 +320,36 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         })
+    }
+
+    /**
+     * The hint sits where the header has nothing to say: vertically centred on the header, ending a gap
+     * short of its right-hand icons. Measured once the header is laid out (the page is at the top then).
+     */
+    private fun placeHint() {
+        val hint = findViewById<TextView>(R.id.pageHint)
+        val header = findViewById<android.view.View>(R.id.header)
+        val icons = findViewById<android.view.View>(R.id.iconInputs)
+        header.post {
+            val h = IntArray(2).also { header.getLocationInWindow(it) }
+            val i = IntArray(2).also { icons.getLocationInWindow(it) }
+            val root = hint.parent as android.view.View
+            hint.measure(android.view.View.MeasureSpec.UNSPECIFIED, android.view.View.MeasureSpec.UNSPECIFIED)
+            com.example.tvlauncher.ui.PageHint.tipAt = android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.TOP or android.view.Gravity.END).apply {
+                topMargin = h[1] + (header.height - hint.measuredHeight) / 2
+                marginEnd = root.width - i[0] + resources.getDimensionPixelSize(R.dimen.space_4)
+            }
+            com.example.tvlauncher.ui.PageHint.tipLowAt = android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.END).apply {
+                marginEnd = resources.getDimensionPixelSize(R.dimen.page_margin)
+                bottomMargin = resources.getDimensionPixelSize(R.dimen.space_2)
+            }
+            val page = findViewById<android.widget.ScrollView>(R.id.homeScroll)
+            com.example.tvlauncher.ui.PageHint.headerShown = { page.scrollY < header.bottom / 2 }
+            com.example.tvlauncher.ui.PageHint.modeAt = android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.END).apply {
+                marginEnd = resources.getDimensionPixelSize(R.dimen.page_margin)
+                bottomMargin = resources.getDimensionPixelSize(R.dimen.space_4)
+            }
+        }
     }
 
     /** Shows the "Who's watching?" picker once per boot, and again after the TV has been in standby a while. */
@@ -343,6 +414,8 @@ class MainActivity : AppCompatActivity() {
         collection.close()
         backdrop.close()
         continueRow.close()
+        liveTvPanel.close()
+        moviesPanel.close()
         homeRoom.close()
         unregisterReceiver(screenReceiver)
         artModeOverlay.pause()
@@ -352,7 +425,8 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         if (artModeOverlay.isVisible) artModeOverlay.hide()
-        allAppsPanel.hide(); editAppsPanel.hide(); searchPanel.hide(); accountMenu.hide()
+        allAppsPanel.hide(); liveTvPanel.hide(); moviesPanel.hide(); editAppsPanel.hide(); searchPanel.hide(); accountMenu.hide()
+        syncObscured()
         headerBar.setSelected(NavTab.HOME)
         collection.homeReturned()
         findViewById<TextView>(R.id.navHome).requestFocus()
@@ -385,11 +459,13 @@ class MainActivity : AppCompatActivity() {
         }
         if (event.action == KeyEvent.ACTION_DOWN && direction != 0 && ::allAppsPanel.isInitialized) {
             val overlayId = when {
-                infoSheet.isVisible -> R.id.infoSheet
+                infoSheet.isVisible && !infoSheet.isClosing -> R.id.infoSheet
                 whoPicker.isVisible -> R.id.whoPicker
                 accountMenu.isVisible -> R.id.accountMenu
                 searchPanel.isVisible -> R.id.searchOverlay
                 editAppsPanel.isVisible -> R.id.editAppsOverlay
+                moviesPanel.isVisible -> R.id.moviesOverlay
+                liveTvPanel.isVisible -> R.id.liveTvOverlay
                 allAppsPanel.isVisible -> R.id.allAppsOverlay
                 else -> 0
             }
@@ -400,8 +476,9 @@ class MainActivity : AppCompatActivity() {
                 val scrolling = focused is android.widget.ScrollView &&
                     ((direction == android.view.View.FOCUS_DOWN && focused.canScrollVertically(1)) || (direction == android.view.View.FOCUS_UP && focused.canScrollVertically(-1)))
                 if (!editingText && !scrolling) {
-                    if (focused == null || overlay.findFocus() == null) {
-                        overlay.requestFocus()           // focus strayed behind the overlay: bring it back
+                    if (focused == null || focused === overlay || overlay.findFocus() == null) {
+                        // Focus strayed behind the overlay, or the overlay itself took it (slow devices): hand it to a child.
+                        (android.view.FocusFinder.getInstance().findNextFocus(overlay, null, direction) ?: overlay).requestFocus()
                     } else {
                         // Only ever move to something inside the overlay; at its edges the key is simply absorbed.
                         android.view.FocusFinder.getInstance().findNextFocus(overlay, focused, direction)?.requestFocus(direction)
@@ -414,18 +491,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun anyOverlayVisible(): Boolean =
-        allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || infoSheet.isVisible
+        allAppsPanel.isVisible || liveTvPanel.isVisible || moviesPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
 
     private var obscured = false
+    private var pageVeil: android.view.View? = null
 
     private fun syncObscured() {
         if (!::backdrop.isInitialized) return
-        val cover = allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || whoPicker.isVisible || infoSheet.isVisible
+        val cover = allAppsPanel.isVisible || liveTvPanel.isVisible || moviesPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
         if (cover == obscured) return
         obscured = cover
         // Alpha, not visibility: the page stays focusable, so closing a sheet can hand focus straight back to it.
-        findViewById<android.view.View>(R.id.homeScroll).animate().alpha(if (cover) 0f else 1f)
-            .setDuration(com.example.tvlauncher.design.Motion.FADE_MS).start()
+        // The page also steps back a little as a layer arrives on top of it, and comes forward again after.
+        val page = findViewById<android.view.View>(R.id.homeScroll)
+        val on = com.example.tvlauncher.design.Motion.animationsOn(page)
+        page.pivotX = page.width / 2f; page.pivotY = page.height / 2f
+        val scale = if (cover) com.example.tvlauncher.design.Motion.PAGE_RECEDE else 1f
+        val ms = if (!on) 0 else if (cover) com.example.tvlauncher.design.Motion.FADE_MS else com.example.tvlauncher.design.Motion.SHEET_OUT_MS + 60
+        // A page that is part-way through coming back must be drawn again, and focusable, from the first frame.
+        if (!cover) page.visibility = android.view.View.VISIBLE
+        // withLayer(): the full-screen fade runs through one hardware layer for its duration and the layer is dropped at its end.
+        page.animate().alpha(if (cover) 0f else 1f).scaleX(scale).scaleY(scale)
+            .setDuration(ms).setInterpolator(com.example.tvlauncher.design.Motion.SETTLE).withLayer()
+            // Movies covers the screen outright: once the page has faded out, stop laying it out and drawing it at all.
+            // (Other panels leave it as a transparent but focusable view, so closing them can hand focus straight back.)
+            .withEndAction { if (obscured && moviesPanel.isVisible) page.visibility = android.view.View.GONE }
+            .start()
+        // The edge veil is painting laid over the page, so it goes wherever the page goes.
+        pageVeil?.animate()?.alpha(if (cover) 0f else 1f)?.setDuration(ms)?.setInterpolator(com.example.tvlauncher.design.Motion.SETTLE)?.start()
+        // A page that covers the screen outright (Movies) makes the painting behind it invisible, so stop drawing and blurring it.
+        findViewById<android.view.View>(R.id.homePainting).visibility = if (moviesPanel.isVisible) android.view.View.INVISIBLE else android.view.View.VISIBLE
         backdrop.setBlurred(cover)
     }
 
@@ -588,8 +683,11 @@ class MainActivity : AppCompatActivity() {
         when (tab) {
             NavTab.HOME -> {
                 if (allAppsPanel.isVisible) allAppsPanel.hide()
+                if (liveTvPanel.isVisible) liveTvPanel.hide()
+                if (moviesPanel.isVisible) moviesPanel.hide()
                 if (editAppsPanel.isVisible) editAppsPanel.hide()
                 if (searchPanel.isVisible) searchPanel.hide()
+                syncObscured()
                 headerBar.setSelected(NavTab.HOME)
                 collection.homeReturned()
                 findViewById<TextView>(R.id.navHome).requestFocus()
@@ -600,7 +698,14 @@ class MainActivity : AppCompatActivity() {
                 allAppsPanel.setApps(currentApps)
                 allAppsPanel.show()
             }
-            NavTab.LIVE_TV -> handleCapability(systemActions.openLiveTv(repository.loadLaunchableApps(ownedOnly = false)))
+            NavTab.LIVE_TV -> {
+                headerBar.setSelected(NavTab.LIVE_TV)
+                liveTvPanel.show(repository.loadLaunchableApps(ownedOnly = false))
+            }
+            NavTab.MOVIES -> {
+                headerBar.setSelected(NavTab.MOVIES)
+                moviesPanel.show()
+            }
             NavTab.ART -> enterArtMode()
         }
     }
@@ -612,10 +717,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun closeOverlayAndRestore(hide: () -> Unit) {
+        // Read the way back first: hiding the overlay drops its focus onto the window's first focusable
+        // (the avatar), and the focus tracker would record that as the page's last focus.
+        val back = lastMainFocus
         hide()
+        syncObscured()   // brings the page back (visible) now, so the focus handed back below has somewhere to land
         headerBar.setSelected(NavTab.HOME)
         collection.homeReturned()
-        val back = lastMainFocus
         if (back != null && back.isAttachedToWindow && back.isShown && back.isFocusable) back.post { back.requestFocus() } else restoreShelfFocus()
     }
 
@@ -710,7 +818,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setRearrangeHint(dragging: Boolean) {
-        com.example.tvlauncher.ui.PageHint.show(getString(if (dragging) R.string.hint_dragging else R.string.hint_rearrange))
+        if (dragging) com.example.tvlauncher.ui.PageHint.showMode(getString(R.string.hint_dragging))
+        else com.example.tvlauncher.ui.PageHint.show(getString(R.string.hint_rearrange))
     }
 
     private fun commitOrganise() {
@@ -736,6 +845,7 @@ class MainActivity : AppCompatActivity() {
 
     /** The page hint for whatever just took focus: only hold actions and other non-obvious keys. */
     private fun updateFooter(context: FooterContext) {
+        if (context == FooterContext.ORGANISE) { com.example.tvlauncher.ui.PageHint.showMode(getString(R.string.hint_dragging)); return }
         com.example.tvlauncher.ui.PageHint.show(when (context) {
             FooterContext.SHELF_APP -> getString(R.string.hint_rearrange)
             FooterContext.FEATURED_APP -> getString(R.string.hint_add_to_shelf)

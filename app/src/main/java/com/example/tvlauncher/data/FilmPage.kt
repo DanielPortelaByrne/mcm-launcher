@@ -22,8 +22,9 @@ data class FilmPage(
     val themes: List<String> = emptyList()
 ) {
     /** "1952 · 95 min · Directed by George Cukor", only what is known. */
-    fun headline(): String = listOfNotNull(
-        year?.toString(), runtimeMin?.let { "$it min" }, director?.let { "Directed by $it" }
+    /** Runtime and director; the year is left out where the title already carries it. */
+    fun headline(withYear: Boolean = true): String = listOfNotNull(
+        year?.takeIf { withYear }?.toString(), runtimeMin?.let { "$it min" }, director?.let { "Directed by $it" }
     ).joinToString(" · ")
 
     fun toJson(): JSONObject = JSONObject()

@@ -2,8 +2,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:background="@color/ink">
+    android:layout_height="match_parent">
 
     <!-- Full-bleed production artwork. Everything else is real native UI on top of it. -->
     <ImageView
@@ -14,10 +13,7 @@
         android:scaleType="centerCrop"
         android:src="@drawable/bg_painting" />
 
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="@drawable/home_vignette" />
+    <!-- The page vignette (drawable/home_vignette) is baked into the painting bitmap by HomeBackdrop. -->
 
     <!-- The page. It fades at its top and bottom edges instead of slicing content at the screen edge. -->
     <com.example.tvlauncher.ui.CalmScrollView
@@ -89,9 +85,9 @@
                     android:text="@string/nav_live_tv" />
 
                 <TextView
-                    android:id="@+id/navArt"
+                    android:id="@+id/navMovies"
                     style="@style/HeaderNavTab"
-                    android:text="@string/nav_art" />
+                    android:text="@string/nav_movies" />
 
                 <Space android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
 
@@ -305,21 +301,24 @@
 
     </com.example.tvlauncher.ui.CalmScrollView>
 
-    <!-- The one hint line: bottom-left, only for the focused item's hold action. -->
+    <!-- The one hint line: top right, level with the header's empty stretch left of its icons (placed in
+         MainActivity), so it never sits on the page's content. -->
     <TextView
         android:id="@+id/pageHint"
         style="@style/Text.Caption"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="@dimen/page_margin"
-        android:layout_marginBottom="@dimen/space_4"
-        android:background="@drawable/bg_hint"
-        android:paddingStart="@dimen/space_3"
-        android:paddingEnd="@dimen/space_3"
+        android:layout_gravity="top|end"
+        android:textColor="#A6F3E9CF"
+        android:shadowColor="#99000000"
+        android:shadowDy="1"
+        android:shadowRadius="6"
+        android:fontFamily="sans-serif"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
         android:paddingTop="@dimen/space_1"
         android:paddingBottom="@dimen/space_1"
-        android:textColor="@color/text"
+        android:textSize="15sp"
         android:alpha="0" />
 
     <!-- Quick account dropdown, anchored under the header avatar -->
@@ -349,11 +348,14 @@
             android:paddingEnd="@dimen/page_margin"
             android:paddingTop="@dimen/space_6">
 
+            <!-- Inset to the grid's disc edges (tiles carry side room for the focus halo). -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="bottom"
-                android:orientation="horizontal">
+                android:orientation="horizontal"
+                android:paddingStart="29dp"
+                android:paddingEnd="29dp">
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -410,6 +412,106 @@
                     android:paddingBottom="@dimen/focus_reserve" />
             </ScrollView>
         </LinearLayout>
+    </FrameLayout>
+
+
+    <!-- LIVE TV: a programme guide. The top (title, apps, details of the focused programme) stays put; the guide scrolls. -->
+    <FrameLayout
+        android:id="@+id/liveTvOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/overlay_ground"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:paddingStart="@dimen/page_margin"
+            android:paddingTop="@dimen/space_5"
+            android:paddingEnd="@dimen/page_margin">
+
+            <LinearLayout
+                android:id="@+id/liveTvTop"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:orientation="vertical" />
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
+                android:layout_marginTop="@dimen/space_2"
+                android:layout_weight="1"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/liveTvContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:orientation="vertical"
+                    android:paddingBottom="@dimen/space_5" />
+            </ScrollView>
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- MOVIES: a streaming-style page (featured title and rows of posters) with a title page that opens over it. -->
+    <FrameLayout
+        android:id="@+id/moviesOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/scrim"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <FrameLayout
+            android:id="@+id/moviesBody"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <ScrollView
+                android:id="@+id/moviesPage"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:id="@+id/moviesContent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:clipChildren="false"
+                    android:clipToPadding="false"
+                    android:orientation="vertical"
+                    android:paddingBottom="@dimen/space_6" />
+            </ScrollView>
+
+            <!-- The bar floats over the page, so a featured title can run right up to the top of the screen. -->
+            <LinearLayout
+                android:id="@+id/moviesTop"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:orientation="horizontal" />
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/movieDetail"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clickable="true"
+            android:visibility="gone" />
     </FrameLayout>
 
     <!-- EDIT YOUR APPS: the plain-OK alternative to hold-to-drag. Same panel as All apps. -->
