@@ -20,6 +20,9 @@ data class JellyfinItem(
     val isMovie: Boolean get() = type == "Movie"
 }
 
+/** One scheduled programme on a live channel. */
+data class Programme(val id: String, val channelId: String, val title: String, val overview: String?, val startMs: Long, val endMs: Long, val year: Int?)
+
 /** A live channel from Jellyfin's Live TV (the owner's own Tunarr channels). [nowPlaying] comes from the guide. */
 data class LiveChannel(
     val id: String,
@@ -72,6 +75,31 @@ object JellyfinApi {
             "&VideoCodec=h264&AudioCodec=aac&MaxStreamingBitrate=20000000&TranscodingMaxAudioChannels=6&SegmentContainer=ts"
 
     fun posterUrl(base: String, id: String, maxHeight: Int = 450): String = "$base/Items/${enc(id)}/Images/Primary?maxHeight=$maxHeight&quality=90"
+
+    // --- Programme guide -------------------------------------------------------------------------
+
+    private fun isoUtc(ms: Long): String =
+        java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date(ms))
+
+    /** Everything on any channel that ends after [fromMs] and starts before [toMs], in start order. */
+    fun programsUrl(base: String, userId: String, fromMs: Long, toMs: Long): String =
+        "$base/LiveTv/Programs?userId=${enc(userId)}&minEndDate=${enc(isoUtc(fromMs))}&maxStartDate=${enc(isoUtc(toMs))}" +
+            "&sortBy=StartDate&Fields=Overview&limit=3000"
+
+    fun parsePrograms(json: String): List<Programme> = try {
+        val array = JSONObject(json).optJSONArray("Items")
+        (0 until (array?.length() ?: 0)).mapNotNull { i ->
+            val o = array!!.getJSONObject(i)
+            val channel = o.optString("ChannelId").ifBlank { return@mapNotNull null }
+            val start = utcMillis(o.optString("StartDate")) ?: return@mapNotNull null
+            val end = utcMillis(o.optString("EndDate")) ?: return@mapNotNull null
+            Programme(
+                id = o.optString("Id"), channelId = channel, title = o.optString("Name"),
+                overview = o.optString("Overview").ifBlank { null }, startMs = start, endMs = end,
+                year = o.optInt("ProductionYear", 0).takeIf { it > 0 }
+            )
+        }.sortedBy { it.startMs }
+    } catch (_: Exception) { emptyList() }
 
     // --- Live TV ---------------------------------------------------------------------------------
 

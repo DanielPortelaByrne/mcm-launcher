@@ -97,10 +97,10 @@ class JellyfinClient(context: Context) {
 
     // --- Live TV ---------------------------------------------------------------------------------
 
-    /** The owner's live channels with what is on now. Empty when there are none or Jellyfin cannot be reached. */
-    fun liveChannels(): List<LiveChannel> {
-        val uid = userId ?: return emptyList()
-        val body = request("GET", JellyfinApi.channelsUrl(JellyfinApi.cleanBase(server), uid)) ?: return emptyList()
+    /** The owner's live channels with what is on now. Null when Jellyfin could not be reached, so "none yet" and "offline" are told apart. */
+    fun liveChannels(): List<LiveChannel>? {
+        val uid = userId ?: return null
+        val body = request("GET", JellyfinApi.channelsUrl(JellyfinApi.cleanBase(server), uid)) ?: return null
         return JellyfinApi.parseChannels(body)
     }
 
@@ -112,13 +112,24 @@ class JellyfinClient(context: Context) {
         return JellyfinApi.parseLiveStreamUrl(base, body)
     }
 
+    /** The schedule for every channel between [fromMs] and [toMs]. Empty when there is none or Jellyfin cannot be reached. */
+    fun guide(fromMs: Long, toMs: Long): List<Programme> {
+        val uid = userId ?: return emptyList()
+        val body = request("GET", JellyfinApi.programsUrl(JellyfinApi.cleanBase(server), uid, fromMs, toMs)) ?: return emptyList()
+        return JellyfinApi.parsePrograms(body)
+    }
+
     fun imageUrl(id: String, maxHeight: Int = 300) = JellyfinApi.posterUrl(JellyfinApi.cleanBase(server), id, maxHeight)
 
     private companion object { const val LIBRARY_TTL_MS = 5 * 60_000L }
 
     // --- Plumbing --------------------------------------------------------------------------------
 
-    private fun request(method: String, url: String, authed: Boolean = true, json: String? = null): String? = try {
+    /** One quiet retry for reads: the TV's Wi-Fi drops a request now and then. */
+    private fun request(method: String, url: String, authed: Boolean = true, json: String? = null): String? =
+        requestOnce(method, url, authed, json) ?: if (method == "GET" && (!authed || isConnected)) requestOnce(method, url, authed, json) else null
+
+    private fun requestOnce(method: String, url: String, authed: Boolean, json: String?): String? = try {
         val connection = URL(url).openConnection() as HttpURLConnection
         connection.requestMethod = method
         connection.connectTimeout = 6000

@@ -242,10 +242,10 @@ class MainActivity : AppCompatActivity() {
         liveTvPanel = com.example.tvlauncher.ui.LiveTvPanel(
             activity = this,
             overlay = findViewById(R.id.liveTvOverlay),
+            top = findViewById(R.id.liveTvTop),
             content = findViewById(R.id.liveTvContent),
             jellyfin = com.example.tvlauncher.data.jellyfin.JellyfinClient(this),
             connectSheet = com.example.tvlauncher.ui.room.JellyfinConnectSheet(this, infoSheet),
-            shelfBuilder = shelfBuilder,
             openTuner = { handleCapability(systemActions.openLiveTv(repository.loadLaunchableApps(ownedOnly = false))) },
             onLaunchApp = ::launchApp
         )
