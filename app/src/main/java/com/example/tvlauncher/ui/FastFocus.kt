@@ -85,7 +85,9 @@ object FastFocus {
             r.bottom + bottomInset > bottom -> r.bottom + bottomInset - page.height
             else -> return
         }.coerceAtLeast(0)
-        page.smoothScrollTo(0, target)
+        // Close to the top, go all the way up: otherwise the page can stop short of its first row and look stuck.
+        val snapped = if (target < 160 * page.resources.displayMetrics.density) 0 else target
+        page.smoothScrollTo(0, snapped)
     }
 
     /** Child views of [group] that are directly attached, newest last (used to find rows by position). */
