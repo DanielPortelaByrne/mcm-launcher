@@ -29,6 +29,11 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.PlayerView
+import androidx.media3.common.C
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import android.view.KeyEvent
+import android.view.Gravity
+import android.widget.TextView
 import com.example.tvlauncher.data.stream.NetworkEstimator
 import com.example.tvlauncher.data.stream.PlaybackRecord
 import com.example.tvlauncher.data.stream.PlaybackStore
@@ -59,6 +64,11 @@ class PlayerActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var player: ExoPlayer
     private lateinit var view: PlayerView
+    private lateinit var trackSelector: DefaultTrackSelector
+    private lateinit var captionsButton: TextView
+    private val captionPrefs by lazy { getSharedPreferences("player", MODE_PRIVATE) }
+    /** Whether captions are wanted. Remembered, and on by default, as the player has always shown them. */
+    private var captionsOn = true
     private lateinit var items: List<PlayItem>
     private var imdbId: String? = null
     /** A live channel: no resume point, no Continue watching card, and no Stremio to fall back on. */
@@ -109,8 +119,10 @@ class PlayerActivity : AppCompatActivity() {
         if (items.isEmpty()) { fallBackToStremio("nothing to play"); return }
 
         bandwidth = DefaultBandwidthMeter.getSingletonInstance(this)
+        trackSelector = DefaultTrackSelector(this)
+        captionsOn = captionPrefs.getBoolean("captions", true)
         player = ExoPlayer.Builder(this, DefaultRenderersFactory(this).setEnableDecoderFallback(true))
-            .setBandwidthMeter(bandwidth).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
+            .setTrackSelector(trackSelector).setBandwidthMeter(bandwidth).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
         view = PlayerView(this).apply {
             player = this@PlayerActivity.player
             setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
@@ -118,7 +130,18 @@ class PlayerActivity : AppCompatActivity() {
             setBackgroundColor(0xFF000000.toInt())
             keepScreenOn = true
         }
-        setContentView(FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()); addView(view, -1, -1) })
+        // A captions button that shows with the controls; the remote's captions key works at any time.
+        captionsButton = TextView(this).apply {
+            textSize = 16f; setTextColor(0xFFF3E9CF.toInt()); setPadding(28, 14, 28, 14)
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 40f; setColor(0xCC302319.toInt()) }
+            setOnClickListener { toggleCaptions() }
+        }
+        val root = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()); addView(view, -1, -1) }
+        root.addView(captionsButton, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, 64, 120) })
+        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility -> captionsButton.visibility = visibility })
+        setContentView(root)
+        applyCaptions()
+        updateCaptionsLabel()
         player.addListener(listener)
         handler.postDelayed(saveTick, 15_000)
         val report = jf
@@ -191,6 +214,8 @@ class PlayerActivity : AppCompatActivity() {
     // --- telemetry --------------------------------------------------------------------------------
 
     private val listener = object : Player.Listener {
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) { updateCaptionsLabel() }
+
         override fun onRenderedFirstFrame() {
             if (started) return
             started = true
@@ -229,6 +254,35 @@ class PlayerActivity : AppCompatActivity() {
             Log.w(TAG, "Player error: ${error.errorCodeName}")
             fail(error.errorCodeName)
         }
+    }
+
+    private fun hasCaptions(): Boolean = ::player.isInitialized && player.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT }
+
+    /** Turns captions on or off for everything that plays from here, and remembers the choice. */
+    private fun toggleCaptions() {
+        captionsOn = !captionsOn
+        captionPrefs.edit().putBoolean("captions", captionsOn).apply()
+        applyCaptions()
+        if (captionsOn && !hasCaptions()) Toast.makeText(this, "This stream has no captions", Toast.LENGTH_SHORT).show()
+        updateCaptionsLabel()
+    }
+
+    private fun applyCaptions() {
+        trackSelector.parameters = trackSelector.buildUponParameters().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !captionsOn).build()
+    }
+
+    private fun updateCaptionsLabel() {
+        if (!::captionsButton.isInitialized) return
+        captionsButton.text = when { !hasCaptions() -> "CC · none"; captionsOn -> "CC · On"; else -> "CC · Off" }
+    }
+
+    /** The remote's captions key toggles captions from anywhere in the player. */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_CAPTIONS) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) toggleCaptions()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     private fun closeBuffer(discard: Boolean = false) {
