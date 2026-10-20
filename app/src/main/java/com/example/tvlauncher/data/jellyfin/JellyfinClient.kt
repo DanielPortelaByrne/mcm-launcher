@@ -95,6 +95,25 @@ class JellyfinClient(context: Context) {
     /** The film in the library with this IMDb id, or null when there is none (or Jellyfin cannot be reached). */
     fun findMovieByImdb(imdbId: String): JellyfinItem? = JellyfinApi.findByImdb(movies(), imdbId)
 
+    // --- Live TV ---------------------------------------------------------------------------------
+
+    /** The owner's live channels with what is on now. Empty when there are none or Jellyfin cannot be reached. */
+    fun liveChannels(): List<LiveChannel> {
+        val uid = userId ?: return emptyList()
+        val body = request("GET", JellyfinApi.channelsUrl(JellyfinApi.cleanBase(server), uid)) ?: return emptyList()
+        return JellyfinApi.parseChannels(body)
+    }
+
+    /** Opens the channel's stream on the server and returns the HLS address to play, or null. */
+    fun liveStreamUrl(channelId: String): String? {
+        val uid = userId ?: return null
+        val base = JellyfinApi.cleanBase(server)
+        val body = request("POST", JellyfinApi.playbackInfoUrl(base, uid, channelId), json = JellyfinApi.PLAYBACK_INFO_BODY) ?: return null
+        return JellyfinApi.parseLiveStreamUrl(base, body)
+    }
+
+    fun imageUrl(id: String, maxHeight: Int = 300) = JellyfinApi.posterUrl(JellyfinApi.cleanBase(server), id, maxHeight)
+
     private companion object { const val LIBRARY_TTL_MS = 5 * 60_000L }
 
     // --- Plumbing --------------------------------------------------------------------------------

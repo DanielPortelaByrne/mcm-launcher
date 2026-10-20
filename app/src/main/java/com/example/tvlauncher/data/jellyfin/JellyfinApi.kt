@@ -20,6 +20,16 @@ data class JellyfinItem(
     val isMovie: Boolean get() = type == "Movie"
 }
 
+/** A live channel from Jellyfin's Live TV (the owner's own Tunarr channels). [nowPlaying] comes from the guide. */
+data class LiveChannel(
+    val id: String,
+    val name: String,
+    val number: String?,
+    val nowPlaying: String?,
+    val nowEndsAtMs: Long?,
+    val hasImage: Boolean
+)
+
 /**
  * The plain-Kotlin half of the Jellyfin client: how requests are written and responses read. Everything that
  * touches the network or storage lives in [JellyfinClient], so this part can be unit tested.
@@ -62,6 +72,56 @@ object JellyfinApi {
             "&VideoCodec=h264&AudioCodec=aac&MaxStreamingBitrate=20000000&TranscodingMaxAudioChannels=6&SegmentContainer=ts"
 
     fun posterUrl(base: String, id: String, maxHeight: Int = 450): String = "$base/Items/${enc(id)}/Images/Primary?maxHeight=$maxHeight&quality=90"
+
+    // --- Live TV ---------------------------------------------------------------------------------
+
+    fun channelsUrl(base: String, userId: String): String =
+        "$base/LiveTv/Channels?userId=${enc(userId)}&AddCurrentProgram=true&SortBy=SortName"
+
+    fun playbackInfoUrl(base: String, userId: String, channelId: String): String =
+        "$base/Items/${enc(channelId)}/PlaybackInfo?UserId=${enc(userId)}&AutoOpenLiveStream=true"
+
+    /** Asks for an HLS copy this TV can decode, which is all a live channel is offered as. */
+    val PLAYBACK_INFO_BODY: String = JSONObject()
+        .put("AutoOpenLiveStream", true)
+        .put("DeviceProfile", JSONObject()
+            .put("MaxStreamingBitrate", 20_000_000)
+            .put("DirectPlayProfiles", org.json.JSONArray())
+            .put("TranscodingProfiles", org.json.JSONArray().put(JSONObject()
+                .put("Container", "ts").put("Type", "Video").put("AudioCodec", "aac").put("VideoCodec", "h264")
+                .put("Protocol", "hls").put("Context", "Streaming"))))
+        .toString()
+
+    /** The playable address Jellyfin hands back for a live channel, made absolute. Null when it offered none. */
+    fun parseLiveStreamUrl(base: String, json: String): String? = try {
+        val sources = JSONObject(json).optJSONArray("MediaSources")
+        val path = (0 until (sources?.length() ?: 0)).firstNotNullOfOrNull { sources!!.getJSONObject(it).optString("TranscodingUrl").ifBlank { null } }
+        path?.let { if (it.startsWith("http")) it else base + (if (it.startsWith("/")) it else "/$it") }
+    } catch (_: Exception) { null }
+
+    fun parseChannels(json: String): List<LiveChannel> = try {
+        val array = JSONObject(json).optJSONArray("Items")
+        (0 until (array?.length() ?: 0)).mapNotNull { i ->
+            val o = array!!.getJSONObject(i)
+            if (o.optString("Type") != "TvChannel") return@mapNotNull null
+            val id = o.optString("Id").ifBlank { return@mapNotNull null }
+            val now = o.optJSONObject("CurrentProgram")
+            LiveChannel(
+                id = id,
+                name = o.optString("Name"),
+                number = o.optString("Number").ifBlank { null },
+                nowPlaying = now?.optString("Name")?.ifBlank { null },
+                nowEndsAtMs = now?.optString("EndDate")?.let { utcMillis(it) },
+                hasImage = o.optJSONObject("ImageTags")?.has("Primary") == true
+            )
+        }
+    } catch (_: Exception) { emptyList() }
+
+    /** Jellyfin's timestamps look like 2026-10-20T12:51:00.0000000Z; seconds are all the guide needs. */
+    fun utcMillis(stamp: String): Long? = try {
+        val f = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+        f.parse(stamp.take(19))?.time
+    } catch (_: Exception) { null }
 
     fun parseItems(json: String): List<JellyfinItem> = try {
         val array = JSONObject(json).optJSONArray("Items")

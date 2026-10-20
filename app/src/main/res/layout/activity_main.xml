@@ -414,6 +414,38 @@
         </LinearLayout>
     </FrameLayout>
 
+
+    <!-- LIVE TV: the tuner, live apps, Jellyfin channels and free channels. Same ground as All apps. -->
+    <FrameLayout
+        android:id="@+id/liveTvOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/overlay_ground"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone">
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:fadingEdgeLength="@dimen/edge_fade"
+            android:requiresFadingEdge="vertical"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/liveTvContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:orientation="vertical"
+                android:paddingStart="@dimen/page_margin"
+                android:paddingTop="@dimen/space_6"
+                android:paddingEnd="@dimen/page_margin"
+                android:paddingBottom="@dimen/space_6" />
+        </ScrollView>
+    </FrameLayout>
+
     <!-- EDIT YOUR APPS: the plain-OK alternative to hold-to-drag. Same panel as All apps. -->
     <FrameLayout
         android:id="@+id/editAppsOverlay"

@@ -61,6 +61,8 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var view: PlayerView
     private lateinit var items: List<PlayItem>
     private var imdbId: String? = null
+    /** A live channel: no resume point, no Continue watching card, and no Stremio to fall back on. */
+    private var live = false
     private var title: String = ""
 
     private lateinit var history: PlaybackStore
@@ -93,6 +95,7 @@ class PlayerActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         items = parse(intent.getStringExtra(EXTRA_ITEMS))
         imdbId = intent.getStringExtra(EXTRA_IMDB)
+        live = intent.getBooleanExtra(EXTRA_LIVE, false)
         title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
         history = PlaybackStore(this)
         continueStore = ContinueWatching(this)
@@ -152,6 +155,11 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun fallBackToStremio(reason: String) {
+        if (live) {
+            Log.w(TAG, "Live channel failed: $reason")
+            Toast.makeText(this, "This channel isn't available right now", Toast.LENGTH_LONG).show()
+            finish(); return
+        }
         Log.w(TAG, "Falling back to Stremio: $reason")
         Toast.makeText(this, "Couldn't play this automatically, opening Stremio", Toast.LENGTH_LONG).show()
         val id = imdbId
@@ -208,7 +216,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun record(failed: Boolean) {
-        if (recorded) return
+        if (recorded || live) return   // a channel's startup says nothing about the film sources the ranker learns from
         recorded = true
         closeBuffer()
         if (playingSince != 0L) { playMs += SystemClock.elapsedRealtime() - playingSince; playingSince = 0 }
@@ -229,6 +237,7 @@ class PlayerActivity : AppCompatActivity() {
 
     /** Grabs the actual video frame and files it under Continue watching, with what is needed to resume this stream. */
     private fun snapshotToContinue() {
+        if (live) return
         if (!started || ended || items.isEmpty() || player.duration <= 0) return
         val position = player.currentPosition
         if (position < 60_000) return
@@ -249,6 +258,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun saveResume() {
+        if (live) return
         val id = imdbId ?: return
         if (started && !ended && player.duration > 0) {
             val p = player.currentPosition
@@ -277,6 +287,7 @@ class PlayerActivity : AppCompatActivity() {
         private const val EXTRA_IMDB = "imdb"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_PAYLOAD = "payload"
+        private const val EXTRA_LIVE = "live"
         private const val STARTUP_TIMEOUT_MS = 25_000L
         /** A torrent has to find peers and buffer first. */
         private const val ENGINE_STARTUP_TIMEOUT_MS = 75_000L
@@ -293,6 +304,15 @@ class PlayerActivity : AppCompatActivity() {
             val payload = JSONObject().put("items", a.toString()).put("imdb", imdbId ?: "").put("title", title).toString()
             context.startActivity(Intent(context, PlayerActivity::class.java)
                 .putExtra(EXTRA_ITEMS, a.toString()).putExtra(EXTRA_IMDB, imdbId).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_PAYLOAD, payload))
+        }
+
+        /** Plays one live channel from [url]. [headers] carry any sign-in the stream needs. */
+        fun launchLive(context: Activity, title: String, url: String, headers: Map<String, String> = emptyMap()) {
+            val a = JSONArray().put(JSONObject().put("provider", "Live").put("url", url).put("headers", JSONObject(headers as Map<*, *>))
+                .put("res", Resolution.UNKNOWN.name).put("codec", VideoCodec.UNKNOWN.name).put("src", SourceType.UNKNOWN.name)
+                .put("bitrate", 0).put("label", title).put("engine", false))
+            context.startActivity(Intent(context, PlayerActivity::class.java)
+                .putExtra(EXTRA_ITEMS, a.toString()).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_LIVE, true))
         }
 
         /** Reopens a stream saved by a Continue watching card. Returns false if the payload is unusable. */

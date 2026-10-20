@@ -81,6 +81,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var headerBar: HeaderBar
     private lateinit var allAppsPanel: AllAppsPanel
+    private lateinit var liveTvPanel: com.example.tvlauncher.ui.LiveTvPanel
     private lateinit var editAppsPanel: EditAppsPanel
     private lateinit var searchPanel: SearchPanel
     private lateinit var artModeOverlay: ArtModeOverlay
@@ -238,6 +239,16 @@ class MainActivity : AppCompatActivity() {
             if (artReturnFocus?.isAttachedToWindow == true) artReturnFocus?.requestFocus() else restoreShelfFocus()
         }
         infoSheet = InfoSheet(findViewById(R.id.infoSheet))
+        liveTvPanel = com.example.tvlauncher.ui.LiveTvPanel(
+            activity = this,
+            overlay = findViewById(R.id.liveTvOverlay),
+            content = findViewById(R.id.liveTvContent),
+            jellyfin = com.example.tvlauncher.data.jellyfin.JellyfinClient(this),
+            connectSheet = com.example.tvlauncher.ui.room.JellyfinConnectSheet(this, infoSheet),
+            shelfBuilder = shelfBuilder,
+            openTuner = { handleCapability(systemActions.openLiveTv(repository.loadLaunchableApps(ownedOnly = false))) },
+            onLaunchApp = ::launchApp
+        )
         bootMark("panels")
         collection = HomeCollection(this, infoSheet, artModeOverlay, ::enterArtMode,
             { handleCapability(systemActions.openSettings()) }, { editAppsPanel.show(currentApps) },
@@ -283,6 +294,7 @@ class MainActivity : AppCompatActivity() {
                         editAppsPanel.hide()
                         renderShelf(lastShelfFocusIndex)
                     }
+                    liveTvPanel.isVisible -> closeOverlayAndRestore { liveTvPanel.hide() }
                     allAppsPanel.isVisible -> closeOverlayAndRestore { allAppsPanel.hide() }
                     organiseIndex != null -> cancelOrganise()
                     else -> {
@@ -386,6 +398,7 @@ class MainActivity : AppCompatActivity() {
         collection.close()
         backdrop.close()
         continueRow.close()
+        liveTvPanel.close()
         homeRoom.close()
         unregisterReceiver(screenReceiver)
         artModeOverlay.pause()
@@ -395,7 +408,7 @@ class MainActivity : AppCompatActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         if (artModeOverlay.isVisible) artModeOverlay.hide()
-        allAppsPanel.hide(); editAppsPanel.hide(); searchPanel.hide(); accountMenu.hide()
+        allAppsPanel.hide(); liveTvPanel.hide(); editAppsPanel.hide(); searchPanel.hide(); accountMenu.hide()
         headerBar.setSelected(NavTab.HOME)
         collection.homeReturned()
         findViewById<TextView>(R.id.navHome).requestFocus()
@@ -433,6 +446,7 @@ class MainActivity : AppCompatActivity() {
                 accountMenu.isVisible -> R.id.accountMenu
                 searchPanel.isVisible -> R.id.searchOverlay
                 editAppsPanel.isVisible -> R.id.editAppsOverlay
+                liveTvPanel.isVisible -> R.id.liveTvOverlay
                 allAppsPanel.isVisible -> R.id.allAppsOverlay
                 else -> 0
             }
@@ -458,14 +472,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun anyOverlayVisible(): Boolean =
-        allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
+        allAppsPanel.isVisible || liveTvPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || artModeOverlay.isVisible || accountMenu.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
 
     private var obscured = false
     private var pageVeil: android.view.View? = null
 
     private fun syncObscured() {
         if (!::backdrop.isInitialized) return
-        val cover = allAppsPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
+        val cover = allAppsPanel.isVisible || liveTvPanel.isVisible || editAppsPanel.isVisible || searchPanel.isVisible || whoPicker.isVisible || (infoSheet.isVisible && !infoSheet.isClosing)
         if (cover == obscured) return
         obscured = cover
         // Alpha, not visibility: the page stays focusable, so closing a sheet can hand focus straight back to it.
@@ -641,6 +655,7 @@ class MainActivity : AppCompatActivity() {
         when (tab) {
             NavTab.HOME -> {
                 if (allAppsPanel.isVisible) allAppsPanel.hide()
+                if (liveTvPanel.isVisible) liveTvPanel.hide()
                 if (editAppsPanel.isVisible) editAppsPanel.hide()
                 if (searchPanel.isVisible) searchPanel.hide()
                 headerBar.setSelected(NavTab.HOME)
@@ -653,7 +668,10 @@ class MainActivity : AppCompatActivity() {
                 allAppsPanel.setApps(currentApps)
                 allAppsPanel.show()
             }
-            NavTab.LIVE_TV -> handleCapability(systemActions.openLiveTv(repository.loadLaunchableApps(ownedOnly = false)))
+            NavTab.LIVE_TV -> {
+                headerBar.setSelected(NavTab.LIVE_TV)
+                liveTvPanel.show(repository.loadLaunchableApps(ownedOnly = false))
+            }
             NavTab.ART -> enterArtMode()
         }
     }
