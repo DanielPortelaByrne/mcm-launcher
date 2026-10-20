@@ -32,7 +32,7 @@ class RemoteImages(private val activity: Activity) {
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                         var sample = 1
                         while (maxWidth > 0 && bounds.outWidth / (sample * 2) >= maxWidth) sample *= 2
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.RGB_565 })
                     }
                 } finally { c.disconnect() }
             } catch (_: Exception) { null }

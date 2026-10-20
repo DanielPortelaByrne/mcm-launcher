@@ -448,8 +448,6 @@
                 android:layout_weight="1"
                 android:clipChildren="false"
                 android:clipToPadding="false"
-                android:fadingEdgeLength="@dimen/edge_fade"
-                android:requiresFadingEdge="vertical"
                 android:scrollbars="none">
 
                 <LinearLayout
@@ -469,34 +467,22 @@
         android:id="@+id/moviesOverlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@color/overlay_ground"
+        android:background="@color/scrim"
         android:clickable="true"
         android:focusable="true"
         android:visibility="gone">
 
-        <LinearLayout
+        <FrameLayout
             android:id="@+id/moviesBody"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical">
-
-            <LinearLayout
-                android:id="@+id/moviesTop"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:clipChildren="false"
-                android:clipToPadding="false"
-                android:orientation="horizontal" />
+            android:layout_height="match_parent">
 
             <ScrollView
                 android:id="@+id/moviesPage"
                 android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
+                android:layout_height="match_parent"
                 android:clipChildren="false"
                 android:clipToPadding="false"
-                android:fadingEdgeLength="@dimen/edge_fade"
-                android:requiresFadingEdge="vertical"
                 android:scrollbars="none">
 
                 <LinearLayout
@@ -508,13 +494,23 @@
                     android:orientation="vertical"
                     android:paddingBottom="@dimen/space_6" />
             </ScrollView>
-        </LinearLayout>
+
+            <!-- The bar floats over the page, so a featured title can run right up to the top of the screen. -->
+            <LinearLayout
+                android:id="@+id/moviesTop"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:orientation="horizontal" />
+        </FrameLayout>
 
         <FrameLayout
             android:id="@+id/movieDetail"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="@color/overlay_ground"
+            android:background="@color/scrim"
             android:clickable="true"
             android:visibility="gone" />
     </FrameLayout>

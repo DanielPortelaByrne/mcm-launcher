@@ -149,7 +149,11 @@ class MoviesPanel(
     private fun buildTop() {
         val margin = px(R.dimen.page_margin)
         top.gravity = Gravity.CENTER_VERTICAL
-        top.setPadding(margin, dp(14), margin, dp(6))
+        // The bar floats over the page. Its own fade (solid at the top, clear below) keeps the tabs readable over a
+        // featured picture or over rows scrolling beneath, and ends in the page's ground colour so there is no seam.
+        top.setPadding(margin, dp(20), margin, dp(30))
+        top.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xF21A140E.toInt(), 0xCC1A140E.toInt(), 0x001A140E)).apply { setDither(true) }
+        page.setOnScrollChangeListener { _, _, _, _, _ -> fillNear() }
         top.addView(BrandMark(activity), LinearLayout.LayoutParams(dp(40), dp(40)))
         val word = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
         word.addView(TextView(activity).apply { text = "MCM"; textSize = 11f; letterSpacing = 0.34f; setTextColor(activity.getColor(R.color.butter)); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
@@ -187,7 +191,11 @@ class MoviesPanel(
     private fun build() {
         val gen = ++generation
         searchPending?.let { ui.removeCallbacks(it) }
-        content.removeAllViews(); page.scrollTo(0, 0); heroSet = false
+        content.removeAllViews(); page.scrollTo(0, 0); heroSet = false; pending.clear()
+        // Pages that open on a featured picture run under the floating bar; the others start clear of it.
+        val underBar = when (current) { Dest.Home, Dest.Films, Dest.Series, Dest.Docs, Dest.Library -> true; else -> false }
+        content.setPadding(0, if (underBar) 0 else dp(92), 0, dp(48))
+        jellyfin.takeIf { it.isConnected }?.let { j -> worker.execute { j.library() } }   // so poster badges are ready without waiting
         when (val d = current) {
             Dest.Home -> { buildHero(); libraryRow(gen, "My library", 18); serviceTiles(); genreTiles(); shelves(Catalog.homePage(), gen) }
             Dest.Films -> { buildHero(); shelves(Catalog.filmsPage(), gen) }
@@ -202,33 +210,56 @@ class MoviesPanel(
     }
 
     private fun pageTitle(text: String) {
-        content.addView(Type.text(activity, text, Type.Style.TITLE).apply { textSize = 30f; setPadding(px(R.dimen.page_margin), dp(6), 0, dp(4)) })
+        content.addView(Type.text(activity, text, Type.Style.TITLE).apply { textSize = 30f; setPadding(px(R.dimen.page_margin), dp(4), 0, dp(6)) })
+    }
+
+    /** A row whose posters are fetched and drawn only when it nears the screen. */
+    private class Lazy(val row: Row, val load: () -> Unit)
+    private val pending = ArrayList<Lazy>()
+
+    /** Starts every waiting row that is within a screen of the visible part of the page. */
+    private fun fillNear() {
+        if (pending.isEmpty()) return
+        val limit = page.scrollY + page.height * 2
+        val due = pending.filter { (it.row.heading ?: it.row.scroller).top < limit }
+        if (due.isEmpty()) return
+        pending.removeAll(due.toSet())
+        due.forEach { it.load() }
     }
 
     /** Rows of posters, loaded three at a time and filled as each arrives; an empty one hides itself. */
     private fun shelves(specs: List<ShelfSpec>, gen: Int) {
-        val rows = specs.map { spec -> spec to row(spec.heading, null).also { it.inner.addView(note("Loading…")) } }
-        rows.forEach { (spec, row) ->
-            worker.execute {
-                val shelf = catalog.shelf(spec)
-                activity.runOnUiThread {
-                    if (gen != generation) return@runOnUiThread
-                    val entries = shelf.titles.map { entry(it) }
-                    if (entries.isEmpty()) { row.hide(); return@runOnUiThread }
-                    row.inner.removeAllViews()
-                    val related = entries.map { it.title }
-                    entries.forEachIndexed { i, e ->
-                        val ranked = spec.ranked && i < 10
-                        row.inner.addView(if (ranked) rankCard(i + 1, e, related) else card(e, related), cardParams(i, wide = ranked))
-                    }
-                    if (!heroSet) entries.firstOrNull { it.title.backdropUrl != null }?.let { setHero(it, related) }
+        // Every row gets its place on the page now, with room reserved so the page does not jump; its titles are fetched
+        // and drawn only when it is about to be seen, which is what keeps opening the page quick.
+        specs.forEach { spec ->
+            val row = row(spec.heading, null)
+            row.inner.minimumHeight = dp(ROW_HEIGHT)
+            pending += Lazy(row) { loadShelf(spec, row, gen) }
+        }
+        page.post { fillNear() }
+    }
+
+    private fun loadShelf(spec: ShelfSpec, row: Row, gen: Int) {
+        worker.execute {
+            if (jellyfin.isConnected) jellyfin.library()   // loaded once, then every row can badge what you already own
+            val entries = catalog.shelf(spec).titles.take(SHELF_LIMIT).map { entry(it) }
+            activity.runOnUiThread {
+                if (gen != generation) return@runOnUiThread
+                if (entries.isEmpty()) { row.hide(); return@runOnUiThread }
+                val related = entries.map { it.title }
+                entries.forEachIndexed { i, e ->
+                    val ranked = spec.ranked && i < 10
+                    row.inner.addView(if (ranked) rankCard(i + 1, e, related) else card(e, related), cardParams(i, wide = ranked))
                 }
+                if (!heroSet) entries.firstOrNull { it.title.backdropUrl != null }?.let { setHero(it, related) }
+                page.post { fillNear() }
             }
         }
     }
 
+    /** Never waits for the network: it only looks at the library already loaded, so it is safe to call while drawing. */
     private fun entry(t: Title): Entry =
-        Entry(t, if (jellyfin.isConnected) jellyfin.find(t.imdbId, t.tmdbId, t.kind == Kind.SHOW) else null, emptyMap())
+        Entry(t, if (jellyfin.isConnected) jellyfin.findLoaded(t.imdbId, t.tmdbId, t.kind == Kind.SHOW) else null, emptyMap())
 
     private fun libraryTitle(item: JellyfinItem): Title {
         val base = JellyfinApi.cleanBase(jellyfin.server)
@@ -327,7 +358,7 @@ class MoviesPanel(
                     holder.removeAllViews()
                     if (requests.isEmpty()) holder.addView(note("Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
                     requests.forEachIndexed { i, r ->
-                        holder.addView(downloadRow(r), LinearLayout.LayoutParams(-1, dp(100)).apply { setMargins(margin, if (i > 0) dp(8) else dp(6), margin, 0) })
+                        holder.addView(downloadRow(r), LinearLayout.LayoutParams(-1, dp(104)).apply { setMargins(margin, if (i > 0) dp(14) else dp(10), margin, 0) })
                     }
                     if (firstLoad) { firstLoad = false; holder.getChildAt(0)?.let { requestFocusRobust(overlay as ViewGroup, it) } }
                     else focused?.let { holder.getChildAt(it)?.requestFocus() }
@@ -355,15 +386,19 @@ class MoviesPanel(
         row.addView(posterBox, LinearLayout.LayoutParams(dp(56), dp(84)))
 
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        column.addView(Type.text(activity, info?.first ?: "Title ${r.tmdbId}", Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
-        column.addView(Type.text(activity, statusLine(r), Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+        val title = Type.text(activity, info?.first ?: "Title ${r.tmdbId}", Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        val status = Type.text(activity, statusLine(r), Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }
+        column.addView(title); column.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
         val colour = activity.getColor(when (r.stage) { Stage.READY -> R.color.deep_teal; Stage.DECLINED, Stage.FAILED -> R.color.walnut; else -> R.color.terracotta })
         column.addView(ProgressBar(activity, r.progress(), colour), LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
         row.addView(column, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
+        val labels = mutableListOf<TextView>(title, status)
         r.progress()?.let { p ->
-            row.addView(TextView(activity).apply { text = "${Math.round(p * 100)}%"; textSize = 24f; typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(R.color.ivory)); gravity = Gravity.END }, LinearLayout.LayoutParams(dp(76), -2))
+            val percent = TextView(activity).apply { text = "${Math.round(p * 100)}%"; textSize = 24f; typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(R.color.ivory)); gravity = Gravity.END }
+            labels += percent
+            row.addView(percent, LinearLayout.LayoutParams(dp(76), -2))
         }
-        LauncherTheme.bindPanelFocus(row, LauncherTheme.tileBackground(activity, radius), LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit -> scrollFocusIntoView(row, lit) }
+        FastFocus.bind(row, surfaces16, labels, rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
         return row
     }
 
@@ -462,14 +497,14 @@ class MoviesPanel(
     // --- Featured title ----------------------------------------------------------------------------
 
     private fun buildHero() {
-        val hero = FrameLayout(activity).apply { setBackgroundColor(0xFF1D140D.toInt()) }
+        val hero = FrameLayout(activity).apply { setBackgroundColor(0xFF1A140E.toInt()) }
         heroImage = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
         hero.addView(heroImage, FrameLayout.LayoutParams(-1, -1))
-        hero.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xF2140E09.toInt(), 0xB3140E09.toInt(), 0x00140E09)) }, FrameLayout.LayoutParams(-1, -1))
-        hero.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x00140E09, 0xFF140E09.toInt())) }, FrameLayout.LayoutParams(-1, -1))
+        hero.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xF21A140E.toInt(), 0xB31A140E.toInt(), 0x001A140E)) }, FrameLayout.LayoutParams(-1, -1))
+        hero.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x001A140E, 0xFF1A140E.toInt())) }, FrameLayout.LayoutParams(-1, -1))
         // Three painted stripes on the hero's lower edge: the room's own mid-century signature.
         hero.addView(Stripes(activity), FrameLayout.LayoutParams(dp(90), dp(8), Gravity.BOTTOM or Gravity.START).apply { leftMargin = px(R.dimen.page_margin); bottomMargin = dp(4) })
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(px(R.dimen.page_margin), 0, 0, dp(22)) }
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(px(R.dimen.page_margin), dp(96), 0, dp(30)) }
         column.addView(Type.text(activity, "FEATURED", Type.Style.EYEBROW))
         heroTitle = Type.text(activity, "", Type.Style.TITLE).apply { textSize = 34f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
         heroMeta = Type.text(activity, "", Type.Style.CAPTION).apply { maxLines = 1 }
@@ -482,7 +517,7 @@ class MoviesPanel(
         heroButtons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; visibility = View.INVISIBLE }
         column.addView(heroButtons, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(12) })
         hero.addView(column, FrameLayout.LayoutParams(-1, -1))
-        content.addView(hero, LinearLayout.LayoutParams(-1, dp(280)))
+        content.addView(hero, LinearLayout.LayoutParams(-1, dp(330)))
     }
 
     private fun setHero(e: Entry, related: List<Title>) {
@@ -508,8 +543,8 @@ class MoviesPanel(
 
         val backdrop = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
         detail.addView(backdrop, FrameLayout.LayoutParams(-1, -1))
-        detail.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFA140E09.toInt(), 0xD9140E09.toInt(), 0x66140E09)) }, FrameLayout.LayoutParams(-1, -1))
-        detail.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x00140E09, 0xF2140E09.toInt())) }, FrameLayout.LayoutParams(-1, -1))
+        detail.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFA1A140E.toInt(), 0xD91A140E.toInt(), 0x661A140E)) }, FrameLayout.LayoutParams(-1, -1))
+        detail.addView(View(activity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x001A140E, 0xF21A140E.toInt())) }, FrameLayout.LayoutParams(-1, -1))
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
             images.load(u, maxWidth = 1280) { b -> backdrop.setImageBitmap(b); backdrop.animate().alpha(1f).setDuration(300).start() }
         }
@@ -641,7 +676,7 @@ class MoviesPanel(
             typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(if (light) R.color.ink else R.color.ivory))
             setPadding(dp(14), dp(8), dp(10), dp(10))
         }, FrameLayout.LayoutParams(-1, -1))
-        LauncherTheme.bindPanelFocus(tile, MotifDrawable(colour, radius, seed), LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit -> scrollFocusIntoView(tile, lit) }
+        FastFocus.bind(tile, surfaces16, listOf(tile.getChildAt(0) as TextView), rest = MotifDrawable(colour, radius, seed)) { lit -> if (lit) reveal(tile) }
         tile.setOnClickListener { onSelect() }
         return tile
     }
@@ -653,18 +688,18 @@ class MoviesPanel(
         val margin = if (inset) px(R.dimen.page_margin) else 0
         val head = heading?.let { h ->
             LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(margin, dp(16), margin, dp(4))
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(margin, dp(30), margin, dp(10))
                 addView(View(activity).apply { setBackgroundColor(activity.getColor(R.color.terracotta)) }, LinearLayout.LayoutParams(dp(4), dp(22)).apply { marginEnd = dp(10) })
                 addView(Type.text(activity, h, Type.Style.HEADING))
                 if (caption != null) addView(Type.text(activity, caption, Type.Style.CAPTION), LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
             }
         }
         head?.let { into.addView(it) }
-        val inner = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(0, dp(6), 0, dp(6)) }
+        val inner = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(0, dp(8), 0, dp(12)) }
         val scroller = CalmHorizontalScrollView(activity).apply {
             isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false
             setPadding(margin, 0, margin, 0)
-            isHorizontalFadingEdgeEnabled = true; setFadingEdgeLength(px(R.dimen.edge_fade))
+            isHorizontalFadingEdgeEnabled = false
             addView(inner)
         }
         into.addView(scroller, LinearLayout.LayoutParams(-1, -2))
@@ -672,14 +707,11 @@ class MoviesPanel(
     }
 
     private fun cardParams(index: Int, small: Boolean = false, wide: Boolean = false) =
-        LinearLayout.LayoutParams(dp(if (wide) 196 else if (small) 108 else 138), -2).apply { if (index > 0) marginStart = dp(10) }
+        LinearLayout.LayoutParams(dp(if (wide) 196 else if (small) 108 else 138), -2).apply { if (index > 0) marginStart = dp(14) }
 
     private fun poster(e: Entry): FrameLayout {
-        val frame = FrameLayout(activity).apply {
-            clipToOutline = true; setBackgroundColor(0xFF3A2C1E.toInt())
-            outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(8).toFloat()) } }
-        }
-        frame.addView(TextView(activity).apply {
+        val frame = FrameLayout(activity).apply { background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(0xFF3A2C1E.toInt()) } }
+        if (e.title.posterUrl == null) frame.addView(TextView(activity).apply {
             text = e.title.name.filter { it.isLetterOrDigit() || it == ' ' }.trim().split(' ').filter { it.isNotEmpty() }.take(2).joinToString("") { it.first().uppercaseChar().toString() }
             gravity = Gravity.CENTER; textSize = 26f; setTextColor(0x99F3E9CF.toInt())
         }, FrameLayout.LayoutParams(-1, -1))
@@ -689,7 +721,7 @@ class MoviesPanel(
             text = "IN LIBRARY"; textSize = 9f; letterSpacing = 0.08f; setTextColor(0xFFF3E9CF.toInt()); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             setPadding(dp(6), dp(2), dp(6), dp(2)); background = GradientDrawable().apply { cornerRadius = dp(6).toFloat(); setColor(activity.getColor(R.color.terracotta)) }
         }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(5), 0, 0, dp(5)) })
-        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> image.setImageBitmap(b) } }
+        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> image.setImageDrawable(androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, b).apply { cornerRadius = dp(8).toFloat() }) } }
         return frame
     }
 
@@ -698,11 +730,11 @@ class MoviesPanel(
         val radius = dp(12).toFloat()
         val w = if (small) 100 else 130
         val h = if (small) 150 else 195
-        val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; clipChildren = false; clipToPadding = false; setPadding(dp(4), dp(4), dp(4), dp(6)); contentDescription = e.title.name }
+        val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; clipChildren = false; clipToPadding = false; setPadding(dp(4), dp(4), dp(4), dp(8)); contentDescription = e.title.name }
         tile.addView(poster(e), LinearLayout.LayoutParams(dp(w), dp(h)))
-        tile.addView(Type.text(activity, e.title.name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 12f }, LinearLayout.LayoutParams(dp(w), -2).apply { topMargin = dp(5) })
-        val rest = GradientDrawable().apply { cornerRadius = radius; setColor(0) }
-        LauncherTheme.bindPanelFocus(tile, rest, LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit -> scrollFocusIntoView(tile, lit) }
+        val name = Type.text(activity, e.title.name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 12f }
+        tile.addView(name, LinearLayout.LayoutParams(dp(w), -2).apply { topMargin = dp(6) })
+        FastFocus.bind(tile, surfaces12, listOf(name)) { lit -> if (lit) reveal(tile) }
         tile.setOnClickListener { if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }
         return tile
     }
@@ -712,15 +744,16 @@ class MoviesPanel(
         val radius = dp(12).toFloat()
         val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; clipChildren = false; clipToPadding = false; setPadding(dp(4), dp(4), dp(4), dp(6)); contentDescription = "$rank. ${e.title.name}" }
         val line = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
-        line.addView(TextView(activity).apply {
+        val numeral = TextView(activity).apply {
             text = rank.toString(); textSize = if (rank >= 10) 56f else 80f; gravity = Gravity.BOTTOM or Gravity.END; includeFontPadding = false
             typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(R.color.butter)); setPadding(0, 0, dp(4), dp(2))
-        }, LinearLayout.LayoutParams(dp(if (rank >= 10) 78 else 58), dp(195)))
+        }
+        line.addView(numeral, LinearLayout.LayoutParams(dp(if (rank >= 10) 78 else 58), dp(195)))
         line.addView(poster(e), LinearLayout.LayoutParams(dp(130), dp(195)))
         tile.addView(line, LinearLayout.LayoutParams(-2, -2))
-        tile.addView(Type.text(activity, e.title.name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 12f }, LinearLayout.LayoutParams(dp(130), -2).apply { topMargin = dp(5); gravity = Gravity.END })
-        val rest = GradientDrawable().apply { cornerRadius = radius; setColor(0) }
-        LauncherTheme.bindPanelFocus(tile, rest, LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit -> scrollFocusIntoView(tile, lit) }
+        val name = Type.text(activity, e.title.name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 12f }
+        tile.addView(name, LinearLayout.LayoutParams(dp(130), -2).apply { topMargin = dp(6); gravity = Gravity.END })
+        FastFocus.bind(tile, surfaces12, listOf(numeral, name)) { lit -> if (lit) reveal(tile) }
         tile.setOnClickListener { openDetail(e, related) }
         return tile
     }
@@ -728,9 +761,10 @@ class MoviesPanel(
     private fun actionCard(title: String, subtitle: String, onSelect: () -> Unit): View {
         val radius = dp(14).toFloat()
         val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), dp(10), dp(18), dp(10)) }
-        tile.addView(Type.text(activity, title, Type.Style.BODY))
-        tile.addView(Type.text(activity, subtitle, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
-        LauncherTheme.bindPanelFocus(tile, LauncherTheme.tileBackground(activity, radius), LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit -> scrollFocusIntoView(tile, lit) }
+        val head = Type.text(activity, title, Type.Style.BODY)
+        val sub = Type.text(activity, subtitle, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        tile.addView(head); tile.addView(sub)
+        FastFocus.bind(tile, surfaces12, listOf(head, sub), rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(tile) }
         tile.setOnClickListener { onSelect() }
         tile.layoutParams = LinearLayout.LayoutParams(dp(360), dp(64))
         return tile
@@ -752,8 +786,19 @@ class MoviesPanel(
 
     private fun note(text: String) = Type.text(activity, text, Type.Style.CAPTION).apply { setPadding(dp(4), dp(10), 0, dp(10)) }
 
+    private val surfaces12 by lazy { FastFocus.Surfaces(activity, dp(12).toFloat()) }
+    private val surfaces16 by lazy { FastFocus.Surfaces(activity, dp(16).toFloat()) }
+
+    /** Glides the page and the row to the focused card, the same way for every card. */
+    private fun reveal(view: View) = FastFocus.reveal(view, if (detailOpen) null else page, dp(104), dp(56), dp(44))
+
     private fun dp(v: Int) = Math.round(v * activity.resources.displayMetrics.density)
     private fun px(res: Int) = activity.resources.getDimensionPixelSize(res)
+
+    private companion object {
+        const val ROW_HEIGHT = 262   // dp reserved for a poster row that has not loaded yet, so the page does not jump
+        const val SHELF_LIMIT = 16
+    }
 
     // --- The page's own marks ----------------------------------------------------------------------
 

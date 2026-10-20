@@ -116,7 +116,7 @@ class LiveTvPanel(
         val chips = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false; setPadding(dp(8), dp(6), dp(8), dp(6)) }
         val scroller = CalmHorizontalScrollView(activity).apply {
             isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false
-            isHorizontalFadingEdgeEnabled = true; setFadingEdgeLength(px(R.dimen.edge_fade))
+            isHorizontalFadingEdgeEnabled = false
             addView(chips)
         }
         bar.addView(scroller, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = px(R.dimen.space_4) })
@@ -128,7 +128,7 @@ class LiveTvPanel(
             .sortedBy { it.label.lowercase() }
             .forEach { app -> chips.addView(chip(app.label, app.icon) { onLaunchApp(app) }, chipParams(chips)) }
 
-        val detail = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; minimumHeight = dp(98); setPadding(0, dp(4), 0, dp(6)) }
+        val detail = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; minimumHeight = dp(104); setPadding(0, dp(10), 0, dp(14)) }
         detailEyebrow = Type.text(activity, "", Type.Style.EYEBROW)
         detailTitle = Type.text(activity, "", Type.Style.HEADING).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
         detailMeta = Type.text(activity, "", Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
@@ -195,12 +195,12 @@ class LiveTvPanel(
         val scroller = CalmHorizontalScrollView(activity).apply {
             // The timeline must not paint over the channel column when it is scrolled, so this one clips.
             isHorizontalScrollBarEnabled = false; clipChildren = true; clipToPadding = true
-            isHorizontalFadingEdgeEnabled = true; setFadingEdgeLength(px(R.dimen.edge_fade))
+            isHorizontalFadingEdgeEnabled = false
             addView(frame)
         }
         val body = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
         body.addView(left, LinearLayout.LayoutParams(dp(CHANNEL_W), -2))
-        body.addView(scroller, LinearLayout.LayoutParams(0, -2, 1f))
+        body.addView(scroller, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(10) })
         content.addView(body, LinearLayout.LayoutParams(-1, -2))
 
         first?.let { requestFocusRobust(overlay as ViewGroup, it) }
@@ -224,7 +224,8 @@ class LiveTvPanel(
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true
             setPadding(dp(8), 0, dp(8), 0); contentDescription = row.name
         }
-        if (row.number != null) cell.addView(Type.text(activity, row.number, Type.Style.CAPTION).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(22), -2))
+        val labels = ArrayList<TextView>()
+        if (row.number != null) cell.addView(Type.text(activity, row.number, Type.Style.CAPTION).apply { gravity = Gravity.CENTER; labels += this }, LinearLayout.LayoutParams(dp(22), -2))
         val logo = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setPadding(dp(3), dp(3), dp(3), dp(3)) }
         val initials = TextView(activity).apply {
             text = row.name.filter { it.isLetterOrDigit() || it == ' ' }.trim().split(' ').filter { it.isNotEmpty() }.take(2).joinToString("") { it.first().uppercaseChar().toString() }
@@ -237,9 +238,9 @@ class LiveTvPanel(
             addView(initials, FrameLayout.LayoutParams(-1, -1)); addView(logo, FrameLayout.LayoutParams(-1, -1))
         }
         cell.addView(logoBox, LinearLayout.LayoutParams(dp(46), dp(34)).apply { marginStart = dp(4) })
-        cell.addView(Type.text(activity, row.name, Type.Style.BODY).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(8) })
-        LauncherTheme.bindPanelFocus(cell, LauncherTheme.tileBackground(activity, radius), LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit ->
-            scrollFocusIntoView(cell, lit)
+        cell.addView(Type.text(activity, row.name, Type.Style.BODY).apply { maxLines = 2; ellipsize = TextUtils.TruncateAt.END; textSize = 13f; labels += this }, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(8) })
+        FastFocus.bind(cell, surfaces10, labels, rest = LauncherTheme.tileBackground(activity, radius)) { lit ->
+            if (lit) reveal(cell)
             if (lit) describeRow(row, row.programmes.firstOrNull { GuideMath.isOnNow(it.startMs, it.endMs, now) }, now)
         }
         cell.setOnClickListener { row.play() }
@@ -271,20 +272,18 @@ class LiveTvPanel(
         val tile = FrameLayout(activity).apply {
             isFocusable = true; isClickable = true; contentDescription = title
             if (onNow) tag = ON_NOW
-            clipToOutline = true
-            outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, radius) } }
         }
         val text = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), dp(4), dp(8), dp(6)) }
-        text.addView(Type.text(activity, if (place.cutOnLeft) "‹ $title" else title, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 14f })
-        if (wide) text.addView(Type.text(activity, sub, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 12f })
+        val labels = ArrayList<TextView>()
+        text.addView(Type.text(activity, if (place.cutOnLeft) "‹ $title" else title, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 14f; labels += this })
+        if (wide) text.addView(Type.text(activity, sub, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 12f; labels += this })
         tile.addView(text, FrameLayout.LayoutParams(-1, -1))
         if (onNow && progress > 0f) tile.addView(View(activity).apply { setBackgroundColor(activity.getColor(R.color.terracotta)) },
-            FrameLayout.LayoutParams(Math.max(dp(2), (place.widthDp * progress).toInt()), dp(3), Gravity.BOTTOM or Gravity.START))
+            FrameLayout.LayoutParams(Math.max(dp(2), ((place.widthDp - dp(20)) * progress).toInt()), dp(3), Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(10); bottomMargin = dp(5) })
         // What is on now is a shade lighter than the rest, so the present reads at a glance down the column.
         val rest = if (onNow) LauncherTheme.surface(activity, R.color.surface_selected, R.dimen.radius_small) else LauncherTheme.tileBackground(activity, radius)
-        LauncherTheme.bindPanelFocus(tile, rest, LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit ->
-            // Reveal only the start of the block: a long film must not drag the view to its far end.
-            if (lit) tile.post { tile.requestRectangleOnScreen(android.graphics.Rect(0, 0, minOf(tile.width, dp(150)), tile.height), false) }
+        FastFocus.bind(tile, surfaces10, labels, rest = rest) { lit ->
+            if (lit) reveal(tile)   // a long film is brought in by its start, never dragged to its far end
             if (lit) describeRow(row, p, now)
         }
         tile.setOnClickListener { row.play() }
@@ -321,8 +320,9 @@ class LiveTvPanel(
         val radius = dp(18).toFloat()
         val chip = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(6), 0, dp(14), 0); contentDescription = label }
         chip.addView(ImageView(activity).apply { setImageDrawable(icon) }, LinearLayout.LayoutParams(dp(26), dp(26)))
-        chip.addView(Type.text(activity, label, Type.Style.BODY).apply { maxLines = 1; textSize = 13f }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
-        LauncherTheme.bindPanelFocus(chip, LauncherTheme.tileBackground(activity, radius), LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit -> scrollFocusIntoView(chip, lit) }
+        val text = Type.text(activity, label, Type.Style.BODY).apply { maxLines = 1; textSize = 13f }
+        chip.addView(text, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        FastFocus.bind(chip, surfaces18, listOf(text), rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(chip) }
         chip.setOnClickListener { onSelect() }
         return chip
     }
@@ -332,9 +332,10 @@ class LiveTvPanel(
     private fun actionCard(title: String, subtitle: String, onSelect: () -> Unit): View {
         val radius = dp(14).toFloat()
         val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), dp(8), dp(18), dp(8)) }
-        tile.addView(Type.text(activity, title, Type.Style.BODY))
-        tile.addView(Type.text(activity, subtitle, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
-        LauncherTheme.bindPanelFocus(tile, LauncherTheme.tileBackground(activity, radius), LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit -> scrollFocusIntoView(tile, lit) }
+        val head = Type.text(activity, title, Type.Style.BODY)
+        val sub = Type.text(activity, subtitle, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        tile.addView(head); tile.addView(sub)
+        FastFocus.bind(tile, surfaces14, listOf(head, sub), rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(tile) }
         tile.setOnClickListener { onSelect() }
         return tile
     }
@@ -354,6 +355,13 @@ class LiveTvPanel(
         }
     }
 
+    private val surfaces10 by lazy { FastFocus.Surfaces(activity, dp(10).toFloat()) }
+    private val surfaces14 by lazy { FastFocus.Surfaces(activity, dp(14).toFloat()) }
+    private val surfaces18 by lazy { FastFocus.Surfaces(activity, dp(18).toFloat()) }
+
+    /** Glides the guide to the focused cell or block, the same way every time. */
+    private fun reveal(view: View) = FastFocus.reveal(view, content.parent as? android.widget.ScrollView, dp(6), dp(40), dp(CHANNEL_W + 24))
+
     private fun density() = activity.resources.displayMetrics.density
     private fun dp(v: Int) = Math.round(v * density())
     private fun dpf(v: Float) = Math.round(v * density())
@@ -363,11 +371,11 @@ class LiveTvPanel(
         private const val WINDOW_MIN = 360            // the guide shows six hours
         private const val DP_PER_MIN = 10f            // so half an hour is 300dp
         private const val CHANNEL_W = 190
-        private const val ROW_H = 54
-        private const val GAP = 6
-        private const val RULER_H = 28
-        private const val SECTION_H = 30
-        private const val MAX_FREE = 40
+        private const val ROW_H = 60
+        private const val GAP = 8
+        private const val RULER_H = 34
+        private const val SECTION_H = 40
+        private const val MAX_FREE = 24
         private const val LIVE_BLOCK_MIN = 75
         private const val ON_NOW = "on_now"
 

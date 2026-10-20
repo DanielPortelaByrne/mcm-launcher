@@ -510,6 +510,8 @@ class MainActivity : AppCompatActivity() {
             .setDuration(ms).setInterpolator(com.example.tvlauncher.design.Motion.SETTLE).start()
         // The edge veil is painting laid over the page, so it goes wherever the page goes.
         pageVeil?.animate()?.alpha(if (cover) 0f else 1f)?.setDuration(ms)?.setInterpolator(com.example.tvlauncher.design.Motion.SETTLE)?.start()
+        // A page that covers the screen outright (Movies) makes the painting behind it invisible, so stop drawing and blurring it.
+        findViewById<android.view.View>(R.id.homePainting).visibility = if (moviesPanel.isVisible) android.view.View.INVISIBLE else android.view.View.VISIBLE
         backdrop.setBlurred(cover)
     }
 

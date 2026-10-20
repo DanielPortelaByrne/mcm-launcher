@@ -84,7 +84,7 @@ class JellyfinClient(context: Context) {
     @Volatile private var libraryAt = 0L
 
     /** Every film and series, newest first, kept for a few minutes so flicking through picks costs one request, not many. */
-    fun library(force: Boolean = false): List<JellyfinItem> {
+    @Synchronized fun library(force: Boolean = false): List<JellyfinItem> {   // one fetch at a time: several rows ask at once
         val uid = userId ?: return emptyList()
         if (!force && libraryAt != 0L && System.currentTimeMillis() - libraryAt < LIBRARY_TTL_MS) return library
         val body = request("GET", JellyfinApi.libraryUrl(JellyfinApi.cleanBase(server), uid)) ?: return library
@@ -94,8 +94,11 @@ class JellyfinClient(context: Context) {
 
     fun movies(force: Boolean = false): List<JellyfinItem> = library(force).filter { it.isMovie }
 
-    /** The library copy of a title from elsewhere, matched on IMDb or TMDB id. */
+    /** The library copy of a title from elsewhere, matched on IMDb or TMDB id. May fetch the library, so not for the main thread. */
     fun find(imdbId: String?, tmdbId: String?, series: Boolean): JellyfinItem? = JellyfinApi.findByIds(library(), imdbId, tmdbId, series)
+
+    /** Like [find] but only ever looks at what is already loaded, so it is safe to call while drawing. */
+    fun findLoaded(imdbId: String?, tmdbId: String?, series: Boolean): JellyfinItem? = JellyfinApi.findByIds(library, imdbId, tmdbId, series)
 
     /** The episode to play for a series: the next unwatched one, else the first. Null when it has none or Jellyfin is unreachable. */
     fun episodeToPlay(seriesId: String): JellyfinItem? {
