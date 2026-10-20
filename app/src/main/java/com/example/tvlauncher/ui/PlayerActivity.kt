@@ -65,10 +65,8 @@ class PlayerActivity : AppCompatActivity() {
     private var live = false
     /** Set for a Jellyfin title: playback is reported to the server, so "continue watching" and watched marks follow the viewer. */
     private var jf: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null
-    private val sessionId = java.util.UUID.randomUUID().toString().replace("-", "")
+    private val jfSession = com.example.tvlauncher.data.jellyfin.JellyfinPlaybackSession()
     private val reporter by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
-    private var jfStarted = false
-    private var jfStopped = false
     private var title: String = ""
 
     private lateinit var history: PlaybackStore
@@ -123,7 +121,18 @@ class PlayerActivity : AppCompatActivity() {
         setContentView(FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()); addView(view, -1, -1) })
         player.addListener(listener)
         handler.postDelayed(saveTick, 15_000)
-        startAttempt(0)
+        val report = jf
+        if (report == null) startAttempt(0) else {
+            val client = com.example.tvlauncher.data.jellyfin.JellyfinClient(this)
+            reporter.execute {
+                val fresh = client.item(report.itemId)
+                handler.post {
+                    if (isFinishing || isDestroyed) return@post
+                    jf = fresh?.let { report.copy(sourceId = it.sourceId, startMs = if (it.played) 0L else it.resumeMs) } ?: report
+                    startAttempt(0)
+                }
+            }
+        }
     }
 
     // --- attempts ---------------------------------------------------------------------------------
@@ -140,7 +149,7 @@ class PlayerActivity : AppCompatActivity() {
             .setConnectTimeoutMs(if (item.viaEngine) 60_000 else 15_000).setReadTimeoutMs(if (item.viaEngine) 60_000 else 15_000)
         // A Jellyfin title picks up where the server says the viewer left off; anything else, where this TV last did.
         val serverStart = jf?.startMs
-        val resume = if (serverStart != null) serverStart.takeIf { it > 60_000 } ?: 0L else resumePrefs.getLong(imdbId ?: "", 0L).takeIf { it > 60_000 } ?: 0L
+        val resume = com.example.tvlauncher.data.jellyfin.JellyfinApi.resumePosition(serverStart, resumePrefs.getLong(imdbId ?: "", 0L))
         player.setMediaSource(DefaultMediaSourceFactory(this).setDataSourceFactory(http).createMediaSource(MediaItem.fromUri(Uri.parse(item.url))), resume)
         prepareAt = SystemClock.elapsedRealtime()
         player.prepare()
@@ -188,7 +197,7 @@ class PlayerActivity : AppCompatActivity() {
             startupMs = SystemClock.elapsedRealtime() - prepareAt
             handler.removeCallbacks(startupTimeout)
             Log.i(TAG, "First frame after ${startupMs} ms")
-            if (!jfStarted) { jfStarted = true; reportToJellyfin("Playing") }
+            reportToJellyfin("Playing")
         }
 
         override fun onPlaybackStateChanged(state: Int) {
@@ -208,7 +217,10 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            if (started && !ended) reportToJellyfin("Progress", paused = !isPlaying)
+            if (started && !ended) {
+                if (isPlaying && jfSession.stopped) reportToJellyfin("Playing")
+                reportToJellyfin("Progress")
+            }
             val now = SystemClock.elapsedRealtime()
             if (isPlaying) playingSince = now else if (playingSince != 0L) { playMs += now - playingSince; playingSince = 0 }
         }
@@ -292,13 +304,13 @@ class PlayerActivity : AppCompatActivity() {
      * Tells Jellyfin where playback is. "Playing" opens the session, "Progress" updates it (also on pause), and
      * "Stopped" closes it with the final position, at which point Jellyfin counts a title as watched if it is near the end.
      */
-    private fun reportToJellyfin(kind: String, paused: Boolean = false, atEnd: Boolean = false) {
+    private fun reportToJellyfin(kind: String, pausedOverride: Boolean? = null, atEnd: Boolean = false) {
         val r = jf ?: return
         if (!::player.isInitialized) return
-        if (kind != "Playing" && (!jfStarted || jfStopped)) return
-        if (kind == "Stopped") jfStopped = true
+        val paused = pausedOverride ?: !player.playWhenReady   // read only once the player exists
+        if (!jfSession.accept(kind)) return
         val position = if (atEnd && player.duration > 0) player.duration else player.currentPosition
-        val body = com.example.tvlauncher.data.jellyfin.JellyfinApi.playbackBody(r.itemId, r.sourceId, position, paused, sessionId)
+        val body = com.example.tvlauncher.data.jellyfin.JellyfinApi.playbackBody(r.itemId, r.sourceId, position, paused, jfSession.id)
         val url = com.example.tvlauncher.data.jellyfin.JellyfinApi.reportUrl(r.base, kind)
         val headers = items.getOrNull(index)?.headers.orEmpty()
         reporter.execute {
@@ -307,14 +319,19 @@ class PlayerActivity : AppCompatActivity() {
                 c.requestMethod = "POST"; c.connectTimeout = 5000; c.readTimeout = 5000; c.doOutput = true
                 c.setRequestProperty("Content-Type", "application/json")
                 headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
-                try { c.outputStream.use { it.write(body.toByteArray()) }; c.responseCode } finally { c.disconnect() }
-            } catch (_: Exception) { /* progress is best-effort: the next tick sends the position again */ }
+                try {
+                    c.outputStream.use { it.write(body.toByteArray()) }
+                    val code = c.responseCode
+                    if (code !in 200..299) Log.w("Jellyfin", "Playback $kind report failed (HTTP $code)")
+                } finally { c.disconnect() }
+            } catch (e: Exception) { Log.w("Jellyfin", "Playback $kind report failed: ${e.javaClass.simpleName}") }
         }
     }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         if (::player.isInitialized) { record(failed = false); player.release() }
+        reporter.shutdown() // let the final stop report finish, then release its thread
         super.onDestroy()
     }
 

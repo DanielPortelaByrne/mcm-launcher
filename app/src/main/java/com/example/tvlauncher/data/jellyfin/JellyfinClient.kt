@@ -100,6 +100,13 @@ class JellyfinClient(context: Context) {
     /** Like [find] but only ever looks at what is already loaded, so it is safe to call while drawing. */
     fun findLoaded(imdbId: String?, tmdbId: String?, series: Boolean): JellyfinItem? = JellyfinApi.findByIds(library, imdbId, tmdbId, series)
 
+    /** Current server resume state for a single item; call off the main thread. */
+    fun item(itemId: String): JellyfinItem? {
+        val uid = userId ?: return null
+        val body = request("GET", JellyfinApi.itemUrl(JellyfinApi.cleanBase(server), uid, itemId)) ?: return null
+        return try { JellyfinApi.parseItem(JSONObject(body)) } catch (_: Exception) { null }
+    }
+
     /** The episode to play for a series: the next unwatched one, else the first. Null when it has none or Jellyfin is unreachable. */
     fun episodeToPlay(seriesId: String): JellyfinItem? {
         val uid = userId ?: return null

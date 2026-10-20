@@ -99,6 +99,14 @@ object JellyfinApi {
     fun episodesUrl(base: String, userId: String, seriesId: String): String =
         "$base/Shows/${enc(seriesId)}/Episodes?userId=${enc(userId)}&Fields=Overview"
 
+    /** Fetch fresh user data before playing, including from an old Continue watching card. */
+    fun itemUrl(base: String, userId: String, itemId: String): String =
+        "$base/Users/${enc(userId)}/Items/${enc(itemId)}?Fields=MediaSources"
+
+    /** A server resume position, including zero or a short position, takes precedence over local history. */
+    fun resumePosition(serverMs: Long?, localMs: Long): Long =
+        serverMs?.coerceAtLeast(0L) ?: localMs.takeIf { it > 60_000L } ?: 0L
+
     /** Where to tell Jellyfin that playback started, moved on, or stopped: kind is "Playing", "Progress" or "Stopped". */
     fun reportUrl(base: String, kind: String): String = if (kind == "Playing") "$base/Sessions/Playing" else "$base/Sessions/Playing/$kind"
 

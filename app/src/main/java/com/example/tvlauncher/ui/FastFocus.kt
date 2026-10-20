@@ -47,13 +47,18 @@ object FastFocus {
     fun reveal(view: View, page: ScrollView?, topInset: Int, bottomInset: Int, sideMargin: Int) {
         view.post {
             if (!view.isAttachedToWindow) return@post
+            // Title details have their own ScrollView, beside the main page. Resolve actual ancestors:
+            // offsetDescendantRectToMyCoords throws if the supplied page does not contain this view.
+            var horizontal: HorizontalScrollView? = null
+            var vertical: ScrollView? = null
             var p = view.parent
             while (p != null) {
-                if (p is HorizontalScrollView) { glideSideways(view, p, sideMargin); break }
-                if (p === page) break
+                if (horizontal == null && p is HorizontalScrollView) horizontal = p
+                if (vertical == null && p is ScrollView) vertical = p
                 p = p.parent
             }
-            page?.let { glideDown(view, it, topInset, bottomInset) }
+            horizontal?.let { glideSideways(view, it, sideMargin) }
+            vertical?.let { glideDown(view, it, if (it === page) topInset else 0, bottomInset) }
         }
     }
 
