@@ -40,7 +40,10 @@ import com.example.tvlauncher.data.movies.CatalogRepository
 import com.example.tvlauncher.data.movies.Genre
 import com.example.tvlauncher.data.movies.Kind
 import com.example.tvlauncher.data.movies.ByteSize
+import com.example.tvlauncher.data.movies.EpisodeOutcome
+import com.example.tvlauncher.data.movies.EpisodeState
 import com.example.tvlauncher.data.movies.RequestOutcome
+import com.example.tvlauncher.data.movies.SonarrClient
 import com.example.tvlauncher.data.movies.SeerrRequest
 import com.example.tvlauncher.data.movies.Stage
 import com.example.tvlauncher.data.movies.SeerrClient
@@ -654,6 +657,8 @@ class MoviesPanel(
     // --- Seasons and episodes ----------------------------------------------------------------------
 
     /** A season as the picker holds it: Seerr's view of it, which changes when the viewer asks for it. */
+    private val sonarr by lazy { SonarrClient(seerr) }
+
     private class SeasonState(val number: Int, val name: String, val episodeCount: Int, var availability: Availability)
 
     /**
@@ -669,15 +674,16 @@ class MoviesPanel(
         box.addView(note("Loading seasons…"))
         worker.execute {
             val owned = e.library?.let { jellyfin.episodes(it.id) }.orEmpty()
+            val states = (if (tmdb != null && seerr.isSignedIn) sonarr.episodeStates(tmdb) else emptyMap()).toMutableMap()
             val fromSeerr = if (tmdb != null && seerr.isSignedIn) seerr.seasons(tmdb) else emptyList()
             val seasons = fromSeerr.map { SeasonState(it.number, it.name, it.episodeCount, it.availability) }.ifEmpty {
                 owned.mapNotNull { it.season }.filter { it > 0 }.distinct().sorted().map { n -> SeasonState(n, "Season $n", owned.count { it.season == n }, Availability.AVAILABLE) }
             }
-            activity.runOnUiThread { if (detailOpen) drawSeasons(box, e, tmdb, seasons, owned) }
+            activity.runOnUiThread { if (detailOpen) drawSeasons(box, e, tmdb, seasons, owned, states) }
         }
     }
 
-    private fun drawSeasons(box: LinearLayout, e: Entry, tmdb: Long?, seasons: List<SeasonState>, owned: List<JellyfinItem>) {
+    private fun drawSeasons(box: LinearLayout, e: Entry, tmdb: Long?, seasons: List<SeasonState>, owned: List<JellyfinItem>, states: MutableMap<Pair<Int, Int>, EpisodeState>) {
         box.removeAllViews()
         if (seasons.isEmpty()) {
             box.addView(note(if (!seerr.isSignedIn && e.library == null) "Press Queue download to sign in, then the seasons and episodes will be listed here." else "No season information available."))
@@ -739,7 +745,7 @@ class MoviesPanel(
                     if (rows.isEmpty()) { episodes.addView(note("No episode list available for this season.")); return@runOnUiThread }
                     rows.sortedBy { it.first }.forEachIndexed { i, (number, name, airDate) ->
                         val mine = ownedHere.firstOrNull { it.episode == number }
-                        episodes.addView(episodeRow(e, s, number, name, airDate, mine), LinearLayout.LayoutParams(-1, dp(52)).apply { if (i > 0) topMargin = dp(8) })
+                        episodes.addView(episodeRow(e, s, number, name, airDate, mine, tmdb, states), LinearLayout.LayoutParams(-1, dp(52)).apply { if (i > 0) topMargin = dp(8) })
                     }
                 }
             }
@@ -758,27 +764,56 @@ class MoviesPanel(
         showSeason(seasons.first())
     }
 
-    /** One episode: its number and name, when it aired, and whether it can be played here. */
-    private fun episodeRow(e: Entry, s: SeasonState, number: Int, name: String, airDate: String?, mine: JellyfinItem?): View {
+    /** One episode: its number and name, when it aired, and what can be done with it. A missing one is requested on its own. */
+    private fun episodeRow(e: Entry, s: SeasonState, number: Int, name: String, airDate: String?, mine: JellyfinItem?, tmdb: Long?, states: MutableMap<Pair<Int, Int>, EpisodeState>): View {
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(16), 0, dp(16), 0) }
         val num = Type.text(activity, "E$number", Type.Style.CAPTION).apply { gravity = Gravity.START }
         val title = Type.text(activity, name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 15f }
         val aired = Type.text(activity, airDate.orEmpty(), Type.Style.CAPTION).apply { textSize = 12f }
-        val state = Type.text(activity, when {
-            mine != null -> "▶  Play"
-            s.availability == Availability.AVAILABLE -> "In library"
-            s.availability == Availability.REQUESTED || s.availability == Availability.PROCESSING -> "Requested"
-            s.availability == Availability.DOWNLOADING -> "Downloading"
-            else -> "Not downloaded"
-        }, Type.Style.CAPTION).apply { gravity = Gravity.END; textSize = 13f }
+        val state = Type.text(activity, "", Type.Style.CAPTION).apply { gravity = Gravity.END; textSize = 13f }
+        // What Sonarr says about this very episode wins; otherwise what Seerr says about its season.
+        fun label(): String {
+            val own = states[s.number to number]
+            return when {
+                mine != null -> "▶  Play"
+                own == EpisodeState.DOWNLOADED -> "Downloaded"
+                own == EpisodeState.REQUESTED -> "Requested"
+                s.availability == Availability.AVAILABLE -> "In library"
+                s.availability == Availability.REQUESTED || s.availability == Availability.PROCESSING -> "Requested"
+                s.availability == Availability.DOWNLOADING -> "Downloading"
+                tmdb != null -> "Request"
+                else -> "Not downloaded"
+            }
+        }
+        state.text = label()
         row.addView(num, LinearLayout.LayoutParams(dp(44), -2))
         row.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
         row.addView(aired, LinearLayout.LayoutParams(dp(110), -2))
         row.addView(state, LinearLayout.LayoutParams(dp(130), -2))
         FastFocus.bind(row, surfaces12, listOf(num, title, aired, state), rest = LauncherTheme.tileBackground(activity, dp(12).toFloat()))
         row.setOnClickListener {
-            if (mine != null) JellyfinPlayback.play(activity, jellyfin, mine, "${e.title.name} · S${s.number} E$number", "jf:${mine.id}")
-            else Toast.makeText(activity, "Seerr requests whole seasons, not single episodes. Use “Request ${s.name}” above.", Toast.LENGTH_LONG).show()
+            val label = label()
+            when {
+                mine != null -> JellyfinPlayback.play(activity, jellyfin, mine, "${e.title.name} · S${s.number} E$number", "jf:${mine.id}")
+                label != "Request" || tmdb == null -> Unit
+                !seerr.isSignedIn -> seerrSheet.show(seerr, jellyfin) { }
+                else -> {
+                    state.text = "Requesting…"; row.isClickable = false
+                    worker.execute {
+                        val outcome = sonarr.requestEpisodes(tmdb, s.number, listOf(number))
+                        activity.runOnUiThread {
+                            row.isClickable = true
+                            when (outcome) {
+                                EpisodeOutcome.QUEUED, EpisodeOutcome.ALREADY -> { states[s.number to number] = EpisodeState.REQUESTED; Toast.makeText(activity, "${e.title.name} S${s.number} E$number is queued", Toast.LENGTH_LONG).show() }
+                                EpisodeOutcome.NOT_CONFIGURED -> Toast.makeText(activity, "Sonarr's details aren't available, so only whole seasons can be requested here", Toast.LENGTH_LONG).show()
+                                EpisodeOutcome.NOT_FOUND -> Toast.makeText(activity, "Sonarr couldn't find that episode yet. Try again in a moment", Toast.LENGTH_LONG).show()
+                                EpisodeOutcome.FAILED -> Toast.makeText(activity, "Couldn't queue that episode right now", Toast.LENGTH_LONG).show()
+                            }
+                            state.text = label()
+                        }
+                    }
+                }
+            }
         }
         return row
     }

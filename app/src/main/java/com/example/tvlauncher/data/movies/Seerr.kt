@@ -117,6 +117,12 @@ class SeerrClient(context: Context) {
     /** Free space where films are stored, in bytes, or null. */
     fun freeSpaceBytes(): Long? = get("/api/v1/service/radarr/0")?.let { SeerrRequests.parseFreeSpace(it) }
 
+    /** Seerr's Sonarr settings (address, key, profile, folder). Needs an admin sign-in. */
+    fun sonarrSettings(): String? = get("/api/v1/settings/sonarr")
+
+    /** The machine Seerr runs on, as the TV reaches it. */
+    val host: String get() = try { URL(base).host } catch (_: Exception) { "192.168.1.233" }
+
     private fun get(path: String): String? = try {
         val c = open("GET", base + path)
         try { if (c.responseCode == 200) c.inputStream.bufferedReader().use { it.readText() } else { if (c.responseCode == 401) signOut(); null } } finally { c.disconnect() }
