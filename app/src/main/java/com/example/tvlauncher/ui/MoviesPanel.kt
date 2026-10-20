@@ -429,6 +429,7 @@ class MoviesPanel(
                         }
                         Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
                         if (removed && detailOpen) { closeDetail(restoreFocus = true); build() }
+                        loadStorage()
                     }
                 }
             },
