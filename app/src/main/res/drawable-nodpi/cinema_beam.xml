@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A projector beam crossing a dark house, with the seats in silhouette along the foot of the picture. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="1920dp" android:height="1080dp"
+    android:viewportWidth="1920" android:viewportHeight="1080">
+    <path android:pathData="M0,0h1920v1080h-1920z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="0" android:endY="1080">
+                <item android:color="#FF0E1A19" android:offset="0"/>
+                <item android:color="#FF1A1510" android:offset="0.7"/>
+                <item android:color="#FF0A0806" android:offset="1"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- the beam: from the booth at top left, fanning out across the room -->
+    <path android:pathData="M-40,0 L300,0 L1960,1000 L1960,1080 L1400,1080 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="1920" android:endY="1000">
+                <item android:color="#33F3E9CF" android:offset="0"/>
+                <item android:color="#14F3E9CF" android:offset="0.6"/>
+                <item android:color="#00F3E9CF" android:offset="1"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- the screen, a lit rectangle on the far wall -->
+    <path android:fillColor="#22DDBB57" android:pathData="M1180,260 L1780,260 L1780,640 L1180,640 Z"/>
+    <path android:fillColor="#FFAF5938" android:pathData="M0,0 h300 v20 h-300 z" android:fillAlpha="0.0"/>
+    <!-- seat rows in silhouette: each row a little larger as it comes forward -->
+    <path android:fillColor="#FF0A0604" android:pathData="M0,880 C60,860 120,860 180,880 L180,920 L0,920 Z M220,876 C280,856 340,856 400,876 L400,914 L220,914 Z M440,872 C500,852 560,852 620,872 L620,910 L440,910 Z M660,868 C720,848 780,848 840,868 L840,906 L660,906 Z M880,864 C940,844 1000,844 1060,864 L1060,902 L880,902 Z M1100,864 C1160,844 1220,844 1280,864 L1280,902 L1100,902 Z M1320,868 C1380,848 1440,848 1500,868 L1500,906 L1320,906 Z M1540,872 C1600,852 1660,852 1720,872 L1720,910 L1540,910 Z M1760,876 C1820,856 1880,856 1920,872 L1920,914 L1760,914 Z"/>
+    <path android:fillColor="#FF080503" android:pathData="M0,960 C80,942 160,942 240,960 L240,1080 L0,1080 Z M300,956 C380,938 460,938 540,956 L540,1080 L300,1080 Z M600,952 C680,934 760,934 840,952 L840,1080 L600,1080 Z M900,950 C980,932 1060,932 1140,950 L1140,1080 L900,1080 Z M1200,952 C1280,934 1360,934 1440,952 L1440,1080 L1200,1080 Z M1500,956 C1580,938 1660,938 1740,956 L1740,1080 L1500,1080 Z M1800,960 C1860,944 1900,944 1920,952 L1920,1080 L1800,1080 Z"/>
+</vector>

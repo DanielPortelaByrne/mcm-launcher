@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A proscenium arch framing a small mid-century stage: the room's sun and stripes, in cinema form. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="1920dp" android:height="1080dp"
+    android:viewportWidth="1920" android:viewportHeight="1080">
+    <path android:pathData="M0,0h1920v1080h-1920z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="1920" android:endY="1080">
+                <item android:color="#FF1C150F" android:offset="0"/>
+                <item android:color="#FF0F3A36" android:offset="0.55"/>
+                <item android:color="#FF1A140E" android:offset="1"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- the stage behind the arch -->
+    <path android:pathData="M560,1080 L560,380 C560,160 760,80 960,80 C1160,80 1360,160 1360,380 L1360,1080 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="960" android:centerY="560" android:gradientRadius="520">
+                <item android:color="#FF3B2C1F" android:offset="0"/>
+                <item android:color="#FF120C07" android:offset="1"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- the sun over the stage -->
+    <path android:fillColor="#CCDDBB57" android:pathData="M960,380 m-150,0 a150,150 0 1,0 300,0 a150,150 0 1,0 -300,0"/>
+    <!-- three bands across the stage, as on the brand mark -->
+    <path android:fillColor="#FFAF5938" android:pathData="M660,760 L1260,760 L1260,800 L660,800 Z"/>
+    <path android:fillColor="#FFDDBB57" android:pathData="M660,820 L1260,820 L1260,840 L660,840 Z"/>
+    <path android:fillColor="#FF28766C" android:pathData="M660,860 L1260,860 L1260,880 L660,880 Z"/>
+    <!-- the arch itself: walnut, with a gilt inner edge -->
+    <path android:fillColor="#FF5C3C22" android:pathData="M480,1080 L480,380 C480,130 700,20 960,20 C1220,20 1440,130 1440,380 L1440,1080 L1380,1080 L1380,380 C1380,200 1200,100 960,100 C720,100 540,200 540,380 L540,1080 Z"/>
+    <path android:fillColor="#66DDBB57" android:pathData="M540,380 C540,200 720,100 960,100 C1200,100 1380,200 1380,380 L1380,392 C1380,212 1200,112 960,112 C720,112 552,212 552,392 Z"/>
+    <!-- the house lights along the foot of the arch -->
+    <path android:fillColor="#88DDBB57" android:pathData="M0,1000 h1920 v16 h-1920 z"/>
+</vector>

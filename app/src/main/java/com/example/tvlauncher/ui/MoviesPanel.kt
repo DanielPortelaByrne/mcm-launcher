@@ -137,8 +137,24 @@ class MoviesPanel(
     val isVisible: Boolean get() = overlay.visibility == View.VISIBLE
     private val detailOpen: Boolean get() = detail.visibility == View.VISIBLE
 
+    /** The cinema backgrounds, one per opening of the page, so the room changes a little each time it is visited. */
+    private val cinemaBackdrops = intArrayOf(R.drawable.cinema_curtain, R.drawable.cinema_proscenium, R.drawable.cinema_beam)
+    private var cinemaBackdropView: ImageView? = null
+    private var cinemaBackdropIndex = 0
+
+    private fun showCinemaBackdrop() {
+        val bg = cinemaBackdropView ?: ImageView(activity).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP; isFocusable = false; isClickable = false; alpha = 0.7f
+            (overlay as? ViewGroup)?.addView(this, 0, FrameLayout.LayoutParams(-1, -1))
+            cinemaBackdropView = this
+        }
+        cinemaBackdropIndex = (cinemaBackdropIndex + 1) % cinemaBackdrops.size
+        bg.setImageResource(cinemaBackdrops[cinemaBackdropIndex])
+    }
+
     fun show() {
         overlay.visibility = View.VISIBLE
+        showCinemaBackdrop()
         com.example.tvlauncher.design.Motion.enter(overlay, null, 0f)
         if (!topBuilt) { buildTop(); topBuilt = true }
         trail.clear(); current = Dest.Home
