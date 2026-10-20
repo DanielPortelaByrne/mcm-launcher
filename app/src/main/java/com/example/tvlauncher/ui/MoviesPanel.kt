@@ -418,8 +418,16 @@ class MoviesPanel(
                     val managed = libraryRemover.delete(e.title.kind, ref)
                     val removed = managed || (e.library != null && jellyfin.deleteItem(e.library.id))
                     if (removed) jellyfin.refreshLibrary()
+                    // Fetch the library now, so the page does not keep showing what has gone. Only a title Jellyfin removed itself can
+                    // be checked straight away; one Radarr or Sonarr removed reappears in Jellyfin only after its scan.
+                    val stillThere = if (removed && e.library != null) jellyfin.stillInLibrary(e.library.id) else null
                     activity.runOnUiThread {
-                        Toast.makeText(activity, if (removed) "Deleted ${e.title.name}" else "Couldn't delete ${e.title.name} right now", Toast.LENGTH_LONG).show()
+                        val message = when {
+                            !removed -> "Couldn't delete ${e.title.name} right now"
+                            !managed && stillThere == true -> "Jellyfin still lists ${e.title.name}, so its files weren't removed"
+                            else -> "Deleted ${e.title.name}"
+                        }
+                        Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
                         if (removed && detailOpen) { closeDetail(restoreFocus = true); build() }
                     }
                 }

@@ -94,6 +94,17 @@ class JellyfinClient(context: Context) {
 
     fun movies(force: Boolean = false): List<JellyfinItem> = library(force).filter { it.isMovie }
 
+    /**
+     * Fetches the library from the server now, replaces the cached copy with it, and says whether it still holds [itemId].
+     * Null when the server cannot be asked. Used after a delete, so the cache does not keep showing what was removed.
+     */
+    @Synchronized fun stillInLibrary(itemId: String): Boolean? {
+        val uid = userId ?: return null
+        val body = request("GET", JellyfinApi.libraryUrl(JellyfinApi.cleanBase(server), uid)) ?: return null
+        library = JellyfinApi.parseItems(body); libraryAt = System.currentTimeMillis()
+        return library.any { it.id == itemId }
+    }
+
     /** The library copy of a title from elsewhere, matched on IMDb or TMDB id. May fetch the library, so not for the main thread. */
     fun find(imdbId: String?, tmdbId: String?, series: Boolean): JellyfinItem? = JellyfinApi.findByIds(library(), imdbId, tmdbId, series)
 
