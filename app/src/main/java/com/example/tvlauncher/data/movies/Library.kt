@@ -2,12 +2,22 @@ package com.example.tvlauncher.data.movies
 
 import org.json.JSONArray
 
+/** What is known about a title on the page, for finding it in Radarr or Sonarr. Any of these may be missing. */
+data class LibraryRef(val name: String, val year: Int?, val tmdbId: Long?, val imdbId: String?)
+
 /** The plain-Kotlin half of removing a title: finding its id in Radarr or Sonarr and the call that deletes it. */
 object LibraryApi {
-    /** Radarr's id for the movie with this TMDB id, if it has it. */
-    fun radarrMovieId(listJson: String, tmdbId: Long): Int? = try {
+    /**
+     * Radarr's or Sonarr's id for the title in [listJson]. Matched by TMDB id, then IMDb id, then name and year. A title
+     * Jellyfin holds without provider ids still matches by name, so it is not refused for want of an id.
+     */
+    fun findId(listJson: String, ref: LibraryRef): Int? = try {
         val a = JSONArray(listJson)
-        (0 until a.length()).map { a.getJSONObject(it) }.firstOrNull { it.optLong("tmdbId") == tmdbId }?.optInt("id")?.takeIf { it > 0 }
+        val items = (0 until a.length()).map { a.getJSONObject(it) }
+        val match = ref.tmdbId?.let { t -> items.firstOrNull { it.optLong("tmdbId") == t } }
+            ?: ref.imdbId?.takeIf { it.isNotBlank() }?.let { i -> items.firstOrNull { it.optString("imdbId").equals(i, ignoreCase = true) } }
+            ?: items.firstOrNull { it.optString("title").equals(ref.name, ignoreCase = true) && (ref.year == null || it.optInt("year") == ref.year) }
+        match?.optInt("id")?.takeIf { it > 0 }
     } catch (_: Exception) { null }
 
     /**
@@ -22,15 +32,10 @@ object LibraryApi {
 /** Removes a title from Radarr or Sonarr, which deletes its files too. Blocks and never throws. */
 class LibraryRemover(private val seerr: SeerrClient) {
     /** True when the title was found and removed. */
-    fun delete(kind: Kind, tmdbId: Long): Boolean {
-        return if (kind == Kind.SHOW) {
-            val c = seerr.sonarrSettings()?.let { SonarrApi.parseConfig(it, seerr.host) } ?: return false
-            val id = arrCall(c, "GET", "/api/v3/series")?.let { SonarrApi.findSeries(it, tmdbId) } ?: return false
-            arrCall(c, "DELETE", LibraryApi.deletePath(kind, id)) != null
-        } else {
-            val c = seerr.radarrSettings()?.let { SonarrApi.parseConfig(it, seerr.host) } ?: return false
-            val id = arrCall(c, "GET", "/api/v3/movie")?.let { LibraryApi.radarrMovieId(it, tmdbId) } ?: return false
-            arrCall(c, "DELETE", LibraryApi.deletePath(kind, id)) != null
-        }
+    fun delete(kind: Kind, ref: LibraryRef): Boolean {
+        val isSeries = kind == Kind.SHOW
+        val c = (if (isSeries) seerr.sonarrSettings() else seerr.radarrSettings())?.let { SonarrApi.parseConfig(it, seerr.host) } ?: return false
+        val id = arrCall(c, "GET", if (isSeries) "/api/v3/series" else "/api/v3/movie")?.let { LibraryApi.findId(it, ref) } ?: return false
+        return arrCall(c, "DELETE", LibraryApi.deletePath(kind, id)) != null
     }
 }

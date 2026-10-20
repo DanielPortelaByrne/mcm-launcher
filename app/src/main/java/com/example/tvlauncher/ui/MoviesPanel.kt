@@ -42,6 +42,7 @@ import com.example.tvlauncher.data.movies.Kind
 import com.example.tvlauncher.data.movies.ByteSize
 import com.example.tvlauncher.data.movies.EpisodeOutcome
 import com.example.tvlauncher.data.movies.EpisodeState
+import com.example.tvlauncher.data.movies.LibraryRef
 import com.example.tvlauncher.data.movies.LibraryRemover
 import com.example.tvlauncher.data.movies.QueueClient
 import com.example.tvlauncher.data.movies.WantedEpisode
@@ -408,12 +409,11 @@ class MoviesPanel(
 
     /** Takes a downloaded title off disk after the owner confirms. Radarr or Sonarr is told too, so it is not fetched again. */
     private fun confirmDelete(e: Entry) {
-        val tmdb = e.title.tmdbId?.toLongOrNull()
-        if (tmdb == null) { Toast.makeText(activity, "Can't be removed from here", Toast.LENGTH_LONG).show(); return }
+        val ref = LibraryRef(e.title.name, e.title.year, e.title.tmdbId?.toLongOrNull(), e.title.imdbId)
         infoSheet.show("DELETE", e.title.name, null, listOf("Removes every file for this title from the TV's storage, and from Radarr or Sonarr so it is not downloaded again. This cannot be undone."), null, listOf(
             SheetAction("Delete", "Remove it from disk", primary = true) {
                 worker.execute {
-                    val removed = libraryRemover.delete(e.title.kind, tmdb)
+                    val removed = libraryRemover.delete(e.title.kind, ref)
                     if (removed) jellyfin.refreshLibrary()
                     activity.runOnUiThread {
                         Toast.makeText(activity, if (removed) "Deleted ${e.title.name}" else "Couldn't delete ${e.title.name} right now", Toast.LENGTH_LONG).show()
