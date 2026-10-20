@@ -60,6 +60,13 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     private val filmSheet = com.example.tvlauncher.ui.room.FilmSheet(activity, sheet)
     private val thumbDecoder = java.util.concurrent.Executors.newSingleThreadExecutor()
     private val connectSheet = com.example.tvlauncher.ui.room.StremioConnectSheet(activity, sheet)
+
+    // Jellyfin first: when the film is already in the owner's own library, PLAY uses that and Stremio is not asked.
+    private val jellyfin = com.example.tvlauncher.data.jellyfin.JellyfinClient(activity)
+    private val jellyfinSheet = com.example.tvlauncher.ui.room.JellyfinConnectSheet(activity, sheet)
+    private val jellyfinWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var jellyfinItem: com.example.tvlauncher.data.jellyfin.JellyfinItem? = null
+    private var jellyfinFor: String? = null
     private var disposed = false
 
     init {
@@ -160,7 +167,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
             if (!disposed) { status.text=message; if (film == null) { film=nextFilm(); render() } else status.visibility = View.GONE }
         } }
     }
-    fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); thumbDecoder.shutdownNow() }
+    fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); jellyfinWorker.shutdownNow(); thumbDecoder.shutdownNow() }
     private fun render() {
         com.example.tvlauncher.design.Motion.swapText(title, film?.title ?: "Your next film awaits")
         showDetails()
@@ -193,7 +200,10 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
                 poster.setImageBitmap(art)
                 settlePoster()
                 // Head start: work out the best version now, so PLAY is ready by the time the sheet is opened.
-                details?.imdbId?.let { imdb -> if (smartFor != imdb) startSmart(current, imdb) }
+                details?.imdbId?.let { imdb ->
+                    startJellyfin(current, imdb)
+                    if (smartFor != imdb) startSmart(current, imdb)
+                }
             }
         }
     }
@@ -207,6 +217,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     private fun showFilm() {
         val current = film ?: return
         val imdb = details?.imdbId
+        if (imdb != null) startJellyfin(current, imdb, force = true)
         if (imdb != null && (smartFor != imdb || System.currentTimeMillis() - smartAt > 10 * 60_000L)) startSmart(current, imdb)
         val actions = com.example.tvlauncher.ui.room.FilmActions(
             play = { onPlayPressed(current) },
@@ -220,10 +231,30 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
             refresh = {
                 status.text = "Refreshing\u2026"
                 watchlist.refresh(true) { r -> activity.runOnUiThread { if (!disposed) { upcoming.clear(); film = nextFilm(); render(); status.text = r } } }
-            }
+            },
+            connectJellyfin = if (jellyfin.isConnected) null else ({
+                jellyfinSheet.show(jellyfin) { details?.imdbId?.let { startJellyfin(current, it, force = true) }; showFilm() }
+            })
         )
         filmSheet.show(current.title, details?.ratingLabel(), posterBitmap, details?.page, whereLines(), actions, from = poster)
         applySmart()
+    }
+
+    /** Asks the owner's Jellyfin whether it already has this film. Quiet when it does not, or is not reachable. */
+    private fun startJellyfin(current: Film, imdb: String, force: Boolean = false) {
+        if (!jellyfin.isConnected || (!force && jellyfinFor == imdb)) return
+        jellyfinFor = imdb; jellyfinItem = null
+        jellyfinWorker.execute {
+            val found = jellyfin.findMovieByImdb(imdb)
+            activity.runOnUiThread {
+                if (disposed || jellyfinFor != imdb) return@runOnUiThread
+                jellyfinItem = found
+                if (film?.path == current.path) {
+                    if (found != null) com.example.tvlauncher.design.Motion.swapText(availability, "In your library")
+                    if (sheet.isVisible) applySmart()
+                }
+            }
+        }
     }
 
     private fun startSmart(current: Film, imdb: String) {
@@ -241,6 +272,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     /** Streaming availability plus, when PLAY is unavailable, the honest reason. */
     private fun whereLines(): List<String> {
         val lines = details?.availabilityLines().orEmpty().toMutableList()
+        if (jellyfinItem != null && jellyfinFor == details?.imdbId) lines.add(0, "In your Jellyfin library")
         val imdb = details?.imdbId
         val result = smartResult?.takeIf { smartFor == imdb }
         if (result != null && result.best == null) smartMessage(result.status)?.let { lines += it }
@@ -252,8 +284,10 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         val imdb = details?.imdbId
         val result = smartResult?.takeIf { smartFor == imdb }
         val best = result?.best
-        val hasVersions = result != null && result.ranked.count { it.playable && it.verdict != com.example.tvlauncher.data.stream.Verdict.INCOMPATIBLE } > 1
+        val hasVersions = jellyfinItem?.takeIf { jellyfinFor == imdb } == null && result != null && result.ranked.count { it.playable && it.verdict != com.example.tvlauncher.data.stream.Verdict.INCOMPATIBLE } > 1
+        val inLibrary = jellyfinItem?.takeIf { jellyfinFor == imdb }
         val sub = when {
+            inLibrary != null -> "In your library"
             imdb == null -> "Film details still loading\u2026"
             smartLoading && result == null -> "Finding best version\u2026"
             best != null -> best.candidate.meta.shortLabel()
@@ -272,6 +306,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
 
     private fun onPlayPressed(current: Film) {
         val imdb = details?.imdbId
+        jellyfinItem?.takeIf { jellyfinFor == imdb }?.let { sheet.hide(); playFromJellyfin(it, current); return }
         val result = smartResult?.takeIf { smartFor == imdb }
         val best = result?.best
         when {
@@ -290,6 +325,16 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         com.example.tvlauncher.data.stream.SmartStatus.OFFLINE -> "No internet connection."
         com.example.tvlauncher.data.stream.SmartStatus.ERROR -> "Couldn't check streams right now."
         else -> null
+    }
+
+    /** Plays the library copy in the launcher's own player: the file as stored first, then a copy Jellyfin re-encodes for this TV. */
+    private fun playFromJellyfin(item: com.example.tvlauncher.data.jellyfin.JellyfinItem, current: Film) {
+        val headers = jellyfin.playbackHeaders()
+        fun ranked(label: String, url: String) = com.example.tvlauncher.data.stream.RankedStream(
+            com.example.tvlauncher.data.stream.StreamCandidate("jellyfin:${item.id}:$label", "Jellyfin", label, url, null, com.example.tvlauncher.data.stream.StreamMetadata(), headers = headers),
+            100, 0L, false, com.example.tvlauncher.data.stream.Verdict.RECOMMENDED, null, emptyList()
+        )
+        PlayerActivity.launch(activity, listOf(ranked("Original file", jellyfin.streamUrl(item)), ranked("Converted for this TV", jellyfin.transcodeUrl(item))), current.title, details?.imdbId)
     }
 
     /** Plays [chosen] first, then up to two of the next-best playable versions as automatic fallbacks. */

@@ -31,7 +31,9 @@ class FilmActions(
     val versions: () -> Unit,
     val next: () -> Unit,
     val letterboxd: () -> Unit,
-    val refresh: () -> Unit
+    val refresh: () -> Unit,
+    /** Offered only while this TV is not yet signed in to Jellyfin. */
+    val connectJellyfin: (() -> Unit)? = null
 )
 
 /**
@@ -160,7 +162,10 @@ class FilmSheet(private val context: Context, private val sheet: InfoSheet) {
 
         // Secondary actions: the same button, one step quieter.
         val quiet = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
-        listOf("Another film" to actions.next, "Letterboxd" to actions.letterboxd, "Refresh list" to actions.refresh).forEachIndexed { i, (label, run) ->
+        listOfNotNull<Pair<String, () -> Unit>>(
+            "Another film" to actions.next, "Letterboxd" to actions.letterboxd, "Refresh list" to actions.refresh,
+            actions.connectJellyfin?.let { "Link Jellyfin" to it }
+        ).forEachIndexed { i, (label, run) ->
             quiet.addView(pill(label, quiet = true).apply { setOnClickListener { hideThen(run) } }, LinearLayout.LayoutParams(-2, context.px(44)).apply { if (i > 0) marginStart = gap })
         }
         right.addView(quiet, LinearLayout.LayoutParams(-2, -2).apply { topMargin = gap })
