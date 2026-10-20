@@ -92,6 +92,12 @@ class MoviesDataTest {
         assertEquals(RequestOutcome.NEEDS_SIGN_IN, SeerrApi.outcomeFor(401)); assertEquals(RequestOutcome.FAILED, SeerrApi.outcomeFor(500))
     }
 
+    @Test fun finds_set_cookie_whatever_its_casing() {
+        val headers: Map<String?, List<String>> = mapOf(null to listOf("HTTP/1.1 200 OK"), "set-cookie" to listOf("connect.sid=s%3Axyz; Path=/; HttpOnly"))
+        assertEquals("connect.sid=s%3Axyz", SeerrApi.sessionCookie(SeerrApi.setCookies(headers)))
+        assertTrue(SeerrApi.setCookies(null).isEmpty())
+    }
+
     @Test fun picks_the_session_cookie() {
         assertEquals("connect.sid=s%3Aabc", SeerrApi.sessionCookie(listOf("other=1; Path=/", "connect.sid=s%3Aabc; Path=/; HttpOnly")))
         assertNull(SeerrApi.sessionCookie(listOf("other=1"))); assertNull(SeerrApi.sessionCookie(null))

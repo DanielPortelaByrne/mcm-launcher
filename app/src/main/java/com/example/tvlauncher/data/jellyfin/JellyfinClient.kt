@@ -110,6 +110,12 @@ class JellyfinClient(context: Context) {
 
     fun backdropUrl(id: String) = JellyfinApi.backdropUrl(JellyfinApi.cleanBase(server), id)
 
+    /** How much space the library takes, in bytes; null when Jellyfin cannot be reached. */
+    fun libraryBytes(): Long? {
+        val uid = userId ?: return null
+        return request("GET", JellyfinApi.sizesUrl(JellyfinApi.cleanBase(server), uid))?.let { JellyfinApi.parseTotalBytes(it) }
+    }
+
     /** The film in the library with this IMDb id, or null when there is none (or Jellyfin cannot be reached). */
     fun findMovieByImdb(imdbId: String): JellyfinItem? = JellyfinApi.findByImdb(movies(), imdbId)
 

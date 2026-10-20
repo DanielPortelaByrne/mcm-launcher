@@ -85,6 +85,16 @@ object JellyfinApi {
     fun firstEpisodeUrl(base: String, userId: String, seriesId: String): String =
         "$base/Shows/${enc(seriesId)}/Episodes?userId=${enc(userId)}&Limit=1"
 
+    /** Every film and episode with its files, for adding up how much space the library takes. */
+    fun sizesUrl(base: String, userId: String): String =
+        "$base/Items?userId=${enc(userId)}&Recursive=true&IncludeItemTypes=Movie,Episode&Fields=MediaSources&Limit=20000"
+
+    /** The total size of the first file of each item, in bytes. */
+    fun parseTotalBytes(json: String): Long = try {
+        val items = JSONObject(json).optJSONArray("Items")
+        (0 until (items?.length() ?: 0)).sumOf { items!!.getJSONObject(it).optJSONArray("MediaSources")?.optJSONObject(0)?.optLong("Size", 0L) ?: 0L }
+    } catch (_: Exception) { 0L }
+
     fun backdropUrl(base: String, id: String, maxWidth: Int = 1280): String = "$base/Items/${enc(id)}/Images/Backdrop?maxWidth=$maxWidth&quality=85"
 
     /** The film or series with these ids (a TMDB id is used when the IMDb one is missing), or null. Never a title match. */

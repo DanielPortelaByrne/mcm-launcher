@@ -39,7 +39,10 @@ import com.example.tvlauncher.data.movies.Catalog
 import com.example.tvlauncher.data.movies.CatalogRepository
 import com.example.tvlauncher.data.movies.Genre
 import com.example.tvlauncher.data.movies.Kind
+import com.example.tvlauncher.data.movies.ByteSize
 import com.example.tvlauncher.data.movies.RequestOutcome
+import com.example.tvlauncher.data.movies.SeerrRequest
+import com.example.tvlauncher.data.movies.Stage
 import com.example.tvlauncher.data.movies.SeerrClient
 import com.example.tvlauncher.data.movies.Service
 import com.example.tvlauncher.data.movies.ShelfSpec
@@ -79,6 +82,7 @@ class MoviesPanel(
         object Series : Dest()
         object Docs : Dest()
         object Library : Dest()
+        object Downloads : Dest()
         object Search : Dest()
         class OnService(val service: Service) : Dest()
         class InGenre(val genre: Genre) : Dest()
@@ -104,6 +108,7 @@ class MoviesPanel(
     private var topBuilt = false
     private var searchPending: Runnable? = null
 
+    private lateinit var storageView: TextView
     private lateinit var heroImage: ImageView
     private lateinit var heroTitle: TextView
     private lateinit var heroMeta: TextView
@@ -120,7 +125,7 @@ class MoviesPanel(
         com.example.tvlauncher.design.Motion.enter(overlay, null, 0f)
         if (!topBuilt) { buildTop(); topBuilt = true }
         trail.clear(); current = Dest.Home
-        styleTabs(); build()
+        styleTabs(); build(); loadStorage()
     }
 
     fun hide() { closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++ }
@@ -149,18 +154,20 @@ class MoviesPanel(
         val word = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
         word.addView(TextView(activity).apply { text = "MCM"; textSize = 11f; letterSpacing = 0.34f; setTextColor(activity.getColor(R.color.butter)); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD) })
         word.addView(TextView(activity).apply { text = "Cinema"; textSize = 24f; setTextColor(activity.getColor(R.color.ivory)); typeface = Typeface.create("serif", Typeface.NORMAL) })
-        top.addView(word, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12); marginEnd = dp(30) })
-        listOf("Home" to Dest.Home, "Films" to Dest.Films, "Series" to Dest.Series, "Documentaries" to Dest.Docs, "My library" to Dest.Library).forEach { (label, dest) ->
-            top.addView(tab(label, dest), LinearLayout.LayoutParams(-2, dp(40)).apply { marginEnd = dp(6) })
+        top.addView(word, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12); marginEnd = dp(20) })
+        listOf("Home" to Dest.Home, "Films" to Dest.Films, "Series" to Dest.Series, "Documentaries" to Dest.Docs, "My library" to Dest.Library, "Downloads" to Dest.Downloads).forEach { (label, dest) ->
+            top.addView(tab(label, dest), LinearLayout.LayoutParams(-2, dp(40)).apply { marginEnd = dp(3) })
         }
         top.addView(View(activity), LinearLayout.LayoutParams(0, 1, 1f))
+        storageView = TextView(activity).apply { textSize = 11f; gravity = Gravity.END; setLineSpacing(0f, 1.05f); setTextColor(activity.getColor(R.color.text_faint)); visibility = View.GONE }
+        top.addView(storageView, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(16) })
         top.addView(tab("Search", Dest.Search), LinearLayout.LayoutParams(-2, dp(40)))
     }
 
     private fun tab(label: String, dest: Dest): TextView {
         val view = Type.text(activity, label, Type.Style.BODY).apply {
             gravity = Gravity.CENTER; isFocusable = true; isClickable = true; maxLines = 1; textSize = 15f
-            setPadding(dp(16), 0, dp(16), 0); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            setPadding(dp(11), 0, dp(11), 0); typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         }
         tabs[view] = dest
         view.setOnFocusChangeListener { _, _ -> styleTabs() }
@@ -187,6 +194,7 @@ class MoviesPanel(
             Dest.Series -> { buildHero(); shelves(Catalog.seriesPage(), gen) }
             Dest.Docs -> { buildHero(); shelves(Catalog.documentariesPage(), gen) }
             Dest.Library -> buildLibrary(gen)
+            Dest.Downloads -> buildDownloads(gen)
             Dest.Search -> buildSearch()
             is Dest.OnService -> { pageTitle("On ${d.service.label}"); buildHero(); shelves(Catalog.servicePage(d.service), gen) }
             is Dest.InGenre -> { pageTitle(d.genre.label); buildHero(); shelves(Catalog.genrePage(d.genre), gen) }
@@ -287,6 +295,111 @@ class MoviesPanel(
                 all.flatMap { e -> e.title.genres.map { g -> g to e } }.groupBy({ it.first }, { it.second })
                     .filterValues { it.size >= 2 }.entries.sortedByDescending { it.value.size }.take(6).forEach { (g, list) -> add(g, list) }
             }
+        }
+    }
+
+    // --- Downloads ---------------------------------------------------------------------------------
+
+    private val knownTitles = HashMap<Long, Pair<String, String?>>()   // keyed by TMDB id, doubled, plus one for a series
+
+    private fun titleKey(r: SeerrRequest) = r.tmdbId * 2 + if (r.kind == Kind.SHOW) 1 else 0
+
+    private fun buildDownloads(gen: Int) {
+        val margin = px(R.dimen.page_margin)
+        pageTitle("Downloads")
+        content.addView(Type.text(activity, "What you have asked for, and how far along it is", Type.Style.CAPTION).apply { setPadding(margin, 0, 0, dp(6)) })
+        if (!seerr.isSignedIn) {
+            content.addView(actionCard("Sign in to see your downloads", "Use your Jellyfin account") { seerrSheet.show(seerr, jellyfin) { if (isVisible) build() } },
+                LinearLayout.LayoutParams(dp(380), dp(64)).apply { marginStart = margin; topMargin = dp(10) })
+            return
+        }
+        val holder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        content.addView(holder, LinearLayout.LayoutParams(-1, -2))
+        holder.addView(note("Loading…").apply { setPadding(margin, dp(10), 0, 0) })
+        var firstLoad = true
+        fun refresh() {
+            worker.execute {
+                val requests = seerr.requests()
+                requests.forEach { r -> if (!knownTitles.containsKey(titleKey(r))) seerr.titleInfo(r.kind, r.tmdbId)?.let { knownTitles[titleKey(r)] = it } }
+                activity.runOnUiThread {
+                    if (gen != generation) return@runOnUiThread
+                    val focused = (0 until holder.childCount).firstOrNull { holder.getChildAt(it).hasFocus() }
+                    holder.removeAllViews()
+                    if (requests.isEmpty()) holder.addView(note("Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
+                    requests.forEachIndexed { i, r ->
+                        holder.addView(downloadRow(r), LinearLayout.LayoutParams(-1, dp(100)).apply { setMargins(margin, if (i > 0) dp(8) else dp(6), margin, 0) })
+                    }
+                    if (firstLoad) { firstLoad = false; holder.getChildAt(0)?.let { requestFocusRobust(overlay as ViewGroup, it) } }
+                    else focused?.let { holder.getChildAt(it)?.requestFocus() }
+                    loadStorage()
+                    // Progress moves, so look again every little while for as long as this page is the one on screen.
+                    ui.postDelayed({ if (gen == generation && current == Dest.Downloads && !detailOpen) refresh() }, 15_000)
+                }
+            }
+        }
+        refresh()
+    }
+
+    /** One request: poster, title, what is happening, and a bar for how far it has got. */
+    private fun downloadRow(r: SeerrRequest): View {
+        val info = knownTitles[titleKey(r)]
+        val radius = dp(14).toFloat()
+        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(12), dp(8), dp(16), dp(8)) }
+        val posterBox = FrameLayout(activity).apply {
+            clipToOutline = true; setBackgroundColor(0xFF3A2C1E.toInt())
+            outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(6).toFloat()) } }
+        }
+        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        posterBox.addView(image, FrameLayout.LayoutParams(-1, -1))
+        info?.second?.let { u -> images.load(u) { b -> image.setImageBitmap(b) } }
+        row.addView(posterBox, LinearLayout.LayoutParams(dp(56), dp(84)))
+
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
+        column.addView(Type.text(activity, info?.first ?: "Title ${r.tmdbId}", Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        column.addView(Type.text(activity, statusLine(r), Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+        val colour = activity.getColor(when (r.stage) { Stage.READY -> R.color.deep_teal; Stage.DECLINED, Stage.FAILED -> R.color.walnut; else -> R.color.terracotta })
+        column.addView(ProgressBar(activity, r.progress(), colour), LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
+        row.addView(column, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
+        r.progress()?.let { p ->
+            row.addView(TextView(activity).apply { text = "${Math.round(p * 100)}%"; textSize = 24f; typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(R.color.ivory)); gravity = Gravity.END }, LinearLayout.LayoutParams(dp(76), -2))
+        }
+        LauncherTheme.bindPanelFocus(row, LauncherTheme.tileBackground(activity, radius), LauncherTheme.tileBackgroundFocused(activity, radius), 1f) { lit -> scrollFocusIntoView(row, lit) }
+        return row
+    }
+
+    private fun statusLine(r: SeerrRequest): String = when (r.stage) {
+        Stage.WAITING_APPROVAL -> "Waiting for approval"
+        Stage.SEARCHING -> "Looking for a release · nothing downloading yet"
+        Stage.DOWNLOADING -> {
+            val done = ByteSize.format(r.totalBytes - r.leftBytes) + " of " + ByteSize.format(r.totalBytes)
+            val left = r.etaMs()?.let { (it - System.currentTimeMillis()) / 60_000L }
+            "Downloading · $done" + when { left == null -> ""; left < 1 -> " · almost done"; left < 120 -> " · about $left min left"; else -> " · about ${left / 60} h left" }
+        }
+        Stage.READY -> "Ready to watch in your library"
+        Stage.DECLINED -> "Declined"
+        Stage.FAILED -> "Failed · the download could not be completed"
+    }
+
+    /** A thin track with a fill; with no progress to show it is just the track, never a made-up figure. */
+    private class ProgressBar(context: Context, private val progress: Float?, private val colour: Int) : View(context) {
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        override fun onDraw(canvas: Canvas) {
+            val r = height / 2f
+            paint.color = Color.argb(110, 121, 86, 56); canvas.drawRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), r, r, paint)   // walnut: shows on dark and on the lit row
+            val p = progress ?: return
+            if (p > 0f) { paint.color = colour; canvas.drawRoundRect(RectF(0f, 0f, maxOf(height.toFloat(), width * p), height.toFloat()), r, r, paint) }
+        }
+    }
+
+    // --- Storage -----------------------------------------------------------------------------------
+
+    /** "10.8 GB in library / 601 GB free", small, beside Search. Each half appears only if it could be read. */
+    private fun loadStorage() {
+        worker.execute {
+            val used = jellyfin.takeIf { it.isConnected }?.libraryBytes()
+            val free = seerr.takeIf { it.isSignedIn }?.freeSpaceBytes()
+            val lines = listOfNotNull(used?.let { "${ByteSize.format(it)} in library" }, free?.let { "${ByteSize.format(it)} free" })
+            activity.runOnUiThread { storageView.text = lines.joinToString("\n"); storageView.visibility = if (lines.isEmpty()) View.GONE else View.VISIBLE }
         }
     }
 
