@@ -11,8 +11,12 @@ data class JellyfinItem(
     val type: String,
     val mediaSourceId: String?,
     val resumeMs: Long = 0L,
-    val played: Boolean = false
+    val played: Boolean = false,
+    val imdbId: String? = null
 ) {
+    /** Jellyfin names a single-file film's source after the film itself, so that is the safe default. */
+    val sourceId: String get() = mediaSourceId ?: id
+
     val isMovie: Boolean get() = type == "Movie"
 }
 
@@ -36,19 +40,25 @@ object JellyfinApi {
         return if (t.startsWith("http://") || t.startsWith("https://")) t else "http://$t"
     }
 
-    /** Looks a film up by the IMDb id Letterboxd gave us. Matching on a provider id means no title guessing. */
-    fun findByImdbUrl(base: String, userId: String, imdbId: String): String =
-        "$base/Items?userId=${enc(userId)}&Recursive=true&IncludeItemTypes=Movie&Limit=1" +
-            "&AnyProviderIdEquals=${enc("imdb.$imdbId")}&Fields=MediaSources"
+    /**
+     * Every film that has an IMDb id, with its provider ids. Matching happens on the TV ([findByImdb]) because the
+     * server's own provider-id filter (AnyProviderIdEquals) is ignored by Jellyfin 12.2: asking for one film
+     * returns the whole library, so trusting its first answer would "find" the wrong film every time.
+     */
+    fun libraryMoviesUrl(base: String, userId: String): String =
+        "$base/Items?userId=${enc(userId)}&Recursive=true&IncludeItemTypes=Movie&HasImdbId=true&Fields=ProviderIds&Limit=5000"
+
+    /** The film with this IMDb id, or null. Never falls back to a title match or "the first result". */
+    fun findByImdb(items: List<JellyfinItem>, imdbId: String): JellyfinItem? =
+        items.firstOrNull { it.isMovie && it.imdbId.equals(imdbId, ignoreCase = true) }
 
     /** The raw bytes of the film as stored. The token rides in a header, never in the address. */
     fun directStreamUrl(base: String, item: JellyfinItem): String =
-        "$base/Videos/${item.id}/stream?static=true" + (item.mediaSourceId?.let { "&mediaSourceId=${enc(it)}" } ?: "")
+        "$base/Videos/${item.id}/stream?static=true&mediaSourceId=${enc(item.sourceId)}"
 
     /** A copy Jellyfin re-encodes for this TV, used when the original file will not play as stored. */
     fun transcodeUrl(base: String, item: JellyfinItem, deviceId: String): String =
-        "$base/Videos/${item.id}/master.m3u8?DeviceId=${enc(deviceId)}" +
-            (item.mediaSourceId?.let { "&MediaSourceId=${enc(it)}" } ?: "") +
+        "$base/Videos/${item.id}/master.m3u8?DeviceId=${enc(deviceId)}&MediaSourceId=${enc(item.sourceId)}" +
             "&VideoCodec=h264&AudioCodec=aac&MaxStreamingBitrate=20000000&TranscodingMaxAudioChannels=6&SegmentContainer=ts"
 
     fun posterUrl(base: String, id: String, maxHeight: Int = 450): String = "$base/Items/${enc(id)}/Images/Primary?maxHeight=$maxHeight&quality=90"
@@ -71,7 +81,8 @@ object JellyfinApi {
             mediaSourceId = source,
             // Jellyfin counts in 100-nanosecond ticks.
             resumeMs = (data?.optLong("PlaybackPositionTicks", 0L) ?: 0L) / 10_000L,
-            played = data?.optBoolean("Played", false) ?: false
+            played = data?.optBoolean("Played", false) ?: false,
+            imdbId = o.optJSONObject("ProviderIds")?.optString("Imdb")?.ifBlank { null }
         )
     }
 }

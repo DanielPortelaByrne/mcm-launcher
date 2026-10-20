@@ -32,8 +32,11 @@ class JellyfinClient(context: Context) {
     private val token: String? get() = prefs.getString("token", null)
     private val userId: String? get() = prefs.getString("userId", null)
 
-    /** What a player needs to fetch a stream: the token travels in a header, never in the address. */
-    fun playbackHeaders(): Map<String, String> = token?.let { mapOf("X-Emby-Token" to it) }.orEmpty()
+    /**
+     * What a player needs to fetch a stream: the token travels in a header, never in the address. Jellyfin 12
+     * answers 401 to the older X-Emby-Token header and to ?api_key=, so it has to be the Authorization header.
+     */
+    fun playbackHeaders(): Map<String, String> = token?.let { mapOf("Authorization" to JellyfinApi.authHeader(deviceId, deviceName, it)) }.orEmpty()
 
     fun streamUrl(item: JellyfinItem) = JellyfinApi.directStreamUrl(JellyfinApi.cleanBase(server), item)
     fun transcodeUrl(item: JellyfinItem) = JellyfinApi.transcodeUrl(JellyfinApi.cleanBase(server), item, deviceId)
@@ -77,12 +80,22 @@ class JellyfinClient(context: Context) {
 
     // --- Library ---------------------------------------------------------------------------------
 
-    /** The film in the library with this IMDb id, or null when there is none (or Jellyfin cannot be reached). */
-    fun findMovieByImdb(imdbId: String): JellyfinItem? {
-        val uid = userId ?: return null
-        val body = request("GET", JellyfinApi.findByImdbUrl(JellyfinApi.cleanBase(server), uid, imdbId)) ?: return null
-        return JellyfinApi.parseItems(body).firstOrNull { it.isMovie }
+    @Volatile private var library: List<JellyfinItem> = emptyList()
+    @Volatile private var libraryAt = 0L
+
+    /** Every film with an IMDb id, kept for a few minutes so flicking through picks costs one request, not many. */
+    fun movies(force: Boolean = false): List<JellyfinItem> {
+        val uid = userId ?: return emptyList()
+        if (!force && libraryAt != 0L && System.currentTimeMillis() - libraryAt < LIBRARY_TTL_MS) return library
+        val body = request("GET", JellyfinApi.libraryMoviesUrl(JellyfinApi.cleanBase(server), uid)) ?: return library
+        library = JellyfinApi.parseItems(body); libraryAt = System.currentTimeMillis()
+        return library
     }
+
+    /** The film in the library with this IMDb id, or null when there is none (or Jellyfin cannot be reached). */
+    fun findMovieByImdb(imdbId: String): JellyfinItem? = JellyfinApi.findByImdb(movies(), imdbId)
+
+    private companion object { const val LIBRARY_TTL_MS = 5 * 60_000L }
 
     // --- Plumbing --------------------------------------------------------------------------------
 
