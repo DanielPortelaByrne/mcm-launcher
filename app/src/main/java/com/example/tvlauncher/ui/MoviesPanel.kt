@@ -872,7 +872,7 @@ class MoviesPanel(
         text.addView(Type.text(activity, t.name, Type.Style.TITLE).apply { textSize = 34f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         text.addView(Type.text(activity, listOfNotNull(t.metaLine().ifBlank { null }, t.imdbScore?.let { "IMDb ${"%.1f".format(Locale.UK, it)}" }).joinToString("  ·  "), Type.Style.CAPTION).apply { maxLines = 1 }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         t.streamingLine()?.let { s -> text.addView(Type.text(activity, s, Type.Style.CAPTION).apply { maxLines = 1; setTextColor(activity.getColor(R.color.butter)) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) }) }
-        text.addView(Type.text(activity, t.overview ?: e.library?.overview ?: "No description yet.", Type.Style.BODY).apply { maxLines = 5; ellipsize = TextUtils.TruncateAt.END; setLineSpacing(0f, 1.1f) }, LinearLayout.LayoutParams(dp(520), -2).apply { topMargin = dp(10) })
+        text.addView(Type.text(activity, t.overview ?: e.library?.overview ?: "No description yet.", Type.Style.CAPTION).apply { maxLines = 3; ellipsize = TextUtils.TruncateAt.END; textSize = 16f; setTextColor(0xD9F3E9CF.toInt()); setLineSpacing(0f, 1.15f) }, LinearLayout.LayoutParams(dp(520), -2).apply { topMargin = dp(10) })
 
         val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
         val primary = pill("Checking…", accent = true)
@@ -1013,9 +1013,11 @@ class MoviesPanel(
             box.addView(note(if (!seerr.isSignedIn && e.library == null) "Press Queue download to sign in, then the seasons and episodes will be listed here." else "No season information available."))
             return
         }
-        val picker = row(null, null, into = box, inset = false)
+        // The request for the shown season sits first, so it is always the next thing below the title, however many
+        // seasons there are; the season picker follows it, and the episodes come last.
         val action = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
         box.addView(action, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        val picker = row(null, null, into = box, inset = false)
         val episodes = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         box.addView(episodes, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
 
@@ -1076,7 +1078,7 @@ class MoviesPanel(
         }
 
         seasons.forEachIndexed { i, s ->
-            val p = pill(s.name, accent = false).apply { setPadding(dp(18), 0, dp(18), 0); setOnClickListener { showSeason(s) } }
+            val p = pill("S${s.number}", accent = false).apply { setPadding(dp(20), 0, dp(20), 0); setOnClickListener { showSeason(s) } }
             p.setOnFocusChangeListener { v, focused ->
                 val d = v.background as android.graphics.drawable.TransitionDrawable
                 if (focused) { d.startTransition(120); if (shown !== s) showSeason(s) } else d.reverseTransition(120)
@@ -1088,13 +1090,24 @@ class MoviesPanel(
         showSeason(seasons.first())
     }
 
-    /** One episode: its number and name, when it aired, and what can be done with it. A missing one is requested on its own. */
+    /** A single symbol for an episode's state, so the list reads at a glance. */
+    private fun episodeGlyph(label: String): String = when {
+        label.startsWith("▶") -> "▶"
+        label.startsWith("Downloaded") || label == "In library" -> "✓"
+        label.startsWith("Requested") || label.startsWith("Downloading") -> "↓"
+        label == "Request" -> "+"
+        else -> "·"
+    }
+
+    /** One episode: its number, its title, and an icon for what can be done with it. A missing one is requested on its own. */
     private fun episodeRow(e: Entry, s: SeasonState, number: Int, name: String, airDate: String?, mine: JellyfinItem?, tmdb: Long?, states: MutableMap<Pair<Int, Int>, EpisodeState>): View {
-        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(16), 0, dp(16), 0) }
-        val num = Type.text(activity, "E$number", Type.Style.CAPTION).apply { gravity = Gravity.START }
+        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(14), 0, dp(18), 0) }
+        val badge = Type.text(activity, "$number", Type.Style.CAPTION).apply {
+            gravity = Gravity.CENTER; textSize = 14f; typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x33F3E9CF) }
+        }
         val title = Type.text(activity, name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 15f }
-        val aired = Type.text(activity, airDate.orEmpty(), Type.Style.CAPTION).apply { textSize = 12f }
-        val state = Type.text(activity, "", Type.Style.CAPTION).apply { gravity = Gravity.END; textSize = 13f }
+        val state = Type.text(activity, "", Type.Style.CAPTION).apply { gravity = Gravity.CENTER; textSize = 18f }
         // What Sonarr says about this very episode wins; otherwise what Seerr says about its season.
         fun label(): String {
             val own = states[s.number to number]
@@ -1109,12 +1122,11 @@ class MoviesPanel(
                 else -> "Not downloaded"
             }
         }
-        state.text = label()
-        row.addView(num, LinearLayout.LayoutParams(dp(44), -2))
-        row.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        row.addView(aired, LinearLayout.LayoutParams(dp(110), -2))
-        row.addView(state, LinearLayout.LayoutParams(dp(130), -2))
-        FastFocus.bind(row, surfaces12, listOf(num, title, aired, state), rest = LauncherTheme.tileBackground(activity, dp(12).toFloat()))
+        state.text = episodeGlyph(label())
+        row.addView(badge, LinearLayout.LayoutParams(dp(34), dp(34)))
+        row.addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
+        row.addView(state, LinearLayout.LayoutParams(dp(40), -2))
+        FastFocus.bind(row, surfaces12, listOf(badge, title, state), rest = LauncherTheme.tileBackground(activity, dp(12).toFloat()))
         row.setOnClickListener {
             val label = label()
             when {
@@ -1122,7 +1134,7 @@ class MoviesPanel(
                 label != "Request" || tmdb == null -> Unit
                 !seerr.isSignedIn -> seerrSheet.show(seerr, jellyfin) { }
                 else -> {
-                    state.text = "Requesting…"; row.isClickable = false
+                    state.text = "…"; row.isClickable = false
                     worker.execute {
                         val outcome = sonarr.requestEpisodes(tmdb, s.number, listOf(number))
                         activity.runOnUiThread {
@@ -1133,7 +1145,7 @@ class MoviesPanel(
                                 EpisodeOutcome.NOT_FOUND -> Toast.makeText(activity, "Sonarr couldn't find that episode yet. Try again in a moment", Toast.LENGTH_LONG).show()
                                 EpisodeOutcome.FAILED -> Toast.makeText(activity, "Couldn't queue that episode right now", Toast.LENGTH_LONG).show()
                             }
-                            state.text = label()
+                            state.text = episodeGlyph(label())
                         }
                     }
                 }
