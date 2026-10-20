@@ -12,14 +12,14 @@ enum class QueueSource { SONARR, RADARR }
 
 /**
  * One thing Sonarr or Radarr has handed to the download client. [position] is the place in line among those still
- * waiting (1 is next), worked out from the order they were added, which is the order the download client takes
- * them in unless someone reorders it there; it is 0 for anything not waiting.
+ * waiting, taken from qBittorrent's actual priority. It is 0 when the position is unknown or it is not queued.
  */
 data class QueueItem(
     val source: QueueSource, val id: Int, val title: String, val detail: String?, val tmdbId: Long,
-    val status: String, val sizeBytes: Long, val sizeLeftBytes: Long, val etaSeconds: Long?, val addedMs: Long?, val position: Int = 0
+    val status: String, val sizeBytes: Long, val sizeLeftBytes: Long, val etaSeconds: Long?, val addedMs: Long?, val position: Int = 0,
+    val downloadId: String? = null, val downloadClient: String? = null, val canPrioritize: Boolean = false, val forced: Boolean = false, val season: Int? = null
 ) {
-    val isDownloading: Boolean get() = status == "downloading"
+    val isDownloading: Boolean get() = status in setOf("downloading", "metadata", "stalled")
     val isWaiting: Boolean get() = status == "queued" || status == "delayed" || status == "paused"
 
     /** 0..1 once bytes are known; null for something that has not started (its size is not known yet). */
@@ -38,7 +38,10 @@ object QueueApi {
                 if (ep != null) "S${ep.optInt("seasonNumber")} E${ep.optInt("episodeNumber")}" + ep.optString("title").takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty() else movie?.optInt("year")?.takeIf { it > 0 }?.toString(),
                 (series?.optLong("tmdbId") ?: movie?.optLong("tmdbId") ?: 0L),
                 r.optString("status").lowercase(), r.optLong("size", 0L), r.optLong("sizeleft", 0L),
-                timeLeftSeconds(r.optString("timeleft")), r.optString("added").takeIf { it.isNotBlank() }?.let { com.example.tvlauncher.data.jellyfin.JellyfinApi.utcMillis(it) }
+                timeLeftSeconds(r.optString("timeleft")), r.optString("added").takeIf { it.isNotBlank() }?.let { com.example.tvlauncher.data.jellyfin.JellyfinApi.utcMillis(it) },
+                downloadId = r.optString("downloadId").takeIf { QbitApi.validHash(it) },
+                downloadClient = r.optString("downloadClient").takeIf { it.isNotBlank() },
+                season = ep?.optInt("seasonNumber") ?: r.optInt("seasonNumber", -1).takeIf { it >= 0 }
             )
         }
     } catch (_: Exception) { emptyList() }
@@ -50,12 +53,6 @@ object QueueApi {
         val parts = (if (days > 0) text.substringAfter('.') else text).split(':').mapNotNull { it.substringBefore('.').toLongOrNull() }
         if (parts.size != 3) return null
         return days * 86_400 + parts[0] * 3600 + parts[1] * 60 + parts[2]
-    }
-
-    /** Numbers the items still waiting, oldest first, from 1; everything else keeps 0. */
-    fun withPositions(items: List<QueueItem>): List<QueueItem> {
-        val order = items.filter { it.isWaiting }.sortedBy { it.addedMs ?: Long.MAX_VALUE }.map { it.id to it.source }
-        return items.map { i -> val at = order.indexOf(i.id to i.source); if (at >= 0) i.copy(position = at + 1) else i }
     }
 
     /** Downloading first, then waiting in line, then the rest. */
@@ -70,9 +67,25 @@ object QueueApi {
  * The live download queue, read from Sonarr and Radarr using the address and key Seerr already holds for them, and
  * the way to cancel an item. Every call blocks and none throw.
  */
-class QueueClient(private val seerr: SeerrClient) {
+class QueueClient(private val seerr: SeerrClient, context: android.content.Context) {
+    private val sessions = context.applicationContext.getSharedPreferences("qbit_sessions", android.content.Context.MODE_PRIVATE)
     private var sonarr: SonarrConfig? = null
     private var radarr: SonarrConfig? = null
+    private val torrentClients = HashMap<Pair<QueueSource, String?>, QbitClient>()
+
+    @Synchronized
+    private fun torrentClient(item: QueueItem): QbitClient? {
+        if (!QbitApi.validHash(item.downloadId)) return null
+        val key = item.source to item.downloadClient
+        return torrentClients[key] ?: run {
+            val config = (if (item.source == QueueSource.SONARR) sonarrConfig() else radarrConfig()) ?: return null
+            val json = arrCall(config, "GET", "/api/v3/downloadclient") ?: return null
+            val qbit = QbitApi.config(json, item.downloadClient, java.net.URL(config.baseUrl).host) ?: return null
+            QbitClient(qbit, initialCookie = sessions.getString(qbit.baseUrl, null), onSession = { cookie ->
+                sessions.edit().putString(qbit.baseUrl, cookie).apply()
+            }).also { torrentClients[key] = it }
+        }
+    }
 
     private fun sonarrConfig() = sonarr ?: seerr.sonarrSettings()?.let { SonarrApi.parseConfig(it, seerr.host) }?.also { sonarr = it }
     private fun radarrConfig() = radarr ?: seerr.radarrSettings()?.let { SonarrApi.parseConfig(it, seerr.host) }?.also { radarr = it }
@@ -82,7 +95,58 @@ class QueueClient(private val seerr: SeerrClient) {
         val s = sonarrConfig()?.let { c -> arrCall(c, "GET", "/api/v3/queue?pageSize=200&includeSeries=true&includeEpisode=true")?.let { QueueApi.parse(it, QueueSource.SONARR) } }
         val r = radarrConfig()?.let { c -> arrCall(c, "GET", "/api/v3/queue?pageSize=200&includeMovie=true")?.let { QueueApi.parse(it, QueueSource.RADARR) } }
         if (s == null && r == null) return null
-        return QueueApi.ordered(QueueApi.withPositions(s.orEmpty() + r.orEmpty()))
+        val states = HashMap<QbitClient, Map<String, TorrentState>?>()
+        return QueueApi.ordered((s.orEmpty() + r.orEmpty()).map { item ->
+            val client = torrentClient(item)
+            val torrents = if (client == null) null else {
+                if (!states.containsKey(client)) states[client] = client.states()
+                states[client]
+            }
+            val torrent = torrents?.get(item.downloadId?.lowercase())
+            if (torrent == null) item.copy(canPrioritize = client != null && item.status !in setOf("completed", "failed", "warning"))
+            else QbitApi.apply(item, torrent)
+        })
+    }
+
+    fun signIn(item: QueueItem, username: String, password: String): Boolean = torrentClient(item)?.signIn(username, password) == true
+
+    fun prioritize(item: QueueItem, action: DownloadAction): DownloadActionResult {
+        val client = torrentClient(item) ?: return DownloadActionResult.NOT_CONFIGURED
+        return client.perform(item.downloadId ?: return DownloadActionResult.NOT_FOUND, action)
+    }
+
+    /** Withdraw a pending request and stop its monitoring, keeping downloaded files and other seasons. */
+    fun cancelRequest(request: SeerrRequest): Boolean {
+        if (!request.canCancel) return false
+        if (request.stage != Stage.WAITING_APPROVAL) {
+            val series = request.kind == Kind.SHOW
+            val config = (if (series) sonarrConfig() else radarrConfig()) ?: return false
+            val list = arrCall(config, "GET", if (series) "/api/v3/series" else "/api/v3/movie") ?: return false
+            val records = try { JSONArray(list) } catch (_: Exception) { return false }
+            val match = (0 until records.length()).map { records.getJSONObject(it) }.firstOrNull { it.optLong("tmdbId") == request.tmdbId }
+            if (match != null) {
+                val id = match.optInt("id").takeIf { it > 0 } ?: return false
+                if (series) {
+                    if (request.seasons.isEmpty()) return false // never unmonitor someone else's seasons
+                    val detail = arrCall(config, "GET", "/api/v3/series/$id") ?: return false
+                    val update = RequestCancellationApi.stopSeasons(detail, request.seasons) ?: return false
+                    if (arrCall(config, "PUT", "/api/v3/series/$id", update) == null) return false
+                    val episodes = arrCall(config, "GET", "/api/v3/episode?seriesId=$id") ?: return false
+                    val ids = RequestCancellationApi.episodeIds(episodes, request.seasons) ?: return false
+                    if (ids.isNotEmpty() && arrCall(config, "PUT", "/api/v3/episode/monitor", SonarrApi.monitorBody(ids, false)) == null) return false
+                } else {
+                    val update = JSONObject().put("movieIds", JSONArray().put(id)).put("monitored", false).toString()
+                    if (arrCall(config, "PUT", "/api/v3/movie/editor", update) == null) return false
+                }
+            }
+            // A release may have been grabbed since the page was drawn. Stop that download too.
+            val current = arrCall(config, "GET", if (series)
+                "/api/v3/queue?pageSize=200&includeSeries=true&includeEpisode=true" else "/api/v3/queue?pageSize=200&includeMovie=true") ?: return false
+            val source = if (series) QueueSource.SONARR else QueueSource.RADARR
+            val matching = QueueApi.parse(current, source).filter { it.tmdbId == request.tmdbId && (!series || it.season in request.seasons) }
+            if (matching.any { arrCall(config, "DELETE", QueueApi.cancelPath(it.id)) == null }) return false
+        }
+        return seerr.cancelRequest(request.id)
     }
 
     fun cancel(item: QueueItem): Boolean {

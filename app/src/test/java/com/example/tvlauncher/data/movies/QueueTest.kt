@@ -16,12 +16,12 @@ class QueueTest {
         assertTrue(items[1].isWaiting); assertNull(items[1].progress())   // size not known until it starts
     }
 
-    @Test fun numbers_the_waiting_in_the_order_they_were_added() {
-        val items = QueueApi.withPositions(QueueApi.parse(queue(
+    @Test fun uses_the_real_priority_even_when_a_newer_download_is_moved_first() {
+        val items = QueueApi.parse(queue(
             record(10, "queued", "2026-10-20T12:30:00Z"), record(11, "downloading", "2026-10-20T12:00:00Z", 100, 50),
-            record(12, "queued", "2026-10-20T12:10:00Z"), record(13, "completed", "2026-10-20T11:00:00Z")), QueueSource.SONARR))
-        assertEquals(mapOf(10 to 2, 11 to 0, 12 to 1, 13 to 0), items.associate { it.id to it.position })
-        assertEquals(listOf(11, 12, 10, 13), QueueApi.ordered(items).map { it.id })   // downloading, then in line, then the rest
+            record(12, "queued", "2026-10-20T12:10:00Z"), record(13, "completed", "2026-10-20T11:00:00Z")), QueueSource.SONARR)
+            .map { if (it.isWaiting) it.copy(position = if (it.id == 10) 1 else 2) else it }
+        assertEquals(listOf(11, 10, 12, 13), QueueApi.ordered(items).map { it.id })
     }
 
     @Test fun movies_come_from_radarrs_shape() {

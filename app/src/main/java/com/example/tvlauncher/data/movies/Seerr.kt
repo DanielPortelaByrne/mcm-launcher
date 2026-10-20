@@ -152,7 +152,8 @@ data class Download(val sizeBytes: Long, val sizeLeftBytes: Long, val etaMs: Lon
 enum class Stage { WAITING_APPROVAL, SEARCHING, DOWNLOADING, READY, DECLINED, FAILED }
 
 /** A request the owner has made, with how far along it is. */
-data class SeerrRequest(val id: Int, val kind: Kind, val tmdbId: Long, val stage: Stage, val downloads: List<Download>, val requestedAtMs: Long?) {
+data class SeerrRequest(val id: Int, val kind: Kind, val tmdbId: Long, val stage: Stage, val downloads: List<Download>, val requestedAtMs: Long?, val seasons: List<Int> = emptyList()) {
+    val canCancel: Boolean get() = stage in setOf(Stage.WAITING_APPROVAL, Stage.SEARCHING, Stage.DOWNLOADING)
     val totalBytes: Long get() = downloads.sumOf { it.sizeBytes }
     val leftBytes: Long get() = downloads.sumOf { it.sizeLeftBytes }
 
@@ -186,7 +187,10 @@ object SeerrRequests {
             }
             SeerrRequest(
                 r.optInt("id"), if (r.optString("type") == "tv") Kind.SHOW else Kind.MOVIE, tmdb, stage, downloads,
-                r.optString("createdAt").takeIf { it.isNotBlank() }?.let { com.example.tvlauncher.data.jellyfin.JellyfinApi.utcMillis(it) }
+                r.optString("createdAt").takeIf { it.isNotBlank() }?.let { com.example.tvlauncher.data.jellyfin.JellyfinApi.utcMillis(it) },
+                seasons = r.optJSONArray("seasons")?.let { ss -> (0 until ss.length()).mapNotNull { i ->
+                    ss.optJSONObject(i)?.optInt("seasonNumber", -1)?.takeIf { it >= 0 }
+                }.distinct() }.orEmpty()
             )
         }
     } catch (_: Exception) { emptyList() }

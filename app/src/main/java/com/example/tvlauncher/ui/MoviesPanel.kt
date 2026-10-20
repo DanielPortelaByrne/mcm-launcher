@@ -44,6 +44,8 @@ import com.example.tvlauncher.data.movies.EpisodeOutcome
 import com.example.tvlauncher.data.movies.EpisodeState
 import com.example.tvlauncher.data.movies.LibraryRef
 import com.example.tvlauncher.data.movies.LibraryRemover
+import com.example.tvlauncher.data.movies.DownloadAction
+import com.example.tvlauncher.data.movies.DownloadActionResult
 import com.example.tvlauncher.data.movies.QueueClient
 import com.example.tvlauncher.data.movies.WantedEpisode
 import com.example.tvlauncher.data.movies.QueueItem
@@ -444,7 +446,12 @@ class MoviesPanel(
         content.addView(holder, LinearLayout.LayoutParams(-1, -2))
         holder.addView(note("Loading…").apply { setPadding(margin, dp(10), 0, 0) })
         var firstLoad = true
+        var loading = false
+        var scheduled: Runnable? = null
         fun refresh() {
+            scheduled?.let { ui.removeCallbacks(it) }
+            if (loading || gen != generation || !isVisible) return
+            loading = true
             worker.execute {
                 val queue = queueClient.items()
                 val inQueue = queue.orEmpty().map { it.tmdbId * 2 + if (it.source == QueueSource.SONARR) 1 else 0 }.toSet()
@@ -458,10 +465,11 @@ class MoviesPanel(
                 wanted.keys.forEach { tmdb -> if (!knownTitles.containsKey(tmdb * 2 + 1)) seerr.titleInfo(Kind.SHOW, tmdb)?.let { knownTitles[tmdb * 2 + 1] = it } }
                 val wantedEpisodes = wanted.values.flatten()
                 activity.runOnUiThread {
+                    loading = false
                     if (gen != generation) return@runOnUiThread
                     val focused = (0 until holder.childCount).firstOrNull { holder.getChildAt(it).hasFocus() }
                     holder.removeAllViews()
-                    val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) } +
+                    val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) { refresh() } } +
                         wanted.map { (tmdb, eps) -> wantedRow(tmdb, eps) { refresh() } }
                     if (rows.isEmpty()) holder.addView(note(if (queue == null) "Couldn't reach the download queue just now." else "Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
                     queue?.let { q -> holder.addView(Type.text(activity, "${q.count { it.isDownloading }} downloading  ·  ${q.count { it.isWaiting }} waiting", Type.Style.CAPTION).apply { setPadding(margin, dp(4), 0, 0) }) }
@@ -478,14 +486,15 @@ class MoviesPanel(
                     else focused?.let { holder.getChildAt(it)?.requestFocus() }
                     loadStorage()
                     // Progress moves, so look again every little while for as long as this page is the one on screen.
-                    ui.postDelayed({ if (gen == generation && current == Dest.Downloads && !detailOpen) refresh() }, 15_000)
+                    scheduled = Runnable { if (gen == generation && current == Dest.Downloads && !detailOpen) refresh() }
+                    ui.postDelayed(scheduled!!, 15_000)
                 }
             }
         }
         refresh()
     }
 
-    private val queueClient by lazy { QueueClient(seerr) }
+    private val queueClient by lazy { QueueClient(seerr, activity) }
 
     private val libraryRemover by lazy { LibraryRemover(seerr) }
 
@@ -526,7 +535,7 @@ class MoviesPanel(
                 "Requests and episodes that have no release yet are withdrawn. Finished titles are not touched."), null, listOf(
             SheetAction("Cancel all", "Stop every pending download", primary = true) {
                 worker.execute {
-                    val failed = items.count { !queueClient.cancel(it) } + requests.count { !seerr.cancelRequest(it.id) } +
+                    val failed = items.count { !queueClient.cancel(it) } + requests.count { !queueClient.cancelRequest(it) } +
                         if (sonarr.unwant(wanted.map { it.id })) 0 else 1
                     activity.runOnUiThread {
                         Toast.makeText(activity, if (failed == 0) "Cancelled everything pending" else "$failed couldn't be cancelled right now", Toast.LENGTH_LONG).show()
@@ -538,7 +547,7 @@ class MoviesPanel(
         ))
     }
 
-    /** A row for something in the download queue: what it is, where it stands, and a bar. Pressing it offers to cancel. */
+    /** A queued torrent: open its controls to change priority, force it to start, or cancel it. */
     private fun queueRow(item: QueueItem, refresh: () -> Unit): View {
         val kind = if (item.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE
         val info = knownTitles[item.tmdbId * 2 + if (kind == Kind.SHOW) 1 else 0]
@@ -564,17 +573,42 @@ class MoviesPanel(
         }
         FastFocus.bind(row, surfaces16, labels, rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
         row.setOnClickListener {
-            infoSheet.show("DOWNLOAD", item.title, item.detail, listOf(status, "Cancelling stops it, takes it out of the download client and deletes anything already downloaded for it."), null, listOf(
-                SheetAction("Cancel download", "Stop it and clear what has arrived", primary = true) {
-                    worker.execute {
-                        val done = queueClient.cancel(item)
-                        activity.runOnUiThread { Toast.makeText(activity, if (done) "Cancelled ${item.title}" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
-                    }
-                },
-                SheetAction("Keep it") { }
-            ))
+            val actions = mutableListOf<SheetAction>()
+            if (item.canPrioritize) {
+                actions += SheetAction("Download next", "Move to the front of the queue", primary = true) { prioritizeDownload(item, DownloadAction.NEXT, refresh) }
+                actions += SheetAction("Download now", "Bypass the queue; other downloads continue") { prioritizeDownload(item, DownloadAction.NOW, refresh) }
+            }
+            actions += SheetAction("Cancel download", "Stop it and remove its partial files") {
+                worker.execute {
+                    val done = queueClient.cancel(item)
+                    activity.runOnUiThread { Toast.makeText(activity, if (done) "Cancelled ${item.title}" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
+                }
+            }
+            infoSheet.show("DOWNLOAD", item.title, item.detail, listOf(status), null, actions)
         }
         return row
+    }
+
+    private fun prioritizeDownload(item: QueueItem, action: DownloadAction, refresh: () -> Unit) {
+        worker.execute {
+            val result = queueClient.prioritize(item, action)
+            activity.runOnUiThread {
+                if (result == DownloadActionResult.NEEDS_SIGN_IN) {
+                    com.example.tvlauncher.ui.room.QbitSignInSheet(activity, infoSheet).show(queueClient, item) { prioritizeDownload(item, action, refresh) }
+                    return@runOnUiThread
+                }
+                val message = when (result) {
+                    DownloadActionResult.DONE -> if (action == DownloadAction.NEXT) "Moved ${item.title} to the front" else "Starting ${item.title} now"
+                    DownloadActionResult.QUEUE_DISABLED -> "Queueing is switched off in qBittorrent. Use Download now instead."
+                    DownloadActionResult.NOT_FOUND -> "This download has finished or left the queue"
+                    DownloadActionResult.NOT_CONFIGURED -> "Couldn't find this download's qBittorrent connection"
+                    DownloadActionResult.NEEDS_SIGN_IN -> "Sign in to qBittorrent"
+                    DownloadActionResult.FAILED -> "Couldn't change the download right now"
+                }
+                Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
+                refresh()
+            }
+        }
     }
 
     /** Episodes of one series asked for one at a time, with no release found or grabbed yet. Pressing it offers to stop looking for them. */
@@ -615,15 +649,19 @@ class MoviesPanel(
 
     /** Where this item stands, in words: how it is going, or its place in line. */
     private fun queueStatus(item: QueueItem): String = when {
-        item.isDownloading -> {
+        item.status == "metadata" -> "Finding torrent details" + if (item.forced) " · starting immediately" else ""
+        item.status == "stalled" -> "Waiting for sources" + if (item.forced) " · starting immediately" else ""
+        item.status == "checking" -> "Checking downloaded files"
+        item.status == "downloading" -> {
             val left = ByteSize.format(item.sizeLeftBytes) + " left"
             val eta = item.etaSeconds?.let { s -> if (s < 90) " · almost done" else if (s < 7200) " · about ${s / 60} min left" else " · about ${s / 3600} h left" }.orEmpty()
-            "Downloading · $left$eta"
+            (if (item.forced) "Downloading now" else "Downloading") + " · $left$eta"
         }
         item.status == "paused" -> "Paused"
         item.status == "delayed" -> "Waiting for a better release"
         item.position == 1 -> "Next in line · waiting for a free download slot"
         item.position > 1 -> "In line · #${item.position} · waiting for a free download slot"
+        item.status == "queued" -> "Queued · waiting for a free download slot"
         item.status == "completed" -> "Finished · importing"
         item.status == "failed" -> "Failed"
         item.status == "warning" -> "Needs attention"
@@ -631,7 +669,7 @@ class MoviesPanel(
     }
 
     /** One request: poster, title, what is happening, and a bar for how far it has got. */
-    private fun downloadRow(r: SeerrRequest): View {
+    private fun downloadRow(r: SeerrRequest, refresh: () -> Unit): View {
         val info = knownTitles[titleKey(r)]
         val radius = dp(14).toFloat()
         val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(12), dp(8), dp(16), dp(8)) }
@@ -658,6 +696,20 @@ class MoviesPanel(
             row.addView(percent, LinearLayout.LayoutParams(dp(76), -2))
         }
         FastFocus.bind(row, surfaces16, labels, rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
+        if (r.canCancel) row.setOnClickListener {
+            val name = info?.first ?: "Title ${r.tmdbId}"
+            infoSheet.show("REQUEST", name, null, listOf(statusLine(r), "Cancelling stops looking for this request. Completed files and other seasons are kept."), null, listOf(
+                SheetAction("Cancel request", "Stop looking for a release", primary = true) {
+                    worker.execute {
+                        val done = queueClient.cancelRequest(r)
+                        activity.runOnUiThread {
+                            Toast.makeText(activity, if (done) "Cancelled $name" else "Couldn't cancel this request right now", Toast.LENGTH_LONG).show()
+                            if (done) refresh()
+                        }
+                    }
+                }
+            ))
+        }
         return row
     }
 
