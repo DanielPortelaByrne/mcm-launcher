@@ -130,15 +130,25 @@ class PlayerActivity : AppCompatActivity() {
             setBackgroundColor(0xFF000000.toInt())
             keepScreenOn = true
         }
-        // A captions button that shows with the controls; the remote's captions key works at any time.
+        // The CC button lives in the controls' bottom bar, beside the settings gear, so the remote can select it.
+        // The remote's captions key works at any time as well.
         captionsButton = TextView(this).apply {
-            textSize = 16f; setTextColor(0xFFF3E9CF.toInt()); setPadding(28, 14, 28, 14)
-            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 40f; setColor(0xCC302319.toInt()) }
+            textSize = 16f; gravity = Gravity.CENTER; setPadding(28, 0, 28, 0)
+            isFocusable = true; isClickable = true
             setOnClickListener { toggleCaptions() }
+            setOnFocusChangeListener { v, focused ->
+                v.background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 40f; setColor(if (focused) 0xFFF3E9CF.toInt() else 0xCC302319.toInt()) }
+                (v as TextView).setTextColor(if (focused) 0xFF26271D.toInt() else 0xFFF3E9CF.toInt())
+            }
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = 40f; setColor(0xCC302319.toInt()) }
+        }
+        val bottomBar = view.findViewById<android.view.ViewGroup?>(androidx.media3.ui.R.id.exo_bottom_bar)
+        val settingsGear = view.findViewById<View?>(androidx.media3.ui.R.id.exo_settings)
+        if (bottomBar != null) {
+            val at = settingsGear?.let { bottomBar.indexOfChild(it) }?.takeIf { it >= 0 } ?: bottomBar.childCount
+            bottomBar.addView(captionsButton, at, android.widget.LinearLayout.LayoutParams(-2, dp(40)).apply { setMargins(dp(8), 0, dp(8), 0); gravity = Gravity.CENTER_VERTICAL })
         }
         val root = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()); addView(view, -1, -1) }
-        root.addView(captionsButton, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, 64, 120) })
-        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility -> captionsButton.visibility = visibility })
         setContentView(root)
         applyCaptions()
         updateCaptionsLabel()
@@ -255,6 +265,8 @@ class PlayerActivity : AppCompatActivity() {
             fail(error.errorCodeName)
         }
     }
+
+    private fun dp(v: Int) = Math.round(v * resources.displayMetrics.density)
 
     private fun hasCaptions(): Boolean = ::player.isInitialized && player.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT }
 
