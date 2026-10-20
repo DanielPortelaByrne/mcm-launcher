@@ -119,6 +119,7 @@ class SeerrClient(context: Context) {
 
     /** Seerr's Sonarr settings (address, key, profile, folder). Needs an admin sign-in. */
     fun sonarrSettings(): String? = get("/api/v1/settings/sonarr")
+    fun radarrSettings(): String? = get("/api/v1/settings/radarr")
 
     /** The machine Seerr runs on, as the TV reaches it. */
     val host: String get() = try { URL(base).host } catch (_: Exception) { "192.168.1.233" }

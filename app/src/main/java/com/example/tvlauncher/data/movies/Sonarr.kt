@@ -116,15 +116,5 @@ class SonarrClient(private val seerr: SeerrClient) {
 
     private fun seriesId(c: SonarrConfig, tmdbId: Long): Int? = call(c, "GET", "/api/v3/series")?.let { SonarrApi.findSeries(it, tmdbId) }
 
-    private fun call(c: SonarrConfig, method: String, path: String, body: String? = null): String? = try {
-        val conn = URL(c.baseUrl + path).openConnection() as HttpURLConnection
-        conn.requestMethod = method; conn.connectTimeout = 6000; conn.readTimeout = 20000
-        conn.setRequestProperty("X-Api-Key", c.apiKey); conn.setRequestProperty("Accept", "application/json")
-        if (body != null) { conn.doOutput = true; conn.setRequestProperty("Content-Type", "application/json") }
-        try {
-            if (body != null) conn.outputStream.use { it.write(body.toByteArray()) }
-            val code = conn.responseCode
-            if (code in 200..299) (conn.inputStream.bufferedReader().use { it.readText() }.ifBlank { "{}" }) else { Log.w(TAG, "$method ${path.substringBefore('?')} -> HTTP $code"); null }
-        } finally { conn.disconnect() }
-    } catch (e: Exception) { Log.w(TAG, "$method ${path.substringBefore('?')} failed: ${e.javaClass.simpleName}"); null }
+    private fun call(c: SonarrConfig, method: String, path: String, body: String? = null): String? = arrCall(c, method, path, body)
 }

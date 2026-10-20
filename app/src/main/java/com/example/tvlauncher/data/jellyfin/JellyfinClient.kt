@@ -126,6 +126,9 @@ class JellyfinClient(context: Context) {
 
     fun backdropUrl(id: String) = JellyfinApi.backdropUrl(JellyfinApi.cleanBase(server), id)
 
+    /** Asks Jellyfin to rescan its libraries. Used when something has been downloaded that it has not yet picked up. Needs an admin sign-in. */
+    fun refreshLibrary(): Boolean = request("POST", JellyfinApi.cleanBase(server) + "/Library/Refresh", json = "{}") != null
+
     /** How much space the library takes, in bytes; null when Jellyfin cannot be reached. */
     fun libraryBytes(): Long? {
         val uid = userId ?: return null

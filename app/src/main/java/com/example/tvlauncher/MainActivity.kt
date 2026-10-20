@@ -261,7 +261,8 @@ class MainActivity : AppCompatActivity() {
             jellyfin = com.example.tvlauncher.data.jellyfin.JellyfinClient(this),
             jellyfinSheet = com.example.tvlauncher.ui.room.JellyfinConnectSheet(this, infoSheet),
             seerr = com.example.tvlauncher.data.movies.SeerrClient(this),
-            seerrSheet = com.example.tvlauncher.ui.room.SeerrSignInSheet(this, infoSheet)
+            seerrSheet = com.example.tvlauncher.ui.room.SeerrSignInSheet(this, infoSheet),
+            infoSheet = infoSheet
         )
         bootMark("panels")
         collection = HomeCollection(this, infoSheet, artModeOverlay, ::enterArtMode,

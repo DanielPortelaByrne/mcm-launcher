@@ -42,7 +42,11 @@ import com.example.tvlauncher.data.movies.Kind
 import com.example.tvlauncher.data.movies.ByteSize
 import com.example.tvlauncher.data.movies.EpisodeOutcome
 import com.example.tvlauncher.data.movies.EpisodeState
+import com.example.tvlauncher.data.movies.QueueClient
+import com.example.tvlauncher.data.movies.QueueItem
+import com.example.tvlauncher.data.movies.QueueSource
 import com.example.tvlauncher.data.movies.RequestOutcome
+import com.example.tvlauncher.ui.room.SheetAction
 import com.example.tvlauncher.data.movies.SonarrClient
 import com.example.tvlauncher.data.movies.SeerrRequest
 import com.example.tvlauncher.data.movies.Stage
@@ -76,7 +80,8 @@ class MoviesPanel(
     private val jellyfin: JellyfinClient,
     private val jellyfinSheet: JellyfinConnectSheet,
     private val seerr: SeerrClient,
-    private val seerrSheet: SeerrSignInSheet
+    private val seerrSheet: SeerrSignInSheet,
+    private val infoSheet: com.example.tvlauncher.ui.room.InfoSheet
 ) {
     /** Where the page is: one of the tabs, or a service or genre opened from Home, or search. */
     private sealed class Dest {
@@ -353,17 +358,21 @@ class MoviesPanel(
         var firstLoad = true
         fun refresh() {
             worker.execute {
-                val requests = seerr.requests()
+                val queue = queueClient.items()
+                val inQueue = queue.orEmpty().map { it.tmdbId * 2 + if (it.source == QueueSource.SONARR) 1 else 0 }.toSet()
+                // What is already in the queue is shown from the queue; a request shows only while nothing has been handed to the client.
+                val requests = seerr.requests().filter { titleKey(it) !in inQueue }
+                queue.orEmpty().forEach { q -> val k = q.tmdbId * 2 + if (q.source == QueueSource.SONARR) 1 else 0; if (q.tmdbId > 0 && !knownTitles.containsKey(k)) seerr.titleInfo(if (q.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE, q.tmdbId)?.let { knownTitles[k] = it } }
                 requests.forEach { r -> if (!knownTitles.containsKey(titleKey(r))) seerr.titleInfo(r.kind, r.tmdbId)?.let { knownTitles[titleKey(r)] = it } }
                 activity.runOnUiThread {
                     if (gen != generation) return@runOnUiThread
                     val focused = (0 until holder.childCount).firstOrNull { holder.getChildAt(it).hasFocus() }
                     holder.removeAllViews()
-                    if (requests.isEmpty()) holder.addView(note("Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
-                    requests.forEachIndexed { i, r ->
-                        holder.addView(downloadRow(r), LinearLayout.LayoutParams(-1, dp(104)).apply { setMargins(margin, if (i > 0) dp(14) else dp(10), margin, 0) })
-                    }
-                    if (firstLoad) { firstLoad = false; holder.getChildAt(0)?.let { requestFocusRobust(overlay as ViewGroup, it) } }
+                    val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) }
+                    if (rows.isEmpty()) holder.addView(note(if (queue == null) "Couldn't reach the download queue just now." else "Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
+                    queue?.let { q -> holder.addView(Type.text(activity, "${q.count { it.isDownloading }} downloading  ·  ${q.count { it.isWaiting }} waiting", Type.Style.CAPTION).apply { setPadding(margin, dp(4), 0, 0) }) }
+                    rows.forEachIndexed { i, r -> holder.addView(r, LinearLayout.LayoutParams(-1, dp(104)).apply { setMargins(margin, if (i > 0) dp(14) else dp(10), margin, 0) }) }
+                    if (firstLoad) { firstLoad = false; holder.getChildAt(if (holder.getChildAt(0) is TextView) 1 else 0)?.let { requestFocusRobust(overlay as ViewGroup, it) } }
                     else focused?.let { holder.getChildAt(it)?.requestFocus() }
                     loadStorage()
                     // Progress moves, so look again every little while for as long as this page is the one on screen.
@@ -372,6 +381,64 @@ class MoviesPanel(
             }
         }
         refresh()
+    }
+
+    private val queueClient by lazy { QueueClient(seerr) }
+
+    /** A row for something in the download queue: what it is, where it stands, and a bar. Pressing it offers to cancel. */
+    private fun queueRow(item: QueueItem, refresh: () -> Unit): View {
+        val kind = if (item.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE
+        val info = knownTitles[item.tmdbId * 2 + if (kind == Kind.SHOW) 1 else 0]
+        val radius = dp(14).toFloat()
+        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(12), dp(8), dp(16), dp(8)) }
+        val posterBox = FrameLayout(activity).apply { background = GradientDrawable().apply { cornerRadius = dp(6).toFloat(); setColor(0xFF3A2C1E.toInt()) } }
+        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        posterBox.addView(image, FrameLayout.LayoutParams(-1, -1))
+        info?.second?.let { u -> images.load(u) { b -> image.setImageDrawable(androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, b).apply { cornerRadius = dp(6).toFloat() }) } }
+        row.addView(posterBox, LinearLayout.LayoutParams(dp(56), dp(84)))
+
+        val status = queueStatus(item)
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
+        val title = Type.text(activity, listOfNotNull(item.title, item.detail).joinToString("  ·  "), Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        val line = Type.text(activity, status, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }
+        column.addView(title); column.addView(line, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
+        column.addView(ProgressBar(activity, item.progress(), activity.getColor(R.color.terracotta)), LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
+        row.addView(column, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
+        val labels = mutableListOf<TextView>(title, line)
+        item.progress()?.let { p ->
+            val percent = TextView(activity).apply { text = "${Math.round(p * 100)}%"; textSize = 24f; typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(R.color.ivory)); gravity = Gravity.END }
+            labels += percent; row.addView(percent, LinearLayout.LayoutParams(dp(76), -2))
+        }
+        FastFocus.bind(row, surfaces16, labels, rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
+        row.setOnClickListener {
+            infoSheet.show("DOWNLOAD", item.title, item.detail, listOf(status, "Cancelling stops it, takes it out of the download client and deletes anything already downloaded for it."), null, listOf(
+                SheetAction("Cancel download", "Stop it and clear what has arrived", primary = true) {
+                    worker.execute {
+                        val done = queueClient.cancel(item)
+                        activity.runOnUiThread { Toast.makeText(activity, if (done) "Cancelled ${item.title}" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
+                    }
+                },
+                SheetAction("Keep it") { }
+            ))
+        }
+        return row
+    }
+
+    /** Where this item stands, in words: how it is going, or its place in line. */
+    private fun queueStatus(item: QueueItem): String = when {
+        item.isDownloading -> {
+            val left = ByteSize.format(item.sizeLeftBytes) + " left"
+            val eta = item.etaSeconds?.let { s -> if (s < 90) " · almost done" else if (s < 7200) " · about ${s / 60} min left" else " · about ${s / 3600} h left" }.orEmpty()
+            "Downloading · $left$eta"
+        }
+        item.status == "paused" -> "Paused"
+        item.status == "delayed" -> "Waiting for a better release"
+        item.position == 1 -> "Next in line · waiting for a free download slot"
+        item.position > 1 -> "In line · #${item.position} · waiting for a free download slot"
+        item.status == "completed" -> "Finished · importing"
+        item.status == "failed" -> "Failed"
+        item.status == "warning" -> "Needs attention"
+        else -> item.status.replaceFirstChar { it.uppercase() }
     }
 
     /** One request: poster, title, what is happening, and a bar for how far it has got. */
@@ -658,6 +725,7 @@ class MoviesPanel(
 
     /** A season as the picker holds it: Seerr's view of it, which changes when the viewer asks for it. */
     private val sonarr by lazy { SonarrClient(seerr) }
+    private var lastScanMs = 0L
 
     private class SeasonState(val number: Int, val name: String, val episodeCount: Int, var availability: Availability)
 
@@ -675,6 +743,9 @@ class MoviesPanel(
         worker.execute {
             val owned = e.library?.let { jellyfin.episodes(it.id) }.orEmpty()
             val states = (if (tmdb != null && seerr.isSignedIn) sonarr.episodeStates(tmdb) else emptyMap()).toMutableMap()
+            // Episodes on disk that Jellyfin has not yet picked up: ask it to scan (at most every ten minutes), so they turn into Play.
+            val unscanned = states.any { (k, v) -> v == EpisodeState.DOWNLOADED && owned.none { it.season == k.first && it.episode == k.second } }
+            if (unscanned && System.currentTimeMillis() - lastScanMs > 10 * 60_000L) { lastScanMs = System.currentTimeMillis(); jellyfin.refreshLibrary() }
             val fromSeerr = if (tmdb != null && seerr.isSignedIn) seerr.seasons(tmdb) else emptyList()
             val seasons = fromSeerr.map { SeasonState(it.number, it.name, it.episodeCount, it.availability) }.ifEmpty {
                 owned.mapNotNull { it.season }.filter { it > 0 }.distinct().sorted().map { n -> SeasonState(n, "Season $n", owned.count { it.season == n }, Availability.AVAILABLE) }
@@ -776,7 +847,7 @@ class MoviesPanel(
             val own = states[s.number to number]
             return when {
                 mine != null -> "▶  Play"
-                own == EpisodeState.DOWNLOADED -> "Downloaded"
+                own == EpisodeState.DOWNLOADED -> "Downloaded · adding to library"
                 own == EpisodeState.REQUESTED -> "Requested"
                 s.availability == Availability.AVAILABLE -> "In library"
                 s.availability == Availability.REQUESTED || s.availability == Availability.PROCESSING -> "Requested"
