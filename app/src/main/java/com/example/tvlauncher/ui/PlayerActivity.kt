@@ -63,6 +63,12 @@ class PlayerActivity : AppCompatActivity() {
     private var imdbId: String? = null
     /** A live channel: no resume point, no Continue watching card, and no Stremio to fall back on. */
     private var live = false
+    /** Set for a Jellyfin title: playback is reported to the server, so "continue watching" and watched marks follow the viewer. */
+    private var jf: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null
+    private val sessionId = java.util.UUID.randomUUID().toString().replace("-", "")
+    private val reporter by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+    private var jfStarted = false
+    private var jfStopped = false
     private var title: String = ""
 
     private lateinit var history: PlaybackStore
@@ -87,7 +93,7 @@ class PlayerActivity : AppCompatActivity() {
 
     private val startupTimeout = Runnable { fail("no picture in time") }
     private val saveTick = object : Runnable {
-        override fun run() { saveResume(); snapshotToContinue(); handler.postDelayed(this, 15_000) }
+        override fun run() { saveResume(); snapshotToContinue(); reportToJellyfin("Progress"); handler.postDelayed(this, 15_000) }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -96,7 +102,8 @@ class PlayerActivity : AppCompatActivity() {
         items = parse(intent.getStringExtra(EXTRA_ITEMS))
         imdbId = intent.getStringExtra(EXTRA_IMDB)
         live = intent.getBooleanExtra(EXTRA_LIVE, false)
-        title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
+        jf = com.example.tvlauncher.data.jellyfin.JellyfinReport.fromJson(intent.getStringExtra(EXTRA_JF))
+        title =intent.getStringExtra(EXTRA_TITLE).orEmpty()
         history = PlaybackStore(this)
         continueStore = ContinueWatching(this)
         payload = intent.getStringExtra(EXTRA_PAYLOAD)
@@ -131,7 +138,9 @@ class PlayerActivity : AppCompatActivity() {
         // A torrent has to find peers before the first byte arrives, so the engine gets far longer than the 8 s default.
         val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setDefaultRequestProperties(item.headers)
             .setConnectTimeoutMs(if (item.viaEngine) 60_000 else 15_000).setReadTimeoutMs(if (item.viaEngine) 60_000 else 15_000)
-        val resume = resumePrefs.getLong(imdbId ?: "", 0L).takeIf { it > 60_000 } ?: 0L
+        // A Jellyfin title picks up where the server says the viewer left off; anything else, where this TV last did.
+        val serverStart = jf?.startMs
+        val resume = if (serverStart != null) serverStart.takeIf { it > 60_000 } ?: 0L else resumePrefs.getLong(imdbId ?: "", 0L).takeIf { it > 60_000 } ?: 0L
         player.setMediaSource(DefaultMediaSourceFactory(this).setDataSourceFactory(http).createMediaSource(MediaItem.fromUri(Uri.parse(item.url))), resume)
         prepareAt = SystemClock.elapsedRealtime()
         player.prepare()
@@ -179,6 +188,7 @@ class PlayerActivity : AppCompatActivity() {
             startupMs = SystemClock.elapsedRealtime() - prepareAt
             handler.removeCallbacks(startupTimeout)
             Log.i(TAG, "First frame after ${startupMs} ms")
+            if (!jfStarted) { jfStarted = true; reportToJellyfin("Playing") }
         }
 
         override fun onPlaybackStateChanged(state: Int) {
@@ -187,7 +197,7 @@ class PlayerActivity : AppCompatActivity() {
                     bufferStart = SystemClock.elapsedRealtime(); bufferEvents++
                 }
                 Player.STATE_READY -> { closeBuffer(); seeking = false }
-                Player.STATE_ENDED -> { closeBuffer(); ended = true; resumePrefs.edit().remove(imdbId ?: "").apply()
+                Player.STATE_ENDED -> { closeBuffer(); ended = true; reportToJellyfin("Stopped", atEnd = true); resumePrefs.edit().remove(imdbId ?: "").apply()
                     continueStore.save(ResumeItem(title, null, packageName, null, player.duration, player.duration, null, System.currentTimeMillis()), null) }
             }
         }
@@ -198,6 +208,7 @@ class PlayerActivity : AppCompatActivity() {
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (started && !ended) reportToJellyfin("Progress", paused = !isPlaying)
             val now = SystemClock.elapsedRealtime()
             if (isPlaying) playingSince = now else if (playingSince != 0L) { playMs += now - playingSince; playingSince = 0 }
         }
@@ -272,7 +283,32 @@ class PlayerActivity : AppCompatActivity() {
             saveResume()
             snapshotToContinue()
             player.pause()
+            reportToJellyfin("Stopped")
             record(failed = false)
+        }
+    }
+
+    /**
+     * Tells Jellyfin where playback is. "Playing" opens the session, "Progress" updates it (also on pause), and
+     * "Stopped" closes it with the final position, at which point Jellyfin counts a title as watched if it is near the end.
+     */
+    private fun reportToJellyfin(kind: String, paused: Boolean = false, atEnd: Boolean = false) {
+        val r = jf ?: return
+        if (!::player.isInitialized) return
+        if (kind != "Playing" && (!jfStarted || jfStopped)) return
+        if (kind == "Stopped") jfStopped = true
+        val position = if (atEnd && player.duration > 0) player.duration else player.currentPosition
+        val body = com.example.tvlauncher.data.jellyfin.JellyfinApi.playbackBody(r.itemId, r.sourceId, position, paused, sessionId)
+        val url = com.example.tvlauncher.data.jellyfin.JellyfinApi.reportUrl(r.base, kind)
+        val headers = items.getOrNull(index)?.headers.orEmpty()
+        reporter.execute {
+            try {
+                val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                c.requestMethod = "POST"; c.connectTimeout = 5000; c.readTimeout = 5000; c.doOutput = true
+                c.setRequestProperty("Content-Type", "application/json")
+                headers.forEach { (k, v) -> c.setRequestProperty(k, v) }
+                try { c.outputStream.use { it.write(body.toByteArray()) }; c.responseCode } finally { c.disconnect() }
+            } catch (_: Exception) { /* progress is best-effort: the next tick sends the position again */ }
         }
     }
 
@@ -288,12 +324,13 @@ class PlayerActivity : AppCompatActivity() {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_PAYLOAD = "payload"
         private const val EXTRA_LIVE = "live"
+        private const val EXTRA_JF = "jf"
         private const val STARTUP_TIMEOUT_MS = 25_000L
         /** A torrent has to find peers and buffer first. */
         private const val ENGINE_STARTUP_TIMEOUT_MS = 75_000L
 
         /** Starts playback of [ranked] in order, capped at three attempts. */
-        fun launch(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?) {
+        fun launch(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?, report: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null) {
             val a = JSONArray()
             ranked.filter { it.playable }.take(3).forEach { r ->
                 val c = r.candidate
@@ -301,9 +338,9 @@ class PlayerActivity : AppCompatActivity() {
                     .put("res", c.meta.resolution.name).put("codec", c.meta.codec.name).put("src", c.meta.source.name)
                     .put("bitrate", r.requiredBps).put("label", c.meta.qualityLabel()).put("engine", c.viaEngine))
             }
-            val payload = JSONObject().put("items", a.toString()).put("imdb", imdbId ?: "").put("title", title).toString()
+            val payload = JSONObject().put("items", a.toString()).put("imdb", imdbId ?: "").put("title", title).put("jf", report?.toJson() ?: "").toString()
             context.startActivity(Intent(context, PlayerActivity::class.java)
-                .putExtra(EXTRA_ITEMS, a.toString()).putExtra(EXTRA_IMDB, imdbId).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_PAYLOAD, payload))
+                .putExtra(EXTRA_ITEMS, a.toString()).putExtra(EXTRA_IMDB, imdbId).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_PAYLOAD, payload).putExtra(EXTRA_JF, report?.toJson()))
         }
 
         /** Plays one live channel from [url]. [headers] carry any sign-in the stream needs. */
@@ -320,7 +357,7 @@ class PlayerActivity : AppCompatActivity() {
             val o = JSONObject(payload)
             context.startActivity(Intent(context, PlayerActivity::class.java)
                 .putExtra(EXTRA_ITEMS, o.getString("items")).putExtra(EXTRA_IMDB, o.optString("imdb").ifBlank { null })
-                .putExtra(EXTRA_TITLE, o.optString("title")).putExtra(EXTRA_PAYLOAD, payload))
+                .putExtra(EXTRA_TITLE, o.optString("title")).putExtra(EXTRA_PAYLOAD, payload).putExtra(EXTRA_JF, o.optString("jf").ifBlank { null }))
             true
         } catch (_: Exception) { false }
 

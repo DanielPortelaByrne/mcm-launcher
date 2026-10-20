@@ -85,7 +85,10 @@ class MoviesDataTest {
     @Test fun seerr_status_and_outcomes() {
         assertEquals(Availability.AVAILABLE, SeerrApi.parseAvailability("""{"mediaInfo":{"status":5}}"""))
         assertEquals(Availability.REQUESTED, SeerrApi.parseAvailability("""{"mediaInfo":{"status":2}}"""))
-        assertEquals(Availability.DOWNLOADING, SeerrApi.parseAvailability("""{"mediaInfo":{"status":3}}"""))
+        // Seerr says "processing" as soon as Radarr or Sonarr has the request; that is not the same as bytes arriving
+        assertEquals(Availability.PROCESSING, SeerrApi.parseAvailability("""{"mediaInfo":{"status":3,"downloadStatus":[]}}"""))
+        assertEquals(Availability.PROCESSING, SeerrApi.parseAvailability("""{"mediaInfo":{"status":3}}"""))
+        assertEquals(Availability.DOWNLOADING, SeerrApi.parseAvailability("""{"mediaInfo":{"status":3,"downloadStatus":[{"size":10,"sizeLeft":5}]}}"""))
         assertEquals(Availability.NONE, SeerrApi.parseAvailability("""{"title":"no media info yet"}"""))
         assertEquals(Availability.NONE, SeerrApi.parseAvailability("junk"))
         assertEquals(RequestOutcome.QUEUED, SeerrApi.outcomeFor(201)); assertEquals(RequestOutcome.ALREADY, SeerrApi.outcomeFor(409))

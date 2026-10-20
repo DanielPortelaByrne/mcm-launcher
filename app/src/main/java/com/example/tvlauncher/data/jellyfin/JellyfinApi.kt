@@ -95,6 +95,19 @@ object JellyfinApi {
         (0 until (items?.length() ?: 0)).sumOf { items!!.getJSONObject(it).optJSONArray("MediaSources")?.optJSONObject(0)?.optLong("Size", 0L) ?: 0L }
     } catch (_: Exception) { 0L }
 
+    /** Every episode of a series the signed-in user can see, with their watch state. */
+    fun episodesUrl(base: String, userId: String, seriesId: String): String =
+        "$base/Shows/${enc(seriesId)}/Episodes?userId=${enc(userId)}&Fields=Overview"
+
+    /** Where to tell Jellyfin that playback started, moved on, or stopped: kind is "Playing", "Progress" or "Stopped". */
+    fun reportUrl(base: String, kind: String): String = if (kind == "Playing") "$base/Sessions/Playing" else "$base/Sessions/Playing/$kind"
+
+    /** One playback report. Jellyfin counts position in 100-nanosecond ticks. */
+    fun playbackBody(itemId: String, sourceId: String, positionMs: Long, paused: Boolean, sessionId: String): String = JSONObject()
+        .put("ItemId", itemId).put("MediaSourceId", sourceId).put("PlaySessionId", sessionId)
+        .put("PositionTicks", positionMs.coerceAtLeast(0L) * 10_000L).put("IsPaused", paused).put("CanSeek", true)
+        .put("PlayMethod", "DirectStream").toString()
+
     fun backdropUrl(base: String, id: String, maxWidth: Int = 1280): String = "$base/Items/${enc(id)}/Images/Backdrop?maxWidth=$maxWidth&quality=85"
 
     /** The film or series with these ids (a TMDB id is used when the IMDb one is missing), or null. Never a title match. */
@@ -222,5 +235,17 @@ object JellyfinApi {
             episode = if (o.has("IndexNumber")) o.optInt("IndexNumber") else null,
             seriesName = o.optString("SeriesName").ifBlank { null }
         )
+    }
+}
+
+/** What the player needs to tell Jellyfin how far playback has got. [startMs] is where the server says the viewer left off. */
+data class JellyfinReport(val base: String, val itemId: String, val sourceId: String, val startMs: Long) {
+    fun toJson(): String = JSONObject().put("base", base).put("itemId", itemId).put("sourceId", sourceId).put("startMs", startMs).toString()
+
+    companion object {
+        fun fromJson(json: String?): JellyfinReport? = try {
+            val o = JSONObject(json ?: return null)
+            JellyfinReport(o.getString("base"), o.getString("itemId"), o.getString("sourceId"), o.optLong("startMs", 0L))
+        } catch (_: Exception) { null }
     }
 }

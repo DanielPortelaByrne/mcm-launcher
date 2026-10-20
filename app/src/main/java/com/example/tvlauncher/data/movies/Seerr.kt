@@ -11,7 +11,8 @@ private const val TAG = "Seerr"
 /** Where the request service answers, next to the media server on the Deck. */
 const val DEFAULT_SEERR = "http://192.168.1.233:5055"
 
-enum class Availability { NONE, REQUESTED, DOWNLOADING, PARTIAL, AVAILABLE }
+/** [PROCESSING] is Seerr's own word: the request is with Radarr or Sonarr, which may not have found anything yet. Only [DOWNLOADING] means bytes are arriving. */
+enum class Availability { NONE, REQUESTED, PROCESSING, DOWNLOADING, PARTIAL, AVAILABLE }
 
 enum class RequestOutcome { QUEUED, ALREADY, NEEDS_SIGN_IN, FAILED }
 
@@ -20,10 +21,10 @@ object SeerrApi {
     fun signInBody(username: String, password: String): String =
         JSONObject().put("username", username).put("password", password).toString()
 
-    /** Films are asked for outright; for a series every season is asked for. */
-    fun requestBody(kind: Kind, tmdbId: Long): String {
+    /** Films are asked for outright. A series asks for the given [seasons], or for every season when none are named. Seerr cannot ask for single episodes. */
+    fun requestBody(kind: Kind, tmdbId: Long, seasons: List<Int>? = null): String {
         val o = JSONObject().put("mediaType", if (kind == Kind.MOVIE) "movie" else "tv").put("mediaId", tmdbId)
-        if (kind == Kind.SHOW) o.put("seasons", "all")
+        if (kind == Kind.SHOW) o.put("seasons", if (seasons.isNullOrEmpty()) "all" else org.json.JSONArray(seasons))
         return o.toString()
     }
 
@@ -31,14 +32,19 @@ object SeerrApi {
 
     /** Seerr's media status numbers: 1 unknown, 2 pending, 3 processing, 4 partly available, 5 available. */
     fun parseAvailability(json: String): Availability = try {
-        when (JSONObject(json).optJSONObject("mediaInfo")?.optInt("status", 1)) {
+        val info = JSONObject(json).optJSONObject("mediaInfo")
+        fun of(status: Int?, downloading: Boolean) = when (status) {
             2 -> Availability.REQUESTED
-            3 -> Availability.DOWNLOADING
+            3 -> if (downloading) Availability.DOWNLOADING else Availability.PROCESSING
             4 -> Availability.PARTIAL
             5 -> Availability.AVAILABLE
             else -> Availability.NONE
         }
+        of(info?.optInt("status", 1), (info?.optJSONArray("downloadStatus")?.length() ?: 0) > 0)
     } catch (_: Exception) { Availability.NONE }
+
+    /** Where one season stands, from the media record Seerr keeps once something has been asked for. */
+    fun seasonAvailability(status: Int): Availability = when (status) { 2 -> Availability.REQUESTED; 3 -> Availability.PROCESSING; 4 -> Availability.PARTIAL; 5 -> Availability.AVAILABLE; else -> Availability.NONE }
 
     fun outcomeFor(httpCode: Int): RequestOutcome = when (httpCode) {
         200, 201, 202 -> RequestOutcome.QUEUED
@@ -82,11 +88,12 @@ class SeerrClient(context: Context) {
         } finally { c.disconnect() }
     } catch (e: Exception) { Log.w(TAG, "signIn failed: ${e.javaClass.simpleName}"); "Couldn't reach the request service" }
 
-    fun request(kind: Kind, tmdbId: Long): RequestOutcome = try {
+    /** Asks for a film, or for [seasons] of a series (every season when none are named). */
+    fun request(kind: Kind, tmdbId: Long, seasons: List<Int>? = null): RequestOutcome = try {
         val c = open("POST", "$base/api/v1/request")
         c.doOutput = true
         try {
-            c.outputStream.use { it.write(SeerrApi.requestBody(kind, tmdbId).toByteArray()) }
+            c.outputStream.use { it.write(SeerrApi.requestBody(kind, tmdbId, seasons).toByteArray()) }
             val code = c.responseCode
             if (code == 401) signOut()
             SeerrApi.outcomeFor(code)
@@ -100,6 +107,10 @@ class SeerrClient(context: Context) {
 
     /** Everything the owner has asked for, newest first. Empty when not signed in or Seerr cannot be reached. */
     fun requests(): List<SeerrRequest> = get("/api/v1/request?take=30&skip=0&sort=added")?.let { SeerrRequests.parse(it) }.orEmpty()
+
+    fun seasons(tmdbId: Long): List<SeasonInfo> = get(SeerrApi.path(Kind.SHOW, tmdbId))?.let { SeerrSeasons.parseSeasons(it) }.orEmpty()
+
+    fun episodes(tmdbId: Long, season: Int): List<EpisodeInfo> = get(SeerrApi.path(Kind.SHOW, tmdbId) + "/season/$season")?.let { SeerrSeasons.parseEpisodes(it) }.orEmpty()
 
     fun titleInfo(kind: Kind, tmdbId: Long): Pair<String, String?>? = get(SeerrApi.path(kind, tmdbId))?.let { SeerrRequests.parseTitle(it) }
 
@@ -192,4 +203,32 @@ object ByteSize {
             else -> String.format(java.util.Locale.UK, "%.0f MB", bytes / 1e6)
         }
     }
+}
+
+// --- Seasons and episodes ----------------------------------------------------------------------
+
+/** A season of a series with where it stands. Season 0 (specials) is left out by [SeerrSeasons.parseSeasons]. */
+data class SeasonInfo(val number: Int, val name: String, val episodeCount: Int, val availability: Availability)
+
+data class EpisodeInfo(val season: Int, val number: Int, val name: String, val overview: String?, val airDate: String?)
+
+object SeerrSeasons {
+    fun parseSeasons(json: String): List<SeasonInfo> = try {
+        val root = JSONObject(json)
+        val tracked = root.optJSONObject("mediaInfo")?.optJSONArray("seasons")
+        val status = HashMap<Int, Int>()
+        for (i in 0 until (tracked?.length() ?: 0)) tracked!!.getJSONObject(i).let { status[it.optInt("seasonNumber")] = it.optInt("status", 1) }
+        val seasons = root.getJSONArray("seasons")
+        (0 until seasons.length()).map { seasons.getJSONObject(it) }
+            .filter { it.optInt("seasonNumber") > 0 }
+            .map { SeasonInfo(it.optInt("seasonNumber"), it.optString("name").ifBlank { "Season ${it.optInt("seasonNumber")}" }, it.optInt("episodeCount"), SeerrApi.seasonAvailability(status[it.optInt("seasonNumber")] ?: 1)) }
+    } catch (_: Exception) { emptyList() }
+
+    fun parseEpisodes(json: String): List<EpisodeInfo> = try {
+        val eps = JSONObject(json).getJSONArray("episodes")
+        (0 until eps.length()).map { eps.getJSONObject(it) }.map {
+            EpisodeInfo(it.optInt("seasonNumber"), it.optInt("episodeNumber"), it.optString("name").ifBlank { "Episode ${it.optInt("episodeNumber")}" },
+                it.optString("overview").ifBlank { null }, it.optString("airDate").ifBlank { null })
+        }
+    } catch (_: Exception) { emptyList() }
 }

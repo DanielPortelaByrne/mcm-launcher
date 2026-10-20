@@ -108,6 +108,12 @@ class JellyfinClient(context: Context) {
         return next ?: request("GET", JellyfinApi.firstEpisodeUrl(base, uid, seriesId))?.let { JellyfinApi.parseItems(it).firstOrNull() }
     }
 
+    /** Every episode of a series, with season and episode numbers, or empty when there are none or Jellyfin cannot be reached. */
+    fun episodes(seriesId: String): List<JellyfinItem> {
+        val uid = userId ?: return emptyList()
+        return request("GET", JellyfinApi.episodesUrl(JellyfinApi.cleanBase(server), uid, seriesId))?.let { JellyfinApi.parseItems(it) }.orEmpty()
+    }
+
     /** The signed-in user's name, to save typing it into the request service. */
     fun userName(): String? = request("GET", JellyfinApi.cleanBase(server) + "/Users/Me")?.let { try { JSONObject(it).optString("Name").ifBlank { null } } catch (_: Exception) { null } }
 
