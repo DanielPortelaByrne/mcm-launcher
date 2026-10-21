@@ -108,4 +108,41 @@ class QbitTest {
         assertNull(QbitApi.config(json, "Other", "deck"))
         assertNull(QbitApi.config("junk", null, "deck"))
     }
+
+    @Test fun supports_qbittorrent_52_cookie_name_and_204_action_responses() {
+        val http = Fake { call -> when {
+            call.path.endsWith("auth/login") -> QbitReply(204, cookies = listOf("QBT_SID_8090=new-session; HttpOnly; Path=/"))
+            call.cookie == null -> QbitReply(403)
+            call.method == "GET" -> QbitReply(200, torrent())
+            else -> QbitReply(204)
+        } }
+        val client = QbitClient(config, http)
+        assertEquals(DownloadActionResult.DONE, client.perform(hash, DownloadAction.NOW))
+        assertEquals("QBT_SID_8090=new-session", http.calls.last().cookie)
+        assertEquals(1, http.calls.count { it.path.endsWith("auth/login") })
+    }
+
+    @Test fun a_204_without_a_real_session_cookie_is_not_a_successful_signin() {
+        assertNull(QbitApi.loginCookie(204, "", emptyList()))
+        assertNull(QbitApi.loginCookie(204, "", listOf("QBT_SID_8090=; Path=/")))
+        assertNull(QbitApi.loginCookie(401, "", listOf("SID=test")))
+        assertNull(QbitApi.loginCookie(200, "Fails.", listOf("SID=test")))
+        assertEquals("SID=legacy", QbitApi.loginCookie(200, "Ok.", listOf("SID=legacy; Path=/")))
+    }
+
+    @Test fun next_accepts_204_for_move_and_start_without_forcing_or_pausing_others() {
+        val http = Fake { if (it.method == "GET") QbitReply(200, torrent()) else QbitReply(204) }
+        assertEquals(DownloadActionResult.DONE, QbitClient(config, http).perform(hash, DownloadAction.NEXT))
+        assertFalse(http.calls.any { it.path.contains("pause") || it.path.contains("setForceStart") })
+        assertTrue(http.calls.filter { it.method == "POST" }.all { it.body == "hashes=$hash" })
+    }
+
+    @Test fun real_torrent_size_progress_and_peers_replace_unknown_arr_values() {
+        val torrent = QbitApi.torrents("""[{"hash":"$hash","state":"downloading","priority":1,"progress":0.75,"size":1000,"amount_left":250,"dlspeed":1200000,"num_seeds":9,"eta":8640000}]""").getValue(hash)
+        val item = QueueItem(QueueSource.SONARR, 1, "Series", null, 7, "queued", 0, 0, null, null)
+        val actual = QbitApi.apply(item, torrent)
+        assertEquals(0.75f, actual.progress()!!, 0.001f)
+        assertEquals(1200000L, actual.speedBytes); assertEquals(9, actual.seeds)
+        assertNull(torrent.etaSeconds); assertTrue(actual.clientVerified)
+    }
 }

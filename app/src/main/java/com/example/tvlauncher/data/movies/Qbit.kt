@@ -10,11 +10,20 @@ import org.json.JSONObject
 /** Connection settings are read from the existing download client and kept only in memory. */
 class QbitConfig(val baseUrl: String, val username: String, val password: String)
 
-data class TorrentState(val hash: String, val state: String, val priority: Int, val forced: Boolean, val progress: Double)
+data class TorrentState(val hash: String, val state: String, val priority: Int, val forced: Boolean, val progress: Double,
+    val speedBytes: Long? = null, val seeds: Int? = null, val sizeBytes: Long? = null, val leftBytes: Long? = null, val etaSeconds: Long? = null)
 enum class DownloadAction { NEXT, NOW }
 enum class DownloadActionResult { DONE, QUEUE_DISABLED, NOT_FOUND, NOT_CONFIGURED, NEEDS_SIGN_IN, FAILED }
 
 object QbitApi {
+    /** 5.2 returns 204 and QBT_SID_<port>; older servers return 200/Ok. and SID. */
+    fun loginCookie(code: Int, body: String, cookies: List<String>): String? {
+        if (code !in 200..299 || body.trim() == "Fails.") return null
+        return cookies.map { it.substringBefore(';').trim() }.firstOrNull {
+            Regex("(?:SID|QBT_SID_[0-9]+)=[^;\\s]+").matches(it)
+        }
+    }
+
     fun validHash(hash: String?): Boolean = hash != null && Regex("(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})").matches(hash)
     fun form(vararg fields: Pair<String, String>): String = fields.joinToString("&") { (key, value) ->
         URLEncoder.encode(key, "UTF-8") + "=" + URLEncoder.encode(value, "UTF-8")
@@ -46,7 +55,12 @@ object QbitApi {
         (0 until all.length()).map { all.getJSONObject(it) }.mapNotNull {
             val hash = it.optString("hash").lowercase()
             if (!validHash(hash)) null else hash to TorrentState(hash, it.optString("state"), it.optInt("priority", -1),
-                it.optBoolean("force_start"), it.optDouble("progress", 0.0))
+                it.optBoolean("force_start"), it.optDouble("progress", 0.0),
+                speedBytes = it.optLong("dlspeed", -1).takeIf { v -> v >= 0 },
+                seeds = it.optInt("num_seeds", -1).takeIf { v -> v >= 0 },
+                sizeBytes = it.optLong("size", -1).takeIf { v -> v >= 0 },
+                leftBytes = it.optLong("amount_left", -1).takeIf { v -> v >= 0 },
+                etaSeconds = it.optLong("eta", -1).takeIf { v -> v in 1 until 8_640_000 })
         }.toMap()
     } catch (_: Exception) { emptyMap() }
 
@@ -62,8 +76,12 @@ object QbitApi {
             "error", "missingFiles" -> "failed"
             else -> item.status
         }
-        return item.copy(status = status, position = if (status == "queued") torrent.priority.coerceAtLeast(0) else 0,
-            canPrioritize = torrent.progress < 1.0 && status !in setOf("completed", "failed", "checking"), forced = torrent.forced)
+        val size = torrent.sizeBytes?.takeIf { it > 0 }
+        return item.copy(sizeBytes = size ?: item.sizeBytes,
+            sizeLeftBytes = if (size != null) torrent.leftBytes?.coerceIn(0, size) ?: item.sizeLeftBytes else item.sizeLeftBytes,
+            etaSeconds = torrent.etaSeconds ?: item.etaSeconds, speedBytes = torrent.speedBytes, seeds = torrent.seeds,
+            status = status, position = if (status == "queued") torrent.priority.coerceAtLeast(0) else 0,
+            canPrioritize = torrent.progress < 1.0 && status !in setOf("completed", "failed", "checking"), forced = torrent.forced, clientVerified = true)
     }
 }
 
@@ -97,17 +115,17 @@ internal class QbitClient(
         if (torrent.progress >= 1.0) return DownloadActionResult.NOT_FOUND
         val hashes = QbitApi.form("hashes" to selected)
         if (action == DownloadAction.NOW) {
-            return if (call("POST", "/api/v2/torrents/setForceStart", "$hashes&value=true").code == 200)
+            return if (call("POST", "/api/v2/torrents/setForceStart", "$hashes&value=true").code in 200..299)
                 DownloadActionResult.DONE else DownloadActionResult.FAILED
         }
         val moved = call("POST", "/api/v2/torrents/topPrio", hashes)
         if (moved.code == 409) return DownloadActionResult.QUEUE_DISABLED
-        if (moved.code != 200) return DownloadActionResult.FAILED
-        if (torrent.forced && call("POST", "/api/v2/torrents/setForceStart", "$hashes&value=false").code != 200)
+        if (moved.code !in 200..299) return DownloadActionResult.FAILED
+        if (torrent.forced && call("POST", "/api/v2/torrents/setForceStart", "$hashes&value=false").code !in 200..299)
             return DownloadActionResult.FAILED
         var resumed = call("POST", "/api/v2/torrents/start", hashes)
         if (resumed.code in setOf(404, 405)) resumed = call("POST", "/api/v2/torrents/resume", hashes)
-        return if (resumed.code == 200) DownloadActionResult.DONE else DownloadActionResult.FAILED
+        return if (resumed.code in 200..299) DownloadActionResult.DONE else DownloadActionResult.FAILED
     }
 
     /** User-entered password goes only to the login endpoint; only its session cookie is retained. */
@@ -115,8 +133,7 @@ internal class QbitClient(
     fun signIn(username: String, password: String): Boolean {
         val login = try { transport.call("POST", "/api/v2/auth/login", QbitApi.form("username" to username, "password" to password), null) }
                     catch (_: Exception) { QbitReply(0) }
-        if (login.code != 200 || login.body.trim() != "Ok.") return false
-        val session = login.cookies.map { it.substringBefore(';').trim() }.firstOrNull { it.startsWith("SID=") } ?: return false
+        val session = QbitApi.loginCookie(login.code, login.body, login.cookies) ?: return false
         cookie = session
         rejectedCredentials = false
         onSession(session)
@@ -130,12 +147,11 @@ internal class QbitClient(
             if (rejectedCredentials || config.password.isEmpty()) return reply // masked settings need one-time sign-in
             val login = try { transport.call("POST", "/api/v2/auth/login",
                 QbitApi.form("username" to config.username, "password" to config.password), null) } catch (_: Exception) { QbitReply(0) }
-            if (login.code != 200 || login.body.trim() != "Ok.") {
-                if (login.code in setOf(200, 401, 403)) rejectedCredentials = true
+            cookie = QbitApi.loginCookie(login.code, login.body, login.cookies)
+            if (cookie == null) {
+                if (login.code in 200..299 || login.code in setOf(401, 403)) rejectedCredentials = true
                 return reply
             }
-            cookie = login.cookies.map { it.substringBefore(';').trim() }.firstOrNull { it.startsWith("SID=") }
-            if (cookie == null) return reply
             onSession(cookie!!)
             reply = send()
         }

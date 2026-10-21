@@ -53,6 +53,19 @@ object SeerrApi {
         else -> RequestOutcome.FAILED
     }
 
+    /** Complete sign-in: a saved session is success (null), not a reason to enter the missing-cookie fallback. */
+    fun finishSignIn(httpCode: Int, headers: Map<String?, List<String>>?, saveSession: (String) -> Unit): String? = when (httpCode) {
+        200 -> {
+            val session = sessionCookie(setCookies(headers))
+            if (session == null) "Signed in, but no session came back" else {
+                saveSession(session)
+                null
+            }
+        }
+        401, 403 -> "Wrong username or password"
+        else -> "Couldn't sign in (HTTP $httpCode)"
+    }
+
     /** The session cookie out of a sign-in answer's Set-Cookie headers, as it should be sent back. */
     fun sessionCookie(setCookie: List<String>?): String? =
         setCookie?.firstOrNull { it.trim().startsWith("connect.sid=", ignoreCase = true) }?.trim()?.substringBefore(';')
@@ -79,12 +92,12 @@ class SeerrClient(context: Context) {
         c.doOutput = true
         try {
             c.outputStream.use { it.write(SeerrApi.signInBody(username, password).toByteArray()) }
-            when (val code = c.responseCode) {
-                200 -> SeerrApi.sessionCookie(SeerrApi.setCookies(c.headerFields))?.let { prefs.edit().putString("cookie", it).apply(); null }
-                    ?: run { Log.w(TAG, "signed in but no session cookie; headers=${c.headerFields.keys.filterNotNull()} cookies=${SeerrApi.setCookies(c.headerFields).map { it.substringBefore('=') }}"); "Signed in, but no session came back" }
-                401, 403 -> "Wrong username or password"
-                else -> "Couldn't sign in (HTTP $code)"
+            val code = c.responseCode
+            val error = SeerrApi.finishSignIn(code, c.headerFields) { session ->
+                prefs.edit().putString("cookie", session).apply()
             }
+            if (code == 200 && error != null) Log.w(TAG, "Sign-in response omitted a usable session cookie")
+            error
         } finally { c.disconnect() }
     } catch (e: Exception) { Log.w(TAG, "signIn failed: ${e.javaClass.simpleName}"); "Couldn't reach the request service" }
 
@@ -112,7 +125,42 @@ class SeerrClient(context: Context) {
     } catch (_: Exception) { Availability.NONE }
 
     /** Everything the owner has asked for, newest first. Empty when not signed in or Seerr cannot be reached. */
-    fun requests(): List<SeerrRequest> = get("/api/v1/request?take=30&skip=0&sort=added")?.let { SeerrRequests.parse(it) }.orEmpty()
+    fun requests(): List<SeerrRequest> = requestsOrNull().orEmpty()
+
+    /** Null on connectivity/authentication failure, so the UI cannot confuse failure with an empty list. */
+    fun requestsOrNull(): List<SeerrRequest>? {
+        val rows = ArrayList<SeerrRequest>()
+        for (skip in 0 until 10_000 step 100) {
+            val json = get("/api/v1/request?take=100&skip=$skip&sort=added") ?: return null
+            rows += SeerrRequests.parse(json)
+            val count = try { JSONObject(json).getJSONArray("results").length() } catch (_: Exception) { return null }
+            if (count < 100) break
+        }
+        return rows
+    }
+
+    /** Server-side qBittorrent session: no downloader password/API key is sent to the TV. */
+    fun serverTorrents(): Map<String, TorrentState>? = pipelineCall("GET", "/torrents")?.takeIf { it.trimStart().startsWith("[") }?.let { QbitApi.torrents(it) }
+
+    fun serverPrioritize(hash: String, action: DownloadAction): DownloadActionResult? {
+        if (!QbitApi.validHash(hash)) return DownloadActionResult.NOT_FOUND
+        val json = pipelineCall("POST", "/torrents/${hash.lowercase()}/${if (action == DownloadAction.NEXT) "next" else "now"}") ?: return null
+        return try { DownloadActionResult.valueOf(JSONObject(json).getString("result")) } catch (_: Exception) { DownloadActionResult.FAILED }
+    }
+
+    fun pipelineStatus(): PipelineSnapshot? = pipelineCall("GET", "/requests")?.let { RequestPipelineApi.parse(it) }
+
+    /** Explicit retry of a completed unsuccessful search; the server checks ownership and rate limits. */
+    fun retrySearch(id: Int): Boolean = id > 0 && pipelineCall("POST", "/requests/$id/search") != null
+
+    private fun pipelineCall(method: String, path: String): String? = try {
+        val configured = prefs.getString("pipeline_server", null)
+        val endpoint = configured ?: java.net.URI("http", null, host, 5056, null, null, null).toString()
+        val c = open(method, endpoint.trimEnd('/') + path)
+        c.connectTimeout = 3000; c.readTimeout = 6000
+        c.setRequestProperty("X-MCM-Action", "1")
+        try { if (c.responseCode in 200..299) c.inputStream.bufferedReader().use { it.readText() } else null } finally { c.disconnect() }
+    } catch (_: Exception) { null }
 
     fun seasons(tmdbId: Long): List<SeasonInfo> = get(SeerrApi.path(Kind.SHOW, tmdbId))?.let { SeerrSeasons.parseSeasons(it) }.orEmpty()
 

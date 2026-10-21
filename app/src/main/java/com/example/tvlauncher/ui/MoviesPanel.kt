@@ -50,6 +50,8 @@ import com.example.tvlauncher.data.movies.QueueClient
 import com.example.tvlauncher.data.movies.WantedEpisode
 import com.example.tvlauncher.data.movies.QueueItem
 import com.example.tvlauncher.data.movies.QueueSource
+import com.example.tvlauncher.data.movies.RequestDiagnostic
+import com.example.tvlauncher.data.movies.RequestPipelineApi
 import com.example.tvlauncher.data.movies.RequestOutcome
 import com.example.tvlauncher.ui.room.SheetAction
 import com.example.tvlauncher.data.movies.SonarrClient
@@ -449,6 +451,7 @@ class MoviesPanel(
 
     // --- Downloads ---------------------------------------------------------------------------------
 
+    private var requestDiagnostics: Map<Int, RequestDiagnostic> = emptyMap()
     private val knownTitles = HashMap<Long, Pair<String, String?>>()   // keyed by TMDB id, doubled, plus one for a series
 
     private fun titleKey(r: SeerrRequest) = r.tmdbId * 2 + if (r.kind == Kind.SHOW) 1 else 0
@@ -478,8 +481,11 @@ class MoviesPanel(
             worker.execute {
                 val queue = queueClient.items()
                 val inQueue = queue.orEmpty().map { it.tmdbId * 2 + if (it.source == QueueSource.SONARR) 1 else 0 }.toSet()
-                // What is already in the queue is shown from the queue; a request shows only while nothing has been handed to the client.
-                val requests = seerr.requests().filter { titleKey(it) !in inQueue }
+                val snapshot = seerr.pipelineStatus()
+                val diagnostics = snapshot?.takeIf { it.healthy }?.requests.orEmpty()
+                val rawRequests = seerr.requestsOrNull()
+                // One queued season must not hide another season of the same show.
+                val requests = rawRequests.orEmpty().filter { !RequestPipelineApi.covered(it, queue.orEmpty()) }
                 queue.orEmpty().forEach { q -> val k = q.tmdbId * 2 + if (q.source == QueueSource.SONARR) 1 else 0; if (q.tmdbId > 0 && !knownTitles.containsKey(k)) seerr.titleInfo(if (q.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE, q.tmdbId)?.let { knownTitles[k] = it } }
                 requests.forEach { r -> if (!knownTitles.containsKey(titleKey(r))) seerr.titleInfo(r.kind, r.tmdbId)?.let { knownTitles[titleKey(r)] = it } }
                 // Single episodes asked for one at a time: monitored in Sonarr with nothing grabbed yet. A series already listed above is not repeated.
@@ -492,14 +498,17 @@ class MoviesPanel(
                     if (gen != generation) return@runOnUiThread
                     val focused = (0 until holder.childCount).firstOrNull { holder.getChildAt(it).hasFocus() }
                     holder.removeAllViews()
+                    requestDiagnostics = diagnostics
+                    if (rawRequests == null) holder.addView(note("Couldn't read your requests. Showing the download queue only.").apply { setPadding(margin, dp(4), margin, dp(4)) })
+                    if (snapshot?.healthy != true) holder.addView(note("Automatic search status is unavailable. Download-client progress is shown below.").apply { setPadding(margin, dp(4), margin, dp(4)) })
                     val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) { refresh() } } +
                         wanted.map { (tmdb, eps) -> wantedRow(tmdb, eps) { refresh() } }
                     if (rows.isEmpty()) holder.addView(note(if (queue == null) "Couldn't reach the download queue just now." else "Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
-                    queue?.let { q -> holder.addView(Type.text(activity, "${q.count { it.isDownloading }} downloading  ·  ${q.count { it.isWaiting }} waiting", Type.Style.CAPTION).apply { setPadding(margin, dp(4), 0, 0) }) }
+                    queue?.let { q -> holder.addView(Type.text(activity, "${q.count { it.isDownloading }} downloading  ·  ${q.count { it.isWaiting }} queued  ·  ${q.count { it.status in setOf("metadata", "stalled") }} finding sources  ·  ${requests.count { it.stage == Stage.SEARCHING && diagnostics[it.id]?.stopped != true }} awaiting a release", Type.Style.CAPTION).apply { setPadding(margin, dp(4), 0, 0) }) }
                     rows.forEachIndexed { i, r -> holder.addView(r, LinearLayout.LayoutParams(-1, dp(104)).apply { setMargins(margin, if (i > 0) dp(14) else dp(10), margin, 0) }) }
                     // Everything not yet finished, including requests no release has been found for. Kept last so first focus stays on the top row.
-                    val pendingQueue = queue.orEmpty().filter { it.isDownloading || it.isWaiting }
-                    val pendingRequests = requests.filter { it.stage in pendingStages }
+                    val pendingQueue = queue.orEmpty().filter { it.canCancel && (it.isActive || it.isWaiting) }
+                    val pendingRequests = requests.filter { it.stage in pendingStages && diagnostics[it.id]?.stopped != true }
                     if (pendingQueue.isNotEmpty() || pendingRequests.isNotEmpty() || wantedEpisodes.isNotEmpty()) {
                         val total = pendingQueue.size + pendingRequests.size + wantedEpisodes.size
                         holder.addView(pill("Cancel all pending ($total)", accent = false).apply { setOnClickListener { cancelAllPending(pendingQueue, pendingRequests, wantedEpisodes) { refresh() } } },
@@ -601,7 +610,7 @@ class MoviesPanel(
                 actions += SheetAction("Download next", "Move to the front of the queue", primary = true) { prioritizeDownload(item, DownloadAction.NEXT, refresh) }
                 actions += SheetAction("Download now", "Bypass the queue; other downloads continue") { prioritizeDownload(item, DownloadAction.NOW, refresh) }
             }
-            actions += SheetAction("Cancel download", "Stop it and remove its partial files") {
+            if (item.canCancel) actions += SheetAction("Cancel download", "Stop it and remove its partial files") {
                 worker.execute {
                     val done = queueClient.cancel(item)
                     activity.runOnUiThread { Toast.makeText(activity, if (done) "Cancelled ${item.title}" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
@@ -677,13 +686,20 @@ class MoviesPanel(
         item.status == "checking" -> "Checking downloaded files"
         item.status == "downloading" -> {
             val left = ByteSize.format(item.sizeLeftBytes) + " left"
-            val eta = item.etaSeconds?.let { s -> if (s < 90) " · almost done" else if (s < 7200) " · about ${s / 60} min left" else " · about ${s / 3600} h left" }.orEmpty()
-            (if (item.forced) "Downloading now" else "Downloading") + " · $left$eta"
+            val eta = item.etaSeconds?.takeIf { it < 604_800 && item.seeds != 0 }?.let { s -> if (s < 90) " · almost done" else if (s < 7200) " · about ${s / 60} min left" else " · about ${s / 3600} h left" }.orEmpty()
+            val rate = item.speedBytes?.takeIf { it > 0 }?.let { bytes ->
+                if (bytes >= 1_000_000) String.format(Locale.UK, " · %.1f MB/s", bytes / 1e6)
+                else if (bytes >= 1000) " · ${bytes / 1000} KB/s" else " · $bytes B/s"
+            }.orEmpty()
+            val seeds = item.seeds?.let { " · $it " + if (it == 1) "seeder" else "seeders" }.orEmpty()
+            (if (item.forced) "Downloading now" else "Downloading") + " · $left$rate$seeds$eta"
         }
         item.status == "paused" -> "Paused"
         item.status == "delayed" -> "Waiting for a better release"
         item.position == 1 -> "Next in line · waiting for a free download slot"
         item.position > 1 -> "In line · #${item.position} · waiting for a free download slot"
+        item.status == "queued" && !item.clientVerified && item.sizeBytes == 0L -> "Sent to qBittorrent · waiting for torrent details"
+        item.status == "queued" && !item.clientVerified -> "Queued in the download client"
         item.status == "queued" -> "Queued · waiting for a free download slot"
         item.status == "completed" -> "Finished · importing"
         item.status == "failed" -> "Failed"
@@ -721,8 +737,18 @@ class MoviesPanel(
         FastFocus.bind(row, surfaces16, labels, rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
         if (r.canCancel) row.setOnClickListener {
             val name = info?.first ?: "Title ${r.tmdbId}"
-            infoSheet.show("REQUEST", name, null, listOf(statusLine(r), "Cancelling stops looking for this request. Completed files and other seasons are kept."), null, listOf(
-                SheetAction("Cancel request", "Stop looking for a release", primary = true) {
+            val actions = mutableListOf<SheetAction>()
+            val diagnostic = requestDiagnostics[r.id]
+            if (diagnostic?.canRetry == true) actions += SheetAction("Search again", "Retry this request now", primary = true) {
+                worker.execute {
+                    val accepted = seerr.retrySearch(r.id)
+                    activity.runOnUiThread {
+                        Toast.makeText(activity, if (accepted) "Search requested" else "Search couldn't start yet. Try again shortly.", Toast.LENGTH_LONG).show()
+                        refresh()
+                    }
+                }
+            }
+            actions += SheetAction("Cancel request", "Stop looking for a release", primary = true) {
                     worker.execute {
                         val done = queueClient.cancelRequest(r)
                         activity.runOnUiThread {
@@ -731,12 +757,20 @@ class MoviesPanel(
                         }
                     }
                 }
-            ))
+            infoSheet.show("REQUEST", name, null, listOf(statusLine(r), "Cancelling stops looking for this request. Completed files and other seasons are kept."), null, actions)
         }
         return row
     }
 
-    private fun statusLine(r: SeerrRequest): String = when (r.stage) {
+    private fun statusLine(r: SeerrRequest): String {
+        requestDiagnostics[r.id]?.let { diagnostic ->
+            val retry = diagnostic.nextSearchAtMs?.let { (it - System.currentTimeMillis()).coerceAtLeast(0L) / 60_000 }
+            val last = diagnostic.lastSearchAtMs?.let { java.text.SimpleDateFormat("HH:mm", Locale.getDefault()).format(java.util.Date(it)) }
+            return diagnostic.message + if (diagnostic.canRetry) {
+                (last?.let { " · checked $it" }.orEmpty()) + (retry?.let { if (it < 1) " · retry shortly" else " · retry in $it min" }.orEmpty())
+            } else ""
+        }
+        return when (r.stage) {
         Stage.WAITING_APPROVAL -> "Waiting for approval"
         Stage.SEARCHING -> "Looking for a release · nothing downloading yet"
         Stage.DOWNLOADING -> {
@@ -747,6 +781,7 @@ class MoviesPanel(
         Stage.READY -> "Ready to watch in your library"
         Stage.DECLINED -> "Declined"
         Stage.FAILED -> "Failed · the download could not be completed"
+        }
     }
 
     /** A thin track with a fill; with no progress to show it is just the track, never a made-up figure. */
@@ -959,7 +994,7 @@ class MoviesPanel(
                 val outcome = seerr.request(e.title.kind, tmdb)
                 activity.runOnUiThread {
                     when (outcome) {
-                        RequestOutcome.QUEUED, RequestOutcome.ALREADY -> { set("Requested ✓", false, null); Toast.makeText(activity, "${e.title.name} is queued for download", Toast.LENGTH_LONG).show() }
+                        RequestOutcome.QUEUED, RequestOutcome.ALREADY -> { set("Requested ✓", false, null); Toast.makeText(activity, "Request accepted for ${e.title.name}. The server will search for a release.", Toast.LENGTH_LONG).show() }
                         RequestOutcome.NEEDS_SIGN_IN -> { set("Queue download", true) { queue() }; seerrSheet.show(seerr, jellyfin) { queue() } }
                         RequestOutcome.FAILED -> { set("Queue download", true) { queue() }; Toast.makeText(activity, "Couldn't queue it right now", Toast.LENGTH_LONG).show() }
                     }

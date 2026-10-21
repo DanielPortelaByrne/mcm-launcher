@@ -38,4 +38,29 @@ class QueueTest {
         assertEquals("/api/v3/queue/42?removeFromClient=true&blocklist=false", QueueApi.cancelPath(42))
         assertTrue(QueueApi.parse("junk", QueueSource.SONARR).isEmpty())
     }
+
+    @Test fun season_pack_is_one_download_and_keeps_every_episode_for_cancellation() {
+        val hash = "a".repeat(40)
+        val rows = (1..22).map { n -> """{"id":$n,"episodeId":$n,"seriesId":10,"downloadId":"$hash","status":"downloading","size":1000,"sizeleft":500,"series":{"title":"Sabrina","tmdbId":605},"episode":{"id":$n,"seasonNumber":5,"episodeNumber":$n}}""" }
+        val item = QueueApi.parse(queue(*rows.toTypedArray()), QueueSource.SONARR).single()
+        assertEquals("Season 5 · 22 episodes", item.detail)
+        assertEquals((1..22).toList(), item.episodeIds)
+        assertEquals(1000L, item.sizeBytes) // pack size is not multiplied by episode count
+        assertEquals(0.5f, item.progress()!!, 0.001f)
+    }
+
+    @Test fun metadata_and_stalled_torrents_do_not_count_as_bytes_downloading() {
+        val item = QueueApi.parse(queue(record(1, "queued", "2026-10-20T12:00:00Z")), QueueSource.SONARR).single()
+        assertFalse(item.copy(status = "metadata").isDownloading)
+        assertFalse(item.copy(status = "stalled").isDownloading)
+        assertTrue(item.copy(status = "metadata").isActive)
+    }
+
+    @Test fun cancellation_keeps_completed_files_even_when_status_has_not_caught_up() {
+        val item = QueueApi.parse(queue(record(1, "downloading", "2026-10-20T12:00:00Z", 1000, 0)), QueueSource.SONARR).single()
+        assertFalse(item.canCancel)
+        assertFalse(item.copy(status = "completed").canCancel)
+        assertTrue(item.copy(sizeLeftBytes = 500).canCancel)
+        assertTrue(item.copy(status = "metadata", sizeBytes = 0).canCancel)
+    }
 }
