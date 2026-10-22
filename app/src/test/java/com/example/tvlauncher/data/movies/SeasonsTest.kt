@@ -56,6 +56,17 @@ class SeasonsTest {
         assertFalse(JSONObject(SeerrApi.requestBody(Kind.MOVIE, 5, listOf(1))).has("seasons"))
     }
 
+    @Test fun reads_full_seerr_image_urls_for_undownloaded_episodes() {
+        val episodes = SeerrSeasons.parseEpisodes("""{"episodes":[
+            {"episodeNumber":1,"seasonNumber":2,"stillPath":"https://image.tmdb.org/t/p/original//mAPNGxRqYmPeLzO0qJYVpIckNZf.jpg"},
+            {"episodeNumber":2,"seasonNumber":2,"stillPath":"https://image.tmdb.org/t/p/w500/second.jpg"}]}""")
+        assertEquals("https://image.tmdb.org/t/p/w500/mAPNGxRqYmPeLzO0qJYVpIckNZf.jpg", episodes[0].stillUrl)
+        assertEquals("https://image.tmdb.org/t/p/w500/second.jpg", episodes[1].stillUrl)
+        assertNull(EpisodeImages.path("null"))
+        assertNull(EpisodeImages.path("https://example.org/image.jpg"))
+        assertNull(EpisodeImages.path("//example.org/image.jpg"))
+    }
+
     @Test fun playback_reports_use_ticks_and_the_right_addresses() {
         val b = JSONObject(JellyfinApi.playbackBody("item1", "src1", 90_000L, paused = true, sessionId = "sess"))
         assertEquals(900_000_000L, b.getLong("PositionTicks")); assertEquals("item1", b.getString("ItemId")); assertEquals("src1", b.getString("MediaSourceId"))

@@ -340,6 +340,19 @@ data class EpisodeInfo(val season: Int, val number: Int, val name: String, val o
     val stillUrl: String? get() = stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
 }
 
+/** Seerr versions return either a TMDB path or a complete TMDB image URL. */
+object EpisodeImages {
+    fun path(value: String?): String? {
+        val raw = value?.trim()?.takeIf { it.isNotEmpty() && it != "null" } ?: return null
+        if (raw.startsWith("/") && !raw.startsWith("//")) return raw
+        return try {
+            val uri = java.net.URI(raw)
+            if (uri.scheme != "https" || uri.host != "image.tmdb.org") null
+            else uri.path.substringAfterLast('/').takeIf { it.isNotBlank() }?.let { "/$it" }
+        } catch (_: Exception) { null }
+    }
+}
+
 object SeerrSeasons {
     fun parseSeasons(json: String): List<SeasonInfo> = try {
         val root = JSONObject(json)
@@ -358,7 +371,7 @@ object SeerrSeasons {
             EpisodeInfo(it.optInt("seasonNumber"), it.optInt("episodeNumber"), it.optString("name").ifBlank { "Episode ${it.optInt("episodeNumber")}" },
                 it.optString("overview").ifBlank { null }, it.optString("airDate").ifBlank { null },
                 // TMDB sends null for a missing still, which optString turns into "null".
-                it.optString("stillPath").takeIf { p -> p.startsWith("/") },
+                EpisodeImages.path(it.optString("stillPath")),
                 it.optInt("runtime", 0).takeIf { r -> r > 0 })
         }
     } catch (_: Exception) { emptyList() }

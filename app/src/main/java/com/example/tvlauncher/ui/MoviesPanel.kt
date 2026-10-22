@@ -1712,7 +1712,10 @@ class MoviesPanel(
             LinearLayout.LayoutParams(Cinema.px(activity, 14), Cinema.px(activity, 30)).apply { marginEnd = Cinema.px(activity, 24) })
         val tabRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
         val tabScroller = CalmHorizontalScrollView(activity).apply {
-            isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; isHorizontalFadingEdgeEnabled = false
+            // Child rows deliberately draw focus effects outside themselves; bound the entire strip
+            // explicitly so later seasons cannot paint over the adjacent episode count and action.
+            isHorizontalScrollBarEnabled = false; clipChildren = true; clipToPadding = true; isHorizontalFadingEdgeEnabled = false
+            addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.clipBounds = android.graphics.Rect(0, 0, r - l, b - t) }
             leftLeavesToRail = false
             addView(tabRow)
         }
