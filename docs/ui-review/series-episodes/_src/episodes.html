@@ -1,0 +1,230 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Series episodes redesign</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--rb:linear-gradient(180deg,#f6bf33 0 20%,#f08a25 20% 40%,#e2562b 40% 60%,#c2281d 60% 80%,#6b1a10 80%);--rbv:linear-gradient(90deg,#f6bf33 0 20%,#f08a25 20% 40%,#e2562b 40% 60%,#c2281d 60% 80%,#6b1a10 80%);--bg:#0b0807;--cream:#f6ecdb;--muted:#b6a896;--dim:#7f7366;--terra:#e27a49;--saff:#edbe56;--ink:#1b120c;
+--glass:rgba(255,242,222,.075);--glass2:rgba(255,242,222,.13);--line:rgba(255,242,222,.14)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;background:var(--bg);overflow:hidden;font-family:Inter,sans-serif;color:var(--cream);-webkit-font-smoothing:antialiased}
+.screen{position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg)}
+svg.i{display:block;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.abs{position:absolute}
+.grain{position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;pointer-events:none;z-index:50;
+ background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>")}
+.eyebrow{font-size:17px;font-weight:600;letter-spacing:.24em;text-transform:uppercase;color:var(--saff);display:flex;align-items:center;gap:14px}
+.eyebrow i{display:inline-block;width:40px;height:10px;border-radius:5px;background:var(--rb)}
+.eyebrow .dot{width:5px;height:5px;border-radius:3px;background:var(--saff);opacity:.6}
+.title{font-family:Fraunces,Georgia,serif;font-weight:400;letter-spacing:-.02em;line-height:1;color:var(--cream)}
+.meta{display:flex;align-items:center;gap:16px;font-size:23px;color:var(--muted)}
+.meta .dotsep{width:4px;height:4px;border-radius:2px;background:var(--dim)}
+.cert{background:rgba(246,236,219,.16);border-radius:6px;padding:1px 9px;font-size:19px;font-weight:600;color:var(--cream)}
+.imdb{display:flex;align-items:center;gap:8px;color:var(--cream);font-weight:500}.imdb svg{color:var(--saff)}
+.prov{display:inline-flex;align-items:center;gap:12px;font-size:22px;color:var(--cream);background:var(--glass);padding:8px 18px 8px 10px;border-radius:30px}
+.prov b{width:28px;height:28px;border-radius:14px;background:linear-gradient(135deg,var(--terra),var(--saff));display:flex;align-items:center;justify-content:center;color:#1a0f08}
+.prov em{font-style:normal;color:var(--saff);font-weight:500}
+.syn{font-size:26px;line-height:1.5;color:#d7cbb9;font-weight:300}
+.btn{height:76px;border-radius:38px;padding:0 38px 0 30px;display:inline-flex;align-items:center;gap:14px;font-size:25px;font-weight:600;background:var(--glass);color:var(--cream);white-space:nowrap}
+.btn.primary{background:var(--cream);color:var(--ink);box-shadow:0 14px 40px rgba(246,236,219,.18),0 0 0 6px rgba(246,236,219,.12)}
+.btn.terra{background:linear-gradient(135deg,#eb8a56,#d4623a);color:#1d0d05}
+.btn.danger{color:#f0a48a}
+.btn.sm{height:60px;border-radius:30px;font-size:21px;padding:0 28px 0 22px;gap:10px}
+.btn.terra.f{box-shadow:0 14px 40px rgba(226,122,73,.35),0 0 0 6px rgba(226,122,73,.22)}
+.rowhead{display:flex;align-items:center;gap:18px}
+.rowhead h2{font-family:Fraunces,Georgia,serif;font-weight:400;font-size:38px;letter-spacing:-.01em;display:flex;align-items:center;gap:18px}
+.rowhead h2::before{content:"";width:14px;height:30px;border-radius:7px;background:var(--rbv)}
+.fade-r{position:absolute;top:0;bottom:0;right:0;width:200px;background:linear-gradient(90deg,transparent,var(--bg) 92%);z-index:8;pointer-events:none}
+
+/* ---------- season bar ---------- */
+.sbar{position:absolute;left:96px;right:96px;display:flex;align-items:center;gap:10px}
+.sbar .mark{width:14px;height:30px;border-radius:7px;background:var(--rbv);margin-right:14px}
+.tab{position:relative;font-family:Fraunces,Georgia,serif;font-size:36px;letter-spacing:-.01em;color:var(--dim);height:62px;padding:0 26px;border-radius:31px;display:flex;align-items:center}
+.tab.on{color:var(--cream)}
+.tab.on::after{content:"";position:absolute;left:26px;bottom:2px;width:40px;height:6px;border-radius:3px;background:var(--rbv)}
+.tab.f{background:var(--cream);color:var(--ink);box-shadow:0 12px 30px rgba(0,0,0,.45),0 0 0 6px rgba(246,236,219,.14)}
+.tab.f::after{display:none}
+.sbar .info{margin-left:auto;font-size:21px;color:var(--muted);display:flex;align-items:center;gap:14px;margin-right:22px}
+.sbar .info>span{display:flex;align-items:center;gap:14px}
+.sbar .info b{font-weight:500;color:var(--cream)}
+.sbar .info .dotsep{width:4px;height:4px;border-radius:2px;background:var(--dim)}
+
+/* ---------- episode card ---------- */
+.ep{position:absolute;width:400px}
+.ep .st{position:relative;width:400px;height:225px;border-radius:18px;overflow:hidden;background:#221a15 center/cover;
+ box-shadow:0 18px 40px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,242,222,.06)}
+.ep .st::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(11,8,7,.45) 0%,transparent 28%,transparent 60%,rgba(11,8,7,.55) 100%);z-index:1}
+.ep .num{position:absolute;left:14px;top:12px;z-index:3;font-size:15px;font-weight:700;letter-spacing:.14em;color:var(--cream);background:rgba(12,8,6,.66);backdrop-filter:blur(10px);padding:6px 12px;border-radius:16px}
+.ep .bdg{position:absolute;right:12px;top:12px;z-index:3;display:flex;align-items:center;gap:7px;background:rgba(12,8,6,.72);backdrop-filter:blur(14px);
+ color:var(--saff);font-size:13px;font-weight:700;letter-spacing:.14em;padding:7px 12px 7px 10px;border-radius:16px;box-shadow:inset 0 0 0 1px rgba(237,190,86,.5)}
+.ep .bdg.mut{color:var(--muted);box-shadow:inset 0 0 0 1px rgba(246,236,219,.2)}
+.ep .acts{position:absolute;inset:0;z-index:4;display:flex;align-items:center;justify-content:center;gap:22px}
+.ab{position:relative;width:62px;height:62px;border-radius:31px;background:rgba(12,8,6,.58);backdrop-filter:blur(12px);color:var(--cream);
+ display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 1.5px rgba(246,236,219,.3),0 8px 22px rgba(0,0,0,.45)}
+.ab.play{width:78px;height:78px;border-radius:39px}
+.ab.play svg{margin-left:4px}
+.ab.on{background:var(--cream);color:var(--ink);box-shadow:0 0 0 5px #f6bf33,0 0 0 10px #f08a25,0 0 0 15px #e2562b,0 0 0 20px #c2281d,0 14px 44px rgba(0,0,0,.65)}
+.ab.done{color:var(--saff);opacity:.9}
+.ab.wait{color:var(--saff)}
+.ab.ring svg.r{position:absolute;inset:-1px;width:64px;height:64px;transform:rotate(-90deg)}
+.ep .bar{position:absolute;left:0;right:0;bottom:0;height:7px;background:rgba(246,236,219,.2);z-index:3}
+.ep .bar i{position:absolute;left:0;top:0;bottom:0;background:var(--rb)}
+.ep .airs{position:absolute;inset:0;z-index:4;display:flex;align-items:center;justify-content:center}
+.ep .airs span{font-size:18px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--cream);background:rgba(12,8,6,.66);backdrop-filter:blur(10px);padding:10px 18px;border-radius:22px}
+.ep.unaired .st{filter:grayscale(.85) brightness(.55)}
+.ep .ph{position:absolute;inset:0;display:flex;align-items:flex-end;justify-content:flex-start;padding:0 0 4px 26px;background:
+ radial-gradient(260px 160px at 80% 0%,rgba(226,122,73,.22),transparent 70%),linear-gradient(160deg,#2a1d16,#140e0b)}
+.ep .ph .n{font-family:Fraunces,Georgia,serif;font-size:120px;color:rgba(246,236,219,.1);letter-spacing:-.04em;margin-top:-10px}
+.ep .ph .s{position:absolute;left:0;right:0;bottom:0;height:12px;background:var(--rb);opacity:.55}
+.ep .t{margin-top:20px;font-size:23px;font-weight:500;color:#cdbfad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ep .t b{color:var(--saff);font-weight:600;margin-right:10px;letter-spacing:.02em}
+.ep .m{font-size:18px;color:var(--dim);margin-top:7px;display:flex;gap:10px;align-items:center}
+.ep .m .dotsep{width:4px;height:4px;border-radius:2px;background:var(--dim)}
+.ep .ov{font-size:18px;color:#d7cbb9;font-weight:300;line-height:1.45;margin-top:10px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;opacity:0}
+.ep.f{z-index:6}
+.ep.f .st{transform:scale(1.06);transform-origin:50% 50%;box-shadow:0 0 0 4px var(--cream),0 0 0 9px rgba(237,190,86,.28),0 34px 70px rgba(0,0,0,.65),0 0 90px rgba(237,190,86,.16)}
+.ep.f .t{color:var(--cream);font-weight:600;margin-top:28px}
+.ep.f .ov{opacity:1}
+.ep.f .m{color:var(--muted)}
+.ep.dimmed{opacity:.55}
+
+.hint{position:absolute;left:96px;bottom:44px;display:flex;gap:36px;font-size:18px;color:var(--dim);letter-spacing:.04em;z-index:20}
+.hint span.k{display:inline-flex;align-items:center;gap:10px}
+.hint span.k em{font-style:normal;background:var(--glass2);border-radius:9px;padding:5px 12px;color:var(--cream);font-weight:600;font-size:17px}
+.tip{position:absolute;z-index:30;font-size:16px;font-weight:600;letter-spacing:.06em;color:var(--ink);background:var(--saff);padding:6px 12px;border-radius:8px;white-space:nowrap}
+.lbl{position:absolute;font-size:16px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--saff)}
+.lbl2{position:absolute;font-size:17px;color:var(--muted);line-height:1.45;font-weight:400}
+.card{position:absolute}.card .p{border-radius:16px;background:#221a15 center/cover;box-shadow:0 18px 40px rgba(0,0,0,.45)}
+</style></head>
+<body><div id="root"></div>
+<script>
+const P=(d,o={})=>`<svg class="i" viewBox="0 0 24 24" width="${o.s||32}" height="${o.s||32}" ${o.f?'style="fill:currentColor;stroke:none"':''}>${d}</svg>`;
+const IC={
+dl:'<path d="M12 3.5v11.5M7.5 10.8L12 15.3l4.5-4.5M4.5 20h15"/>',
+play:'<path d="M7 4.6v14.8L19.6 12z" />',
+trash:'<path d="M4.5 6.8h15M9.5 6.8V4.4h5v2.4M6.4 6.8l.9 12.7h9.4l.9-12.7M10 10.6v5.6M14 10.6v5.6"/>',
+check:'<path d="M5 12.5l4.6 4.6L19 7.6"/>',
+star:'<path d="M12 3.4l2.5 5.4 5.9.7-4.4 4 1.2 5.8L12 16.4 6.8 19.3 8 13.5 3.6 9.5l5.9-.7z" style="fill:currentColor;stroke:none"/>',
+clock:'<circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.4 2"/>',
+chev:'<path d="M9 5l7 7-7 7"/>'};
+const ic=(n,s,f)=>P(IC[n],{s,f});
+const img=n=>`img/${n}.jpg`;
+const meta=a=>`<div class="meta">${a.map((x,i)=>(i?'<span class="dotsep"></span>':'')+x).join('')}</div>`;
+const dots=a=>a.map((x,i)=>(i?'<span class="dotsep"></span>':'')+x).join('');
+
+const EPS1=[
+ ['Stick or Twist','46 min','30 Mar 2025','Harry Da Souza is caught between loyalty and survival when a missing son puts the Harrigan family on a collision course with the Stevensons.'],
+ ['Jigsaw Puzzle','52 min','6 Apr 2025','Conrad demands answers about Eddie’s disappearance as Harry tries to keep the peace on both sides.'],
+ ['Ha’penny Bridge','48 min','13 Apr 2025','A tense crossing into Ireland puts the family’s plans at risk.'],
+ ['Dulce et Decorum Est','47 min','20 Apr 2025','Maeve tightens her grip on the business while Harry counts the cost.'],
+ ['Nothing Is Promised','50 min','27 Apr 2025','The Harrigans move product while the walls close in.'],
+];
+const EPS2=[
+ ['I Wanna Be Your Dog','49 min','2 Nov 2026','Harry returns to find the family fractured and a new enemy on the rise.'],
+ ['Song 2','51 min','9 Nov 2026','Kevin makes a move that could cost him everything.'],
+ ['Bonzo Goes to Bitburg','48 min','16 Nov 2026','A meeting in Germany goes sideways and Harry is forced to choose a side.'],
+ ['Blank Curtain','47 min','23 Nov 2026','The Stevensons strike back.'],
+ ['Birdland','50 min','30 Nov 2026',''],
+ ['A Different Corner','52 min','7 Dec 2026',''],
+];
+
+/* one episode title card. o: x,y,n,im,t,len,date,ov,state,focus,prog,dlp,still */
+const ep=o=>{
+ const st=o.state||'request';
+ let badge='';
+ if(st==='lib')badge=`<div class="bdg">${ic('check',14)}IN LIBRARY</div>`;
+ if(st==='downloading')badge=`<div class="bdg">DOWNLOADING ${o.dlp}%</div>`;
+ if(st==='queued')badge=`<div class="bdg mut">REQUESTED</div>`;
+ const fp=o.focus==='play'?'on':'', fd=o.focus==='dl'?'on':'';
+ let dlBtn;
+ if(st==='lib')dlBtn=`<div class="ab done">${ic('check',28)}</div>`;
+ else if(st==='queued')dlBtn=`<div class="ab wait ${fd}">${ic('clock',28)}</div>`;
+ else if(st==='downloading'){const c=2*Math.PI*30,p=o.dlp/100;dlBtn=`<div class="ab ring wait ${fd}"><svg class="r" viewBox="0 0 64 64"><circle cx="32" cy="32" r="30" fill="none" stroke="rgba(246,236,219,.18)" stroke-width="3"/><circle cx="32" cy="32" r="30" fill="none" stroke="#edbe56" stroke-width="3.5" stroke-linecap="round" stroke-dasharray="${c*p} ${c}"/></svg>${ic('dl',26)}</div>`}
+ else dlBtn=`<div class="ab ${fd}">${ic('dl',28)}</div>`;
+ const acts=st==='unaired'?`<div class="airs"><span>Airs ${o.date}</span></div>`:`<div class="acts"><div class="ab play ${fp}">${ic('play',34,1)}</div>${dlBtn}</div>`;
+ const pic=o.im?`style="background-image:url(${img(o.im)})"`:'';
+ const ph=o.im?'':`<div class="ph"><div class="n">${o.n}</div><div class="s"></div></div>`;
+ const bar=o.prog?`<div class="bar"><i style="width:${o.prog}%"></i></div>`:'';
+ const left=o.prog?` · ${o.left} left`:'';
+ return `<div class="ep ${o.focus?'f':''} ${st==='unaired'?'unaired':''} ${o.dim?'dimmed':''}" style="left:${o.x}px;top:${o.y}px">
+ <div class="st" ${pic}>${ph}<div class="num">E${o.n}</div>${badge}${acts}${bar}</div>
+ <div class="t">${o.t}</div>
+ <div class="m">${dots([o.len+left,o.date].filter(Boolean))}</div>
+ <div class="ov">${o.ov||''}</div></div>`;
+};
+const rail=(y,list,x0=96,gap=40)=>list.map((o,k)=>ep({...o,x:x0+k*(400+gap),y})).join('');
+const sbar=(y,season,focusTab,info,action)=>`<div class="sbar" style="top:${y}px"><span class="mark"></span>
+ <div class="tab ${season==1?'on':''} ${focusTab==1?'f':''}">Season 1</div><div class="tab ${season==2?'on':''} ${focusTab==2?'f':''}">Season 2</div>
+ <div class="info">${info}</div>${action}</div>`;
+const backdrop=(dark=1)=>`<div class="abs" style="top:0;bottom:0;right:0;width:1060px;background:url(${img('mob-hero')}) right center/cover;-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 38%)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(90deg,rgba(11,8,7,.97) 0%,rgba(11,8,7,.82) 38%,rgba(11,8,7,.35) 72%,rgba(11,8,7,.2) 100%)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(180deg,rgba(11,8,7,.35),transparent 22%,rgba(11,8,7,${.6*dark}) 44%,rgba(11,8,7,.97) 64%)"></div>`;
+const hero=(btnFocus)=>`<div class="abs" style="left:96px;top:56px;width:1200px">
+ <div class="eyebrow"><i></i>Series<span class="dot"></span>In your library</div>
+ <div class="title" style="font-size:96px;margin-top:18px">MobLand</div>
+ <div style="margin-top:20px">${meta(['<span class="cert">18</span>','2025','46 min','Crime · Drama',`<span class="imdb">${ic('star',22)}8.3</span>`])}</div>
+ <div style="margin-top:20px;display:flex;align-items:center;gap:22px"><span class="prov"><b>${ic('play',13,1)}</b>Streaming on <em>Paramount+</em></span></div>
+ <div class="syn" style="margin-top:18px;width:1000px">Two mob families clash in a war that threatens to topple empires and lives.</div>
+ <div style="margin-top:26px;display:flex;gap:20px"><div class="btn ${btnFocus?'primary':''}">${ic('play',30,1)}Resume S1 E2</div><div class="btn danger">${ic('trash',28)}Delete</div></div></div>
+<div class="abs" style="left:1544px;top:44px;width:260px;height:388px;border-radius:20px;background:url(${img('mob-poster')}) center/cover;box-shadow:9px 9px 0 #f6bf33,18px 18px 0 #f08a25,27px 27px 0 #e2562b,36px 36px 0 #c2281d,0 50px 90px rgba(0,0,0,.6)"></div>`;
+const hint=a=>`<div class="hint">${a.map(([k,l])=>`<span class="k"><em>${k}</em>${l}</span>`).join('')}</div>`;
+
+const S={};
+/* A – page at rest: hero on top, Season 1 episodes rail below, Play on E2 focused (resume) */
+S.A=()=>`<div class="screen">${backdrop()}${hero(false)}
+${sbar(530,1,0,`<span>${dots(['<b>8 episodes</b>','All in your library'])}</span>`,``)}
+${rail(624,[
+ {n:1,im:'ep1',t:EPS1[0][0],len:EPS1[0][1],date:EPS1[0][2],state:'lib'},
+ {n:2,im:'ep2',t:EPS1[1][0],len:EPS1[1][1],date:EPS1[1][2],ov:EPS1[1][3],state:'lib',focus:'play',prog:38,left:'32 min'},
+ {n:3,im:'ep3',t:EPS1[2][0],len:EPS1[2][1],date:EPS1[2][2],state:'lib'},
+ {n:4,im:'ep4',t:EPS1[3][0],len:EPS1[3][1],date:EPS1[3][2],state:'lib'},
+ {n:5,im:'ep5',t:EPS1[4][0],len:EPS1[4][1],date:EPS1[4][2],state:'lib'}])}
+<div class="fade-r"></div><div class="grain"></div></div>`;
+
+/* B – Season 2 chosen, season tab focused: mixed states + whole-season request */
+S.B=()=>`<div class="screen">${backdrop()}${hero(false)}
+${sbar(530,2,2,`<span>${dots(['<b>10 episodes</b>','1 in library','1 downloading'])}</span>`,`<div class="btn terra sm">${ic('dl',26)}Download Season 2</div>`)}
+${rail(624,[
+ {n:1,im:'ep6',t:EPS2[0][0],len:EPS2[0][1],date:EPS2[0][2],state:'lib'},
+ {n:2,im:'ep7',t:EPS2[1][0],len:EPS2[1][1],date:EPS2[1][2],state:'downloading',dlp:42},
+ {n:3,im:'ep8',t:EPS2[2][0],len:EPS2[2][1],date:EPS2[2][2],state:'queued'},
+ {n:4,im:'ep9',t:EPS2[3][0],len:EPS2[3][1],date:EPS2[3][2]},
+ {n:5,im:'ep10',t:EPS2[4][0],len:EPS2[4][1],date:EPS2[4][2]}])}
+<div class="fade-r"></div><div class="grain"></div></div>`;
+
+/* C – scrolled into the episodes, Download focused on E4 */
+S.C=()=>`<div class="screen">${backdrop(1.4)}
+<div class="abs" style="left:96px;top:48px;opacity:.6"><div class="eyebrow"><i></i>MobLand<span class="dot"></span>Season 2</div></div>
+${sbar(150,2,0,`<span>${dots(['<b>10 episodes</b>','1 in library','1 downloading'])}</span>`,`<div class="btn terra sm">${ic('dl',26)}Download Season 2</div>`)}
+${rail(256,[
+ {n:2,im:'ep7',t:EPS2[1][0],len:EPS2[1][1],date:EPS2[1][2],state:'downloading',dlp:42},
+ {n:3,im:'ep8',t:EPS2[2][0],len:EPS2[2][1],date:EPS2[2][2],state:'queued'},
+ {n:4,im:'ep9',t:EPS2[3][0],len:EPS2[3][1],date:EPS2[3][2],ov:EPS2[3][3],focus:'dl'},
+ {n:5,im:'ep10',t:EPS2[4][0],len:EPS2[4][1],date:EPS2[4][2]},
+ {n:6,im:'',t:EPS2[5][0],len:EPS2[5][1],date:EPS2[5][2]}],96-440+440)}
+<div class="tip" style="left:${96+2*440+250}px;top:222px">Download S2 E4</div>
+<div class="abs rowhead" style="left:96px;top:690px;opacity:.6"><h2>More like this</h2></div>
+${['lib-westworld','lib-fallout','lib-twinpeaks','lib-sabrina','lib-tenzing','lib-rick'].map((n,k)=>`<div class="card" style="left:${96+k*300}px;top:772px;opacity:.55"><div class="p" style="width:268px;height:200px;background-image:url(${img(n)})"></div></div>`).join('')}
+${hint([['◀ ▶','Episodes'],['OK','Play / download'],['▲','Seasons']])}
+<div class="fade-r"></div><div class="grain"></div></div>`;
+
+/* D – card anatomy and every state, for the implementer */
+S.D=()=>{const y1=150,y2=610,g=448;
+ const cards=[
+ [{n:1,im:'ep1',t:'Stick or Twist',len:'46 min',date:'30 Mar 2025',state:'lib'},'In library','Play = Jellyfin. Right disc is a non-focusable check.'],
+ [{n:2,im:'ep2',t:'Jigsaw Puzzle',len:'52 min',date:'6 Apr 2025',ov:EPS1[1][3],state:'lib',focus:'play',prog:38,left:'32 min'},'Play focused, part-watched','Card lifts with cream ring; the focused disc turns cream with the stripe rings. Stripe bar = resume point.'],
+ [{n:4,im:'ep9',t:'Blank Curtain',len:'47 min',date:'23 Nov 2026',ov:EPS2[3][3],focus:'dl'},'Download focused','Not in library: Play streams now, Download asks Sonarr for this episode only.'],
+ [{n:2,im:'ep7',t:'Song 2',len:'51 min',date:'9 Nov 2026',state:'downloading',dlp:42},'Downloading','Saffron ring on the disc fills with progress; badge repeats the %.'],
+ [{n:3,im:'ep8',t:'Bonzo Goes to Bitburg',len:'48 min',date:'16 Nov 2026',state:'queued'},'Requested','Clock disc; still focusable so OK can explain the wait.'],
+ [{n:6,im:'',t:'A Different Corner',len:'52 min',date:'7 Dec 2026'},'No still yet','Espresso placeholder, big Fraunces number, stripe foot.'],
+ [{n:8,im:'ep5',t:'Episode 8',len:'',date:'21 Dec 2026',state:'unaired'},'Not aired','Greyed still, no buttons, one focus stop that does nothing.'],
+ ];
+ return `<div class="screen"><div class="abs" style="inset:0;background:radial-gradient(900px 600px at 88% -10%,rgba(226,122,73,.14),transparent 70%),radial-gradient(900px 700px at 0% 110%,rgba(58,165,151,.1),transparent 70%),var(--bg)"></div>
+ <div class="abs" style="left:96px;top:44px"><div class="eyebrow"><i></i>Episode title card<span class="dot"></span>States</div></div>
+ ${cards.map(([o,l,d],k)=>{const r=k<4?0:1,c=r?k-4:k,x=96+c*g,y=r?y2:y1;
+  return `<div class="lbl" style="left:${x}px;top:${y-12}px">${l}</div>`+ep({...o,ov:'',x,y:y+30})+`<div class="lbl2" style="left:${x}px;top:${y+(o.focus?358:350)}px;width:400px">${d}</div>`}).join('')}
+ <div class="abs" style="left:${96+3*g}px;top:${y2+18}px;width:400px">
+  <div class="lbl" style="position:static">Sizes (mockup px)</div>
+  <div class="lbl2" style="position:static;margin-top:12px">Card 400×225, radius 18, gap 40<br>Play disc 78 · download disc 62 · gap 22<br>E-chip 15px caps · badge 13px caps<br>Title 23 / 500 · meta 18 · overview 18 / 300<br>Focus: still scale 1.06, ring 4 cream + 5 saffron 28%<br>Focused disc: cream + 4 stripe rings of 5px</div></div>
+ <div class="grain"></div></div>`};
+
+const id=(location.hash||'#A').slice(1);document.getElementById('root').innerHTML=S[id]();
+</script></body></html>

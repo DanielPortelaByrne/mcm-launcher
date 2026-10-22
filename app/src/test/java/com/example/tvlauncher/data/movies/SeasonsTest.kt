@@ -30,6 +30,25 @@ class SeasonsTest {
         assertEquals(listOf("Pilot", "Episode 2"), e.map { it.name }); assertEquals("2008-01-20", e[0].airDate); assertNull(e[1].overview)
     }
 
+    @Test fun reads_episode_stills_and_runtimes() {
+        val e = SeerrSeasons.parseEpisodes("""{"episodes":[
+            {"episodeNumber":1,"seasonNumber":1,"name":"Stick or Twist","stillPath":"/abc.jpg","runtime":46},
+            {"episodeNumber":2,"seasonNumber":1,"name":"Jigsaw Puzzle","stillPath":null,"runtime":0},
+            {"episodeNumber":3,"seasonNumber":1,"name":"Ha'penny Bridge"}]}""")
+        assertEquals("/abc.jpg", e[0].stillPath); assertEquals("https://image.tmdb.org/t/p/w500/abc.jpg", e[0].stillUrl); assertEquals(46, e[0].runtime)
+        assertNull(e[1].stillPath); assertNull(e[1].stillUrl); assertNull(e[1].runtime)
+        assertNull(e[2].stillPath); assertNull(e[2].runtime)
+    }
+
+    @Test fun library_episodes_say_whether_they_have_a_still() {
+        val items = JellyfinApi.parseItems("""{"Items":[
+            {"Id":"a","Type":"Episode","ImageTags":{"Primary":"t1"},"RunTimeTicks":31200000000},
+            {"Id":"b","Type":"Episode","ImageTags":{}}]}""")
+        assertTrue(items[0].hasPrimaryImage); assertEquals(52, items[0].runtimeMin); assertFalse(items[1].hasPrimaryImage)
+        assertEquals("http://d/Items/a/Images/Primary?maxWidth=480&quality=85", JellyfinApi.episodeImageUrl("http://d", "a"))
+        assertTrue(JellyfinApi.episodesUrl("http://d", "u", "s").contains("RunTimeTicks"))
+    }
+
     @Test fun a_request_names_its_seasons_or_asks_for_all() {
         val one = JSONObject(SeerrApi.requestBody(Kind.SHOW, 1396, listOf(2)))
         assertEquals(2, one.getJSONArray("seasons").getInt(0)); assertEquals(1, one.getJSONArray("seasons").length())

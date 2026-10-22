@@ -1436,7 +1436,7 @@ class MoviesPanel(
         topRow.addView(posterBox, LinearLayout.LayoutParams(Cinema.px(activity, 300), Cinema.px(activity, 450)).apply { marginStart = Cinema.px(activity, 48); topMargin = -Cinema.px(activity, 12) })
         column.addView(topRow, LinearLayout.LayoutParams(-1, -2))
 
-        if (t.kind == Kind.SHOW) seasonSection(column, e)
+        if (t.kind == Kind.SHOW) seasonSection(column, e, primary)
         val more = related.filter { it.key != t.key }.take(14)
         var moreHeading: View? = null
         var moreRow: Row? = null
@@ -1654,67 +1654,113 @@ class MoviesPanel(
 
     private class SeasonState(val number: Int, val name: String, val episodeCount: Int, var availability: Availability)
 
+    /** One episode as a card shows it, from Seerr's listing or, without one, from the library. */
+    private class EpisodeRow(val number: Int, val name: String, val overview: String?, val airDate: String?, val stillUrl: String?, val runtime: Int?)
+
     /**
-     * Under a series' title: a picker of seasons, a button to request the chosen season, and its episodes. Seerr can
-     * ask for whole seasons but not single episodes, so an episode that is in the library plays, and one that is not
-     * points at the season button. A season shows its episodes from Seerr's listing, merged with what Jellyfin holds.
+     * Under a series' title (`docs/ui-review/series-episodes`): a bar of season tabs with the season's counts and its
+     * download button, then a rail of episode title cards. Each card plays its episode (from the library, or streamed)
+     * and asks Sonarr for that one episode. A season shows its episodes from Seerr's listing, merged with what Jellyfin holds.
      */
-    private fun seasonSection(parent: LinearLayout, e: Entry) {
+    private fun seasonSection(parent: LinearLayout, e: Entry, primary: CinemaButton?) {
         val tmdb = e.title.tmdbId?.toLongOrNull()
-        parent.addView(Cinema.rowHeading(activity, "Seasons").apply { setPadding(0, Cinema.px(activity, 60), 0, Cinema.px(activity, 14)) })
         val box = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
-        parent.addView(box, LinearLayout.LayoutParams(-1, -2))
+        parent.addView(box, LinearLayout.LayoutParams(-1, -2).apply { topMargin = Cinema.px(activity, 60) })
         box.addView(note("Loading seasons…"))
         worker.execute {
             val owned = e.library?.let { jellyfin.episodes(it.id) }.orEmpty()
-            val states = (if (tmdb != null && seerr.isSignedIn) sonarr.episodeStates(tmdb) else emptyMap()).toMutableMap()
+            val signedIn = tmdb != null && seerr.isSignedIn
+            val states = (if (signedIn) sonarr.episodeStates(tmdb!!) else emptyMap()).toMutableMap()
             // Episodes on disk that Jellyfin has not yet picked up: ask it to scan (at most every ten minutes), so they turn into Play.
             val unscanned = states.any { (k, v) -> v == EpisodeState.DOWNLOADED && owned.none { it.season == k.first && it.episode == k.second } }
             if (unscanned && System.currentTimeMillis() - lastScanMs > 10 * 60_000L) { lastScanMs = System.currentTimeMillis(); jellyfin.refreshLibrary() }
-            val fromSeerr = if (tmdb != null && seerr.isSignedIn) seerr.seasons(tmdb) else emptyList()
+            val fromSeerr = if (signedIn) seerr.seasons(tmdb!!) else emptyList()
             val seasons = fromSeerr.map { SeasonState(it.number, it.name, it.episodeCount, it.availability) }.ifEmpty {
                 owned.mapNotNull { it.season }.filter { it > 0 }.distinct().sorted().map { n -> SeasonState(n, "Season $n", owned.count { it.season == n }, Availability.AVAILABLE) }
             }
-            activity.runOnUiThread { if (detailOpen) drawSeasons(box, e, tmdb, seasons, owned, states) }
+            // What is downloading right now, so a card can show how far its episode has got.
+            val busy = states.values.any { it == EpisodeState.REQUESTED } || seasons.any { it.availability == Availability.PROCESSING || it.availability == Availability.DOWNLOADING || it.availability == Availability.PARTIAL }
+            val downloads = if (signedIn && busy) queueClient.items().orEmpty().filter { it.tmdbId == tmdb } else emptyList()
+            activity.runOnUiThread {
+                if (!detailOpen || !box.isAttachedToWindow) return@runOnUiThread
+                drawSeasons(box, e, tmdb, seasons, owned, states, downloads)
+                resumeOnHero(primary, e, owned)
+            }
         }
     }
 
-    private fun drawSeasons(box: LinearLayout, e: Entry, tmdb: Long?, seasons: List<SeasonState>, owned: List<JellyfinItem>, states: MutableMap<Pair<Int, Int>, EpisodeState>) {
+    /** "Resume S1 E2" on the title's own button when Jellyfin has a part-watched episode of it. */
+    private fun resumeOnHero(primary: CinemaButton?, e: Entry, owned: List<JellyfinItem>) {
+        if (primary == null || e.library == null) return
+        val ep = owned.filter { it.resumeMs > 0 && !it.played && it.season != null && it.episode != null }
+            .maxWithOrNull(compareBy<JellyfinItem> { it.season }.thenBy { it.episode }) ?: return
+        primary.setText("Resume S${ep.season} E${ep.episode}")
+        primary.setOnClickListener { JellyfinPlayback.play(activity, jellyfin, ep, "${e.title.name} · S${ep.season} E${ep.episode}", "jf:${ep.id}") }
+    }
+
+    private fun drawSeasons(box: LinearLayout, e: Entry, tmdb: Long?, seasons: List<SeasonState>, owned: List<JellyfinItem>,
+                            states: MutableMap<Pair<Int, Int>, EpisodeState>, downloads: List<QueueItem>) {
         box.removeAllViews()
         if (seasons.isEmpty()) {
             box.addView(note(if (!seerr.isSignedIn && e.library == null) "Press Queue download to sign in, then the seasons and episodes will be listed here." else "No season information available."))
             return
         }
-        // The request for the shown season sits first, so it is always the next thing below the title, however many
-        // seasons there are; the season picker follows it, and the episodes come last.
-        val action = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
-        box.addView(action, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        val picker = row(null, null, into = box, inset = false)
-        val episodes = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
-        box.addView(episodes, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        // The season bar (`.sbar`): stripe marker, the tabs, then the season's counts and its action on the right.
+        val bar = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
+        box.addView(bar, LinearLayout.LayoutParams(-1, Cinema.px(activity, 62)))
+        bar.addView(View(activity).apply { background = StripeDrawable(horizontalBands = false, radius = Cinema.pxf(activity, 7)) },
+            LinearLayout.LayoutParams(Cinema.px(activity, 14), Cinema.px(activity, 30)).apply { marginEnd = Cinema.px(activity, 24) })
+        val tabRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
+        val tabScroller = CalmHorizontalScrollView(activity).apply {
+            isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; isHorizontalFadingEdgeEnabled = false
+            leftLeavesToRail = false
+            addView(tabRow)
+        }
+        bar.addView(tabScroller, LinearLayout.LayoutParams(0, -1, 1f))
+        val info = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        bar.addView(info, LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 24); marginEnd = Cinema.px(activity, 22) })
+        val actionSlot = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
+        bar.addView(actionSlot, LinearLayout.LayoutParams(-2, Cinema.px(activity, 60)))
 
-        val pills = HashMap<TextView, SeasonState>()
+        // The episode rail, 32 px under the bar (the row's own 16 px padding plus 16 more).
+        val rail = row(null, null, into = box, inset = false)
+        (rail.scroller.layoutParams as LinearLayout.LayoutParams).topMargin = Cinema.px(activity, 16)
+
+        val tabs = LinkedHashMap<View, SeasonState>()
+        val paints = HashMap<View, () -> Unit>()
         var shown = seasons.first()
         var loading = 0
+        var railTarget: View? = null
+        fun selectedTab(): View? = tabs.entries.firstOrNull { it.value === shown }?.key
 
-        fun showSeason(s: SeasonState) {
-            shown = s
-            val token = ++loading
-            pills.forEach { (v, st) -> v.alpha = if (st === s) 1f else 0.62f }
-            // The request button for this season.
-            action.removeAllViews()
-            val label = when (s.availability) {
-                Availability.AVAILABLE -> "In your library"
-                Availability.REQUESTED, Availability.PROCESSING -> "Requested ✓"
-                Availability.DOWNLOADING -> "Downloading…"
-                Availability.PARTIAL -> "Partly downloaded"
-                Availability.NONE -> "Request ${s.name}"
+        fun setInfo(parts: List<Pair<String, Boolean>>) {
+            info.removeAllViews()
+            parts.forEachIndexed { i, (text, strong) ->
+                if (i > 0) info.addView(Cinema.dot(activity, Cinema.DIM, 4), LinearLayout.LayoutParams(Cinema.px(activity, 4), Cinema.px(activity, 4)).apply {
+                    marginStart = Cinema.px(activity, 14); marginEnd = Cinema.px(activity, 14) })
+                info.addView(Cinema.text(activity, text, 21, if (strong) Cinema.CREAM else Cinema.MUTED, weight = if (strong) 500 else 400).apply { maxLines = 1 })
             }
+        }
+
+        // Down from anywhere on the bar lands on the resume episode, or the first card.
+        val downToRail = View.OnKeyListener { _, code, ev ->
+            ev.action == android.view.KeyEvent.ACTION_DOWN && code == android.view.KeyEvent.KEYCODE_DPAD_DOWN &&
+                railTarget?.takeIf { it.isAttachedToWindow }?.requestFocus() == true
+        }
+
+        lateinit var showSeason: (SeasonState) -> Unit
+
+        fun setAction(s: SeasonState, allInLibrary: Boolean) {
+            actionSlot.removeAllViews()
+            val label = EpisodeCards.seasonAction(s.availability, s.name, allInLibrary) ?: return
             val can = s.availability == Availability.NONE && tmdb != null
-            val button = pill(label, accent = can).apply { alpha = if (can) 1f else 0.6f; isEnabled = can }
+            val button = CinemaButton(activity, if (can) CinemaButton.Kind.TERRA else CinemaButton.Kind.GLASS, label, if (can) R.drawable.ic_cin_dl else null, small = true)
+            button.isEnabled = can
+            button.setOnKeyListener(downToRail)
+            button.setOnFocusChangeListener { v, f -> if (f) reveal(v) }
             button.setOnClickListener {
                 if (!seerr.isSignedIn) { seerrSheet.show(seerr, jellyfin) { showSeason(s) }; return@setOnClickListener }
-                button.text = "Requesting…"; button.isEnabled = false
+                button.setText("Requesting…"); button.isEnabled = false
                 worker.execute {
                     val outcome = seerr.request(Kind.SHOW, tmdb!!, listOf(s.number))
                     activity.runOnUiThread {
@@ -1723,138 +1769,152 @@ class MoviesPanel(
                             RequestOutcome.NEEDS_SIGN_IN -> seerrSheet.show(seerr, jellyfin) { showSeason(s) }
                             RequestOutcome.FAILED -> Toast.makeText(activity, "Couldn't queue ${s.name} right now", Toast.LENGTH_LONG).show()
                         }
-                        if (detailOpen && shown === s) showSeason(s)
+                        if (detailOpen && shown === s) { showSeason(s); selectedTab()?.requestFocus() }
                     }
                 }
             }
-            action.addView(button, LinearLayout.LayoutParams(dp(260), dp(48)))
-            action.addView(Type.text(activity, "${s.episodeCount} episodes", Type.Style.CAPTION), LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(16) })
+            actionSlot.addView(button, FrameLayout.LayoutParams(-2, -1))
+        }
 
-            // Its episodes: Seerr's listing when there is one, otherwise what the library holds.
-            episodes.removeAllViews(); episodes.addView(note("Loading episodes…"))
+        /** One episode's card, with its actions. [rebind] redraws it after a request, without reloading the season. */
+        fun episodeCard(s: SeasonState, ep: EpisodeRow, mine: JellyfinItem?, token: Int, today: String): Pair<EpisodeCard, CardLook> {
+            val card = EpisodeCard(activity, ep.number, ep.name, ep.overview ?: mine?.overview)
+            val label = "${e.title.name} · S${s.number} E${ep.number}"
+            var look = episodeCardState(mine != null, states[s.number to ep.number], s.availability, ep.airDate, today, tmdb != null,
+                EpisodeCards.download(downloads, tmdb, s.number, ep.number))
+            fun rebind() {
+                card.bind(look, EpisodeCards.formatDate(ep.airDate)?.uppercase())
+                card.tipText = if (look.state == CardState.REQUEST) "Download S${s.number} E${ep.number}" else null
+            }
+            rebind()
+            val runtime = mine?.runtimeMin ?: ep.runtime
+            val resume = mine?.takeIf { !it.played }?.let { EpisodeCards.resume(it.resumeMs, runtime) }
+            card.setMeta(EpisodeCards.metaParts(runtime, resume?.second, ep.airDate))
+            card.setResume(resume?.first)
+            // The library's own still when it has one (sent with the Jellyfin sign-in), otherwise TMDB's.
+            val (url, headers) = when {
+                mine?.hasPrimaryImage == true -> jellyfin.episodeImageUrl(mine.id) to jellyfin.playbackHeaders()
+                ep.stillUrl != null -> ep.stillUrl to emptyMap<String, String>()
+                else -> null to emptyMap<String, String>()
+            }
+            if (url == null) card.showPlaceholder()
+            else images.load(url, headers, maxWidth = Cinema.px(activity, 400)) { b -> if (token == loading) card.setStill(b) }
+
+            card.play.setOnClickListener { v ->
+                if (mine != null) JellyfinPlayback.play(activity, jellyfin, mine, label, "jf:${mine.id}")
+                else streamNow(e, v, s.number to ep.number, label)
+            }
+            card.download.setOnClickListener {
+                when (look.state) {
+                    CardState.REQUESTED -> Toast.makeText(activity, "Requested, waiting for a release", Toast.LENGTH_SHORT).show()
+                    CardState.DOWNLOADING -> Toast.makeText(activity, look.progress?.let { "Downloading, ${Math.round(it * 100)}% so far" } ?: "Downloading", Toast.LENGTH_SHORT).show()
+                    CardState.REQUEST -> when {
+                        tmdb == null -> Unit
+                        !seerr.isSignedIn -> seerrSheet.show(seerr, jellyfin) { }
+                        else -> {
+                            card.download.isClickable = false; card.download.alpha = 0.5f
+                            worker.execute {
+                                val outcome = sonarr.requestEpisodes(tmdb, s.number, listOf(ep.number))
+                                activity.runOnUiThread {
+                                    card.download.isClickable = true; card.download.alpha = 1f
+                                    when (outcome) {
+                                        EpisodeOutcome.QUEUED, EpisodeOutcome.ALREADY -> {
+                                            states[s.number to ep.number] = EpisodeState.REQUESTED
+                                            look = episodeCardState(mine != null, EpisodeState.REQUESTED, s.availability, ep.airDate, today, true, null)
+                                            if (token == loading) rebind()
+                                            Toast.makeText(activity, "${e.title.name} S${s.number} E${ep.number} is queued", Toast.LENGTH_LONG).show()
+                                        }
+                                        EpisodeOutcome.NOT_CONFIGURED -> Toast.makeText(activity, "Sonarr's details aren't available, so only whole seasons can be requested here", Toast.LENGTH_LONG).show()
+                                        EpisodeOutcome.NOT_FOUND -> Toast.makeText(activity, "Sonarr couldn't find that episode yet. Try again in a moment", Toast.LENGTH_LONG).show()
+                                        EpisodeOutcome.FAILED -> Toast.makeText(activity, "Couldn't queue that episode right now", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+            card.onLit = { lit -> if (lit) FastFocus.reveal(card, null, dp(24), dp(56), 0) }
+            return card to look
+        }
+
+        showSeason = { s ->
+            shown = s
+            val token = ++loading
+            paints.values.forEach { it() }
+            setInfo(EpisodeCards.seasonInfo(s.episodeCount, 0, 0))
+            setAction(s, allInLibrary = false)
+            railTarget = null
+            rail.inner.removeAllViews(); rail.inner.addView(note("Loading episodes…"))
             worker.execute {
                 val listing = if (tmdb != null && seerr.isSignedIn) seerr.episodes(tmdb, s.number) else emptyList()
                 activity.runOnUiThread {
                     if (!detailOpen || token != loading) return@runOnUiThread
-                    episodes.removeAllViews()
+                    rail.inner.removeAllViews()
                     val ownedHere = owned.filter { it.season == s.number }
-                    val rows = if (listing.isNotEmpty()) listing.map { Triple(it.number, it.name, it.airDate) }
-                               else ownedHere.map { Triple(it.episode ?: 0, it.name, null as String?) }
-                    if (rows.isEmpty()) { episodes.addView(note("No episode list available for this season.")); return@runOnUiThread }
-                    rows.sortedBy { it.first }.forEachIndexed { i, (number, name, airDate) ->
-                        val mine = ownedHere.firstOrNull { it.episode == number }
-                        episodes.addView(episodeRow(e, s, number, name, airDate, mine, tmdb, states), LinearLayout.LayoutParams(-1, dp(52)).apply { if (i > 0) topMargin = dp(8) })
+                    val rows = if (listing.isNotEmpty()) listing.map { EpisodeRow(it.number, it.name, it.overview, it.airDate, it.stillUrl, it.runtime) }
+                               else ownedHere.filter { it.episode != null }.map { EpisodeRow(it.episode!!, it.name, it.overview, null, null, it.runtimeMin) }
+                    if (rows.isEmpty()) { rail.inner.addView(note("No episode list available for this season.")); return@runOnUiThread }
+                    val today = EpisodeCards.today()
+                    val cards = rows.sortedBy { it.number }.mapIndexed { i, ep ->
+                        val mine = ownedHere.firstOrNull { it.episode == ep.number }
+                        val (card, look) = episodeCard(s, ep, mine, token, today)
+                        rail.inner.addView(card, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = Cinema.px(activity, 40) })
+                        Triple(card, look, mine)
                     }
+                    val inLibrary = cards.count { it.second.state == CardState.LIBRARY }
+                    setInfo(EpisodeCards.seasonInfo(rows.size, inLibrary, cards.count { it.second.state == CardState.DOWNLOADING }))
+                    setAction(s, allInLibrary = inLibrary >= rows.size)
+
+                    // Focus runs along the rail, Play then Download on each card; Up returns to the season's tab.
+                    val stops = cards.flatMap { it.first.focusStops }
+                    stops.forEachIndexed { i, stop ->
+                        stop.setOnKeyListener { _, code, ev ->
+                            if (ev.action != android.view.KeyEvent.ACTION_DOWN) return@setOnKeyListener false
+                            when (code) {
+                                android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> { stops.getOrNull(i + 1)?.requestFocus(); true }
+                                android.view.KeyEvent.KEYCODE_DPAD_LEFT -> { stops.getOrNull(i - 1)?.requestFocus(); true }
+                                android.view.KeyEvent.KEYCODE_DPAD_UP -> selectedTab()?.requestFocus() == true
+                                else -> false
+                            }
+                        }
+                    }
+                    railTarget = cards.firstOrNull { (_, _, mine) -> mine != null && !mine.played && mine.resumeMs > 0 }?.first?.firstStop
+                        ?: cards.first().first.firstStop
                 }
             }
         }
 
         seasons.forEachIndexed { i, s ->
-            val p = pill("S${s.number}", accent = false).apply { setPadding(dp(20), 0, dp(20), 0); setOnClickListener { showSeason(s) } }
-            p.setOnFocusChangeListener { v, focused ->
-                val d = v.background as android.graphics.drawable.TransitionDrawable
-                if (focused) { d.startTransition(120); if (shown !== s) showSeason(s); reveal(v) } else d.reverseTransition(120)
-                (v as TextView).setTextColor(if (focused) Cinema.INK else Cinema.CREAM)
+            val label = Cinema.text(activity, s.name, 36, Cinema.DIM, serif = true, tracking = -0.01f).apply { maxLines = 1 }
+            val underline = View(activity).apply { background = StripeDrawable(horizontalBands = false, radius = Cinema.pxf(activity, 3)) }
+            val tab = FrameLayout(activity).apply {
+                isFocusable = true; isClickable = true
+                setPadding(Cinema.px(activity, 26), 0, Cinema.px(activity, 26), 0)
+                addView(label, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL))
+                addView(underline, FrameLayout.LayoutParams(Cinema.px(activity, 40), Cinema.px(activity, 6), Gravity.BOTTOM or Gravity.START).apply {
+                    leftMargin = Cinema.px(activity, 26); bottomMargin = Cinema.px(activity, 2) })
+                contentDescription = s.name
             }
-            pills[p] = s
-            picker.inner.addView(p, LinearLayout.LayoutParams(-2, dp(42)).apply { if (i > 0) marginStart = dp(8) })
+            val lit = GradientDrawable().apply { cornerRadius = Cinema.pxf(activity, 31); setColor(Cinema.CREAM) }
+            // Unselected tabs are dim, the shown season is cream with the stripe underline, a focused tab fills cream.
+            paints[tab] = {
+                val focused = tab.isFocused; val selected = shown === s
+                tab.background = if (focused) lit else null
+                label.setTextColor(if (focused) Cinema.INK else if (selected) Cinema.CREAM else Cinema.DIM)
+                underline.visibility = if (selected && !focused) View.VISIBLE else View.GONE
+            }
+            tab.setOnFocusChangeListener { v, focused ->
+                if (focused && shown !== s) showSeason(s) else paints[tab]?.invoke()
+                if (focused) FastFocus.reveal(v, null, dp(24), dp(56), 0)
+            }
+            tab.setOnClickListener { if (shown !== s) showSeason(s) }
+            tab.setOnKeyListener(downToRail)
+            tabs[tab] = s
+            tabRow.addView(tab, LinearLayout.LayoutParams(-2, Cinema.px(activity, 62)).apply { if (i > 0) marginStart = Cinema.px(activity, 10) })
         }
         showSeason(seasons.first())
-    }
-
-    /** A single symbol for an episode's state, so the list reads at a glance. */
-    private fun episodeGlyph(label: String): String = when {
-        label.startsWith("▶") -> "▶"
-        label.startsWith("Downloaded") || label == "In library" -> "✓"
-        label.startsWith("Requested") || label.startsWith("Downloading") -> "↓"
-        label == "Request" -> "+"
-        else -> "·"
-    }
-
-    /** One episode: its number, its title, and an icon for what can be done with it. A missing one is requested on its own. */
-    private fun episodeRow(e: Entry, s: SeasonState, number: Int, name: String, airDate: String?, mine: JellyfinItem?, tmdb: Long?, states: MutableMap<Pair<Int, Int>, EpisodeState>): View {
-        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(14), 0, dp(18), 0) }
-        val badge = Type.text(activity, "$number", Type.Style.CAPTION).apply {
-            gravity = Gravity.CENTER; textSize = 14f; typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x33F3E9CF) }
-        }
-        val title = Type.text(activity, name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 15f }
-        val state = Type.text(activity, "", Type.Style.CAPTION).apply { gravity = Gravity.CENTER; textSize = 18f }
-        // What Sonarr says about this very episode wins; otherwise what Seerr says about its season.
-        fun label(): String {
-            val own = states[s.number to number]
-            return when {
-                mine != null -> "▶  Play"
-                own == EpisodeState.DOWNLOADED -> "Downloaded · adding to library"
-                own == EpisodeState.REQUESTED -> "Requested"
-                s.availability == Availability.AVAILABLE -> "In library"
-                s.availability == Availability.REQUESTED || s.availability == Availability.PROCESSING -> "Requested"
-                s.availability == Availability.DOWNLOADING -> "Downloading"
-                tmdb != null -> "Request"
-                else -> "Not downloaded"
-            }
-        }
-        // An episode not in the library offers two actions in its right-hand slot: play (stream it now) and download
-        // (request it). Each is a D-pad stop, so Left and Right switch between them; both darken with the row.
-        val downloadable = mine == null && tmdb != null
-        fun glyph(): String = if (downloadable && label() == "Request") "↓" else episodeGlyph(label())
-        state.text = glyph()
-        val play = if (downloadable) Cinema.text(activity, "▶", 18, Cinema.CREAM).apply {
-            gravity = Gravity.CENTER; isFocusable = true; isClickable = true
-            setOnFocusChangeListener { v, f ->
-                v.background = if (f) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Cinema.CREAM) } else null
-                (v as TextView).setTextColor(if (f) Cinema.INK else Cinema.CREAM)
-                if (f) reveal(v)
-            }
-            setOnClickListener { v -> streamNow(e, v, s.number to number, "${e.title.name} · S${s.number} E$number") }
-        } else null
-        state.apply {
-            if (downloadable) {
-                isFocusable = true; isClickable = true
-                setOnFocusChangeListener { v, f ->
-                    v.background = if (f) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Cinema.CREAM) } else null
-                    (v as TextView).setTextColor(if (f) Cinema.INK else Cinema.CREAM)
-                    if (f) reveal(v)
-                }
-                setOnClickListener { row.performClick() }
-            }
-        }
-        row.addView(badge, LinearLayout.LayoutParams(dp(34), dp(34)))
-        row.addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
-        if (play != null) {
-            val actions = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-            actions.addView(play, LinearLayout.LayoutParams(dp(40), dp(40)))
-            actions.addView(state, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(6) })
-            row.addView(actions, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
-        } else {
-            row.addView(state, LinearLayout.LayoutParams(dp(40), -2))
-        }
-        FastFocus.bind(row, surfaces12, listOfNotNull(badge, title, state, play), rest = Cinema.glass(activity, 24f))
-        row.setOnClickListener {
-            val label = label()
-            when {
-                mine != null -> JellyfinPlayback.play(activity, jellyfin, mine, "${e.title.name} · S${s.number} E$number", "jf:${mine.id}")
-                label != "Request" || tmdb == null -> Unit
-                !seerr.isSignedIn -> seerrSheet.show(seerr, jellyfin) { }
-                else -> {
-                    state.text = "…"; row.isClickable = false
-                    worker.execute {
-                        val outcome = sonarr.requestEpisodes(tmdb, s.number, listOf(number))
-                        activity.runOnUiThread {
-                            row.isClickable = true
-                            when (outcome) {
-                                EpisodeOutcome.QUEUED, EpisodeOutcome.ALREADY -> { states[s.number to number] = EpisodeState.REQUESTED; Toast.makeText(activity, "${e.title.name} S${s.number} E$number is queued", Toast.LENGTH_LONG).show() }
-                                EpisodeOutcome.NOT_CONFIGURED -> Toast.makeText(activity, "Sonarr's details aren't available, so only whole seasons can be requested here", Toast.LENGTH_LONG).show()
-                                EpisodeOutcome.NOT_FOUND -> Toast.makeText(activity, "Sonarr couldn't find that episode yet. Try again in a moment", Toast.LENGTH_LONG).show()
-                                EpisodeOutcome.FAILED -> Toast.makeText(activity, "Couldn't queue that episode right now", Toast.LENGTH_LONG).show()
-                            }
-                            state.text = glyph()
-                        }
-                    }
-                }
-            }
-        }
-        return row
     }
 
     // --- Category tiles ------------------------------------------------------------------------

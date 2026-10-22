@@ -335,7 +335,10 @@ object ByteSize {
 /** A season of a series with where it stands. Season 0 (specials) is left out by [SeerrSeasons.parseSeasons]. */
 data class SeasonInfo(val number: Int, val name: String, val episodeCount: Int, val availability: Availability)
 
-data class EpisodeInfo(val season: Int, val number: Int, val name: String, val overview: String?, val airDate: String?)
+/** [stillPath] is TMDB's path for the episode still ("/abc.jpg"); [runtime] is in minutes, when TMDB has it. */
+data class EpisodeInfo(val season: Int, val number: Int, val name: String, val overview: String?, val airDate: String?, val stillPath: String? = null, val runtime: Int? = null) {
+    val stillUrl: String? get() = stillPath?.let { "https://image.tmdb.org/t/p/w500$it" }
+}
 
 object SeerrSeasons {
     fun parseSeasons(json: String): List<SeasonInfo> = try {
@@ -353,7 +356,10 @@ object SeerrSeasons {
         val eps = JSONObject(json).getJSONArray("episodes")
         (0 until eps.length()).map { eps.getJSONObject(it) }.map {
             EpisodeInfo(it.optInt("seasonNumber"), it.optInt("episodeNumber"), it.optString("name").ifBlank { "Episode ${it.optInt("episodeNumber")}" },
-                it.optString("overview").ifBlank { null }, it.optString("airDate").ifBlank { null })
+                it.optString("overview").ifBlank { null }, it.optString("airDate").ifBlank { null },
+                // TMDB sends null for a missing still, which optString turns into "null".
+                it.optString("stillPath").takeIf { p -> p.startsWith("/") },
+                it.optInt("runtime", 0).takeIf { r -> r > 0 })
         }
     } catch (_: Exception) { emptyList() }
 }

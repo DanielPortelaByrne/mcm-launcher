@@ -19,10 +19,11 @@ import com.example.tvlauncher.design.Cinema
  * the page's call to action reads even when focus is elsewhere. The glow is drawn outside the view's bounds, so its
  * parents must not clip children.
  */
-class CinemaButton(context: Context, kind: Kind, label: CharSequence, iconRes: Int? = null) : LinearLayout(context) {
+/** [small] is `.btn.sm`: 60 tall (the caller sets the height), 21 px text, tighter padding. */
+class CinemaButton(context: Context, kind: Kind, label: CharSequence, iconRes: Int? = null, private val small: Boolean = false) : LinearLayout(context) {
     enum class Kind { PRIMARY, TERRA, GLASS, DANGER }
 
-    val label: TextView = Cinema.text(context, label, 25, Cinema.CREAM, weight = 600).apply { maxLines = 1 }
+    val label: TextView = Cinema.text(context, label, if (small) 21 else 25, Cinema.CREAM, weight = 600).apply { maxLines = 1 }
     private val icon: ImageView? = iconRes?.let { Cinema.icon(context, it, Cinema.CREAM) }
     // Focus glow: a soft blurred bloom behind the button (no ring or outline, per the Cinema language).
     private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -38,8 +39,10 @@ class CinemaButton(context: Context, kind: Kind, label: CharSequence, iconRes: I
         orientation = HORIZONTAL; gravity = Gravity.CENTER
         isFocusable = true; isClickable = true
         setWillNotDraw(false)
-        setPadding(Cinema.px(context, if (iconRes != null) 30 else 38), 0, Cinema.px(context, 38), 0)
-        icon?.let { addView(it, LayoutParams(Cinema.px(context, 30), Cinema.px(context, 30)).apply { marginEnd = Cinema.px(context, 14) }) }
+        if (small) setPadding(Cinema.px(context, if (iconRes != null) 22 else 28), 0, Cinema.px(context, 28), 0)
+        else setPadding(Cinema.px(context, if (iconRes != null) 30 else 38), 0, Cinema.px(context, 38), 0)
+        val iconSize = Cinema.px(context, if (small) 24 else 30)
+        icon?.let { addView(it, LayoutParams(iconSize, iconSize).apply { marginEnd = Cinema.px(context, if (small) 10 else 14) }) }
         addView(this.label)
         contentDescription = label
         restyle()
@@ -55,12 +58,13 @@ class CinemaButton(context: Context, kind: Kind, label: CharSequence, iconRes: I
     }
 
     private fun restyle() {
-        val r = Cinema.pxf(context, 38)
+        val rMock = if (small) 30f else 38f
+        val r = Cinema.pxf(context, rMock)
         val lit = isFocused
         val (fill, text) = when {
             kind == Kind.TERRA -> GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFEB8A56.toInt(), 0xFFD4623A.toInt())).apply { cornerRadius = r } to 0xFF1D0D05.toInt()
             lit -> GradientDrawable().apply { cornerRadius = r; setColor(Cinema.CREAM) } to if (kind == Kind.DANGER) 0xFF8A2A12.toInt() else Cinema.INK
-            else -> Cinema.glass(context, 38f, if (kind == Kind.PRIMARY) Cinema.GLASS_STRONG else Cinema.GLASS) to if (kind == Kind.DANGER) Cinema.DANGER_TEXT else Cinema.CREAM
+            else -> Cinema.glass(context, rMock, if (kind == Kind.PRIMARY) Cinema.GLASS_STRONG else Cinema.GLASS) to if (kind == Kind.DANGER) Cinema.DANGER_TEXT else Cinema.CREAM
         }
         background = fill
         label.setTextColor(text)

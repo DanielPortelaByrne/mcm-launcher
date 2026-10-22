@@ -26,6 +26,8 @@ data class JellyfinItem(
     val seriesId: String? = null,
     val episodeEnd: Int? = null,
     val missing: Boolean = false,
+    /** Whether the server holds a Primary image for it (an episode's still). */
+    val hasPrimaryImage: Boolean = false,
     /** Filled only by the single-item fetch the player makes: chapters, trickplay tiles, file size and rating. */
     val chapters: List<com.example.tvlauncher.data.player.Chapter> = emptyList(),
     val trickplay: com.example.tvlauncher.data.player.Trickplay? = null,
@@ -105,7 +107,7 @@ object JellyfinApi {
 
     /** Every episode of a series the signed-in user can see, with their watch state. */
     fun episodesUrl(base: String, userId: String, seriesId: String): String =
-        "$base/Shows/${enc(seriesId)}/Episodes?userId=${enc(userId)}&Fields=Overview,MediaSources"
+        "$base/Shows/${enc(seriesId)}/Episodes?userId=${enc(userId)}&Fields=Overview,MediaSources,RunTimeTicks"
 
     /** Sequence follows the episode being watched, including rewatches; never jumps over a gap in a season. */
     fun followingEpisode(current: JellyfinItem, episodes: List<JellyfinItem>): JellyfinItem? {
@@ -174,6 +176,9 @@ object JellyfinApi {
             "&MaxAudioChannels=2&AudioBitRate=192000&SegmentContainer=ts"
 
     fun posterUrl(base: String, id: String, maxHeight: Int = 450): String = "$base/Items/${enc(id)}/Images/Primary?maxHeight=$maxHeight&quality=90"
+
+    /** An episode's still (its Primary image), sized for a title card. */
+    fun episodeImageUrl(base: String, id: String, maxWidth: Int = 480): String = "$base/Items/${enc(id)}/Images/Primary?maxWidth=$maxWidth&quality=85"
 
     // --- Programme guide -------------------------------------------------------------------------
 
@@ -282,6 +287,7 @@ object JellyfinApi {
             seriesId = o.optString("SeriesId").ifBlank { null },
             episodeEnd = if (o.has("IndexNumberEnd") && !o.isNull("IndexNumberEnd")) o.optInt("IndexNumberEnd") else null,
             missing = o.optBoolean("IsMissing") || o.optBoolean("IsVirtualItem") || o.optString("LocationType") == "Virtual",
+            hasPrimaryImage = o.optJSONObject("ImageTags")?.has("Primary") == true,
             chapters = com.example.tvlauncher.data.player.PlayerMath.parseChapters(o.optJSONArray("Chapters")),
             trickplay = com.example.tvlauncher.data.player.PlayerMath.parseTrickplay(o.optJSONObject("Trickplay"), source),
             sizeBytes = sources?.optJSONObject(0)?.optLong("Size", 0L)?.takeIf { it > 0 },

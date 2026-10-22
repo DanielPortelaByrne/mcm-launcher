@@ -202,6 +202,9 @@ class JellyfinClient(context: Context) {
 
     fun imageUrl(id: String, maxHeight: Int = 300) = JellyfinApi.posterUrl(JellyfinApi.cleanBase(server), id, maxHeight)
 
+    /** An episode's still from the library. Load it with [playbackHeaders], like any other image from this server. */
+    fun episodeImageUrl(id: String) = JellyfinApi.episodeImageUrl(JellyfinApi.cleanBase(server), id)
+
     /** When a request last found the server unreachable. Rows then stop queuing up behind a server that is not there. */
     @Volatile private var unreachableAt = 0L
 
