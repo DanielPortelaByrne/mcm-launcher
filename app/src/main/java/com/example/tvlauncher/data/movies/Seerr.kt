@@ -196,13 +196,16 @@ class SeerrClient(context: Context) {
      * Asks the home stream service for a seeded copy of a film and returns where the player can read it. It searches the
      * same indexers the library uses, so nothing goes through Stremio. The service waits for torrent metadata, so this call is slow.
      */
-    fun startStream(title: String, year: Int?): StreamStart = try {
+    /** [season] and [episode] are set for a TV episode; the server then looks for that one episode. */
+    fun startStream(title: String, year: Int?, season: Int? = null, episode: Int? = null): StreamStart = try {
         val endpoint = (prefs.getString("stream_server", null) ?: java.net.URI("http", null, host, 5057, null, null, null).toString()).trimEnd('/')
         val c = open("POST", "$endpoint/start")
         c.readTimeout = 120_000
         c.doOutput = true
         try {
-            c.outputStream.use { it.write(JSONObject().put("title", title).put("year", year?.toString().orEmpty()).toString().toByteArray()) }
+            val body = JSONObject().put("title", title).put("year", year?.toString().orEmpty())
+            if (season != null && episode != null) body.put("season", season).put("episode", episode)
+            c.outputStream.use { it.write(body.toString().toByteArray()) }
             when (c.responseCode) {
                 200 -> {
                     val body = JSONObject(c.inputStream.bufferedReader().use { it.readText() })

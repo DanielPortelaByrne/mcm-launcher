@@ -62,6 +62,44 @@ class SelectionRules(unittest.TestCase):
         self.assertEqual(svc.pick([release('Heat 1995 1080p', seeders=50)], 'Heat', 1995)['seeders'], 50)
 
 
+class EpisodeRules(unittest.TestCase):
+    """A TV episode: only a single-episode release for that exact SxxExx, and only that file is played."""
+
+    EP = (1, 7)
+    SHOW = 'Westworld'
+
+    def test_accepts_the_right_episode_only(self):
+        good = release('Westworld S01E07 1080p BluRay x264', size=1024 ** 3)
+        self.assertTrue(svc.acceptable(good, self.SHOW, None, self.EP)[0])
+        self.assertEqual(svc.acceptable(release('Westworld S01E08 1080p BluRay', size=1024 ** 3), self.SHOW, None, self.EP), (False, 'other episode'))
+        self.assertEqual(svc.acceptable(release('Westworld S01E17 1080p BluRay', size=1024 ** 3), self.SHOW, None, self.EP), (False, 'other episode'))
+
+    def test_a_season_pack_is_refused(self):
+        pack = release('Westworld S01 Complete 1080p BluRay', size=8 * 1024 ** 3)
+        self.assertFalse(svc.acceptable(pack, self.SHOW, None, self.EP)[0])
+        ranged = release('Westworld S01-S02 1080p BluRay S01E07', size=8 * 1024 ** 3)
+        self.assertEqual(svc.acceptable(ranged, self.SHOW, None, self.EP)[1], 'season pack')
+
+    def test_episode_size_bounds_differ_from_films(self):
+        small = release('Westworld S01E07 720p WEB-DL', size=40 * 1024 ** 2)
+        self.assertEqual(svc.acceptable(small, self.SHOW, None, self.EP)[1], 'size')
+        tiny_film = release('Heat 1995 1080p', size=40 * 1024 ** 2)
+        self.assertEqual(svc.acceptable(tiny_film, 'Heat', 1995)[1], 'size')
+
+    def test_title_must_match_without_a_year(self):
+        self.assertEqual(svc.acceptable(release('Ronin S01E07 1080p', size=1024 ** 3), self.SHOW, None, self.EP)[1], 'title')
+
+    def test_video_file_picks_only_that_episode(self):
+        files = [{'index': 0, 'name': 'Westworld.S01E07.mkv', 'size': 900}, {'index': 1, 'name': 'Westworld.S01E08.mkv', 'size': 950}]
+        self.assertEqual(svc.video_file(files, self.EP), (0, 'Westworld.S01E07.mkv', 900))
+        self.assertIsNone(svc.video_file([files[1]], self.EP))
+        self.assertEqual(svc.video_file(files)[0], 1)   # with no episode, the largest video, as for films
+
+    def test_marker_does_not_match_longer_numbers(self):
+        self.assertIsNone(svc.episode_marker(1, 1).search('Show.S01E12.mkv'))
+        self.assertIsNotNone(svc.episode_marker(1, 12).search('Show.S01E12.mkv'))
+
+
 class HelpersTest(unittest.TestCase):
     def test_parse_range_forms(self):
         self.assertEqual(svc.parse_range(None, 100), (0, 99))
@@ -260,7 +298,7 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(self.streams.known[HASH]['size'], len(self.film))
 
     def test_start_with_no_acceptable_source_raises(self):
-        self.streams.search = lambda title, year: [release('Heat 1995 HDCAM', seeders=500)]
+        self.streams.search = lambda title, year, episode=None: [release('Heat 1995 HDCAM', seeders=500)]
         with self.assertRaises(LookupError):
             self.streams.start('Heat', '1995')
 

@@ -39,9 +39,12 @@ SEERR = 'http://127.0.0.1:5055'
 PORT = 5057
 CATEGORY = 'mcm-stream'
 MOVIE_CATEGORY = 2000
+TV_CATEGORY = 5000
 MIN_SEEDERS = 5
 MIN_BYTES = 300 * 1024 * 1024
 MAX_BYTES = 12 * 1024 ** 3
+MIN_EPISODE_BYTES = 80 * 1024 * 1024    # an episode is far smaller than a film
+MAX_EPISODE_BYTES = 8 * 1024 ** 3
 STALL_SECONDS = 60          # no new bytes for this long means the stream has stalled
 QUICK_POLL_SECONDS = 0.25   # how often a waiting stream checks for newly written bytes
 COPY_CHUNK_BYTES = 256 * 1024   # small enough to start sending sooner, large enough not to thrash the socket
@@ -78,6 +81,11 @@ def parse_release(name):
     }
 
 
+def episode_marker(season, episode):
+    """The SxxExx tag a release names its episode with, as a regex that does not match a longer number."""
+    return re.compile(r"(?<![a-z0-9])s0*%de0*%d(?![0-9])" % (int(season), int(episode)), re.I)
+
+
 def title_matches(title, year, release):
     """Every word of the film's title must appear in the release name, and a year, if given, must too."""
     words = normalize(title).split()
@@ -89,21 +97,31 @@ def title_matches(title, year, release):
     return True
 
 
-def acceptable(result, title, year):
-    """Whether a Prowlarr result is worth trying at all. Returns (keep, reason)."""
+def acceptable(result, title, year, episode=None):
+    """Whether a Prowlarr result is worth trying at all. Returns (keep, reason).
+
+    With episode = (season, episode) the result must be a single-episode release for that episode. A season pack
+    would need its file chosen per episode, which the server does not do, so packs are refused.
+    """
     name = result.get('title') or ''
     seeders = result.get('seeders')
     size = result.get('size') or 0
     info = parse_release(name)
     if not isinstance(seeders, int) or seeders < MIN_SEEDERS:
         return False, 'seeders'
-    if size < MIN_BYTES or size > MAX_BYTES:
+    low, high = (MIN_BYTES, MAX_BYTES) if episode is None else (MIN_EPISODE_BYTES, MAX_EPISODE_BYTES)
+    if size < low or size > high:
         return False, 'size'
     if info['bad']:
         return False, 'poor copy'
     if info['multi_season']:
-        return False, 'not a film'
-    if not title_matches(title, year, name):
+        return False, 'not a film' if episode is None else 'season pack'
+    if episode is not None:
+        if not episode_marker(*episode).search(name):
+            return False, 'other episode'
+        if not title_matches(title, None, name):
+            return False, 'title'
+    elif not title_matches(title, year, name):
         return False, 'title'
     if magnet_for(result, title) is None:
         return False, 'no link'
@@ -133,9 +151,9 @@ def score(result):
     return resolution * 2 + source + seeds - oversize - silent
 
 
-def pick(results, title, year):
+def pick(results, title, year, episode=None):
     """Best acceptable result, or None."""
-    kept = [r for r in results if acceptable(r, title, year)[0]]
+    kept = [r for r in results if acceptable(r, title, year, episode)[0]]
     return max(kept, key=score) if kept else None
 
 
@@ -157,10 +175,14 @@ def magnet_for(result, title):
     return link if link.startswith('magnet:') and hash_from_magnet(link) else None
 
 
-def video_file(files):
-    """The largest video file in a torrent, as (index, name, size), or None."""
+def video_file(files, episode=None):
+    """The largest video file in a torrent, as (index, name, size), or None.
+
+    With episode = (season, episode), only a video file carrying that episode's SxxExx tag counts.
+    """
+    marker = episode_marker(*episode) if episode is not None else None
     videos = [(f.get('index'), f.get('name', ''), f.get('size', 0)) for f in files
-              if f.get('name', '').lower().endswith(VIDEO_EXTENSIONS)]
+              if f.get('name', '').lower().endswith(VIDEO_EXTENSIONS) and (marker is None or marker.search(f.get('name', '')))]
     return max(videos, key=lambda v: v[2]) if videos else None
 
 
@@ -205,10 +227,13 @@ class Streams:
 
     # --- Prowlarr ---------------------------------------------------------------------------------
 
-    def search(self, title, year):
+    def search(self, title, year, episode=None):
         key = ET.parse(self.stack / 'prowlarr' / 'config.xml').findtext('ApiKey')
-        query = urllib.parse.urlencode({'query': f'{title} {year}' if year else title, 'type': 'search',
-                                        'categories': MOVIE_CATEGORY, 'limit': 100})
+        if episode is None:
+            text, category = (f'{title} {year}' if year else title), MOVIE_CATEGORY
+        else:
+            text, category = f'{title} S{int(episode[0]):02d}E{int(episode[1]):02d}', TV_CATEGORY
+        query = urllib.parse.urlencode({'query': text, 'type': 'search', 'categories': category, 'limit': 100})
         req = urllib.request.Request(f'{self.prowlarr}/api/v1/search?{query}', headers={'X-Api-Key': key, 'Accept': 'application/json'})
         try:
             with urllib.request.urlopen(req, timeout=60) as response:
@@ -303,13 +328,14 @@ class Streams:
 
     # --- Starting a film --------------------------------------------------------------------------
 
-    def start(self, title, year):
+    def start(self, title, year, episode=None):
         """Finds the best copy and adds it to qBittorrent. Returns at once; the film's details arrive in the background.
 
+        episode is (season, episode) for a TV episode, or None for a film.
         Returns (hash, label, phase) where phase is 'ready' or 'connecting'.
         """
-        results = self.search(title, year)
-        choice = pick(results, title, year)
+        results = self.search(title, year, episode)
+        choice = pick(results, title, year, episode)
         if choice is None:
             raise LookupError('no source')
         link = magnet_for(choice, title)
@@ -323,7 +349,7 @@ class Streams:
                 return hash_, self.known[hash_]['label'], 'ready'
             if hash_ in self.pending:
                 return hash_, self.pending[hash_]['label'], 'connecting'
-            self.pending[hash_] = {'label': label, 'error': None}
+            self.pending[hash_] = {'label': label, 'error': None, 'episode': episode}
         try:
             self.qbit('/api/v2/torrents/add', {
                 'urls': link, 'savepath': self.to_qbit(self.cache), 'category': CATEGORY,
@@ -390,6 +416,8 @@ class Streams:
     def await_film(self, hash_):
         """Waits for metadata, then selects only the film file, so the download follows its pieces in order."""
         deadline = time.time() + START_TIMEOUT
+        with self.lock:
+            episode = (self.pending.get(hash_) or {}).get('episode')
         while time.time() < deadline:
             rows = self.qbit('/api/v2/torrents/info?category=' + CATEGORY) or []
             row = next((r for r in rows if hash_ and r.get('hash') == hash_), None)
@@ -404,7 +432,7 @@ class Streams:
                     # Right after the add, qBittorrent can report a state before it has the file list. Wait for it.
                     time.sleep(2)
                     continue
-                chosen = video_file(files)
+                chosen = video_file(files, episode)
                 if chosen is None:
                     raise LookupError('no video file')
                 index, name, size = chosen
@@ -503,12 +531,19 @@ class Handler(BaseHTTPRequestHandler):
             if not title:
                 self.reply(400, {'error': 'Title missing'})
                 return
+            season, episode = body.get('season'), body.get('episode')
+            episode_key = None
+            if season is not None or episode is not None:
+                if not (isinstance(season, int) and isinstance(episode, int) and 0 < season < 100 and 0 < episode < 1000):
+                    self.reply(400, {'error': 'Season and episode must be numbers'})
+                    return
+                episode_key = (season, episode)
             started = time.time()
-            hash_, label, phase = self.server.streams.start(title, year if year.isdigit() else None)
-            LOG.info('start %s: %r %s in %.1fs as %s', phase, title, year, time.time() - started, label)
+            hash_, label, phase = self.server.streams.start(title, year if year.isdigit() else None, episode_key)
+            LOG.info('start %s: %r %s %s in %.1fs as %s', phase, title, year, episode_key or '', time.time() - started, label)
             self.reply(200, {'path': '/stream/' + hash_, 'label': label, 'phase': phase})
         except LookupError as error:
-            LOG.info('start: no acceptable source for %r %s (%s)', title, year, error)
+            LOG.info('start: no acceptable source for %r %s %s (%s)', title, year, episode_key or '', error)
             code = 404 if str(error) in ('no source', 'no video file') else 422
             self.reply(code, {'error': 'No playable stream found'})
         except (ServiceError, ValueError) as error:

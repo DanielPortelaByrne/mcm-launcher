@@ -225,6 +225,15 @@ class MoviesPanel(
             }
             return
         }
+        // "detail-series": the first series on the Series page, for checking its seasons and episodes.
+        if (name == "detail-series") {
+            go(Dest.Series)
+            worker.execute {
+                val e = catalog.shelf(Catalog.seriesPage().first()).titles.firstOrNull()?.let { entry(it) } ?: return@execute
+                activity.runOnUiThread { openDetail(e, listOf(e.title)) }
+            }
+            return
+        }
         // "detail-library" / "detail-film": a title page for a library film, or a film not in the library.
         if (name.startsWith("detail-")) {
             go(Dest.Films)
@@ -1571,11 +1580,13 @@ class MoviesPanel(
      * screen goes up at once (the search can take a minute) and the player takes over the same screen when a copy is
      * found. Back cancels while it searches.
      */
-    private fun streamNow(e: Entry, button: View) {
-        if (!seerr.isSignedIn) { seerrSheet.show(seerr, jellyfin) { streamNow(e, button) }; return }
+    /** [episode] is (season, episode) for a TV episode; [shownTitle] is what the screens call it ("Show · S1 E7"). */
+    private fun streamNow(e: Entry, button: View, episode: Pair<Int, Int>? = null, shownTitle: String? = null) {
+        if (!seerr.isSignedIn) { seerrSheet.show(seerr, jellyfin) { streamNow(e, button, episode, shownTitle) }; return }
         val token = ++streamToken
         streamReturnFocus = button
-        val screen = StreamLoadingView(activity, e.title.name).apply {
+        val label = shownTitle ?: e.title.name
+        val screen = StreamLoadingView(activity, label).apply {
             isFocusable = true; isFocusableInTouchMode = true
             // Nothing on the screen is selectable: keep the D-pad from wandering to the page underneath.
             setOnKeyListener { _, code, _ -> code != android.view.KeyEvent.KEYCODE_BACK }
@@ -1589,7 +1600,7 @@ class MoviesPanel(
             ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 3500)
         }
         worker.execute {
-            val result = seerr.startStream(e.title.name, e.title.year)
+            val result = seerr.startStream(e.title.name, e.title.year, episode?.first, episode?.second)
             activity.runOnUiThread {
                 if (token != streamToken) return@runOnUiThread   // cancelled with Back
                 android.util.Log.i("StreamNow", "status=${result.status} for ${e.title.name}")
@@ -1598,13 +1609,13 @@ class MoviesPanel(
                         val url = result.url ?: return@runOnUiThread failed("The stream service didn't send a link. Try again in a minute.")
                         screen.message("Found a copy. Starting the player…")
                         val candidate = StreamCandidate("stream:${e.title.key}", PlayerActivity.STREAM_PROVIDER, result.label ?: e.title.name, url, null, StreamMetadata())
-                        PlayerActivity.launch(activity, listOf(RankedStream(candidate, 100, 0L, false, Verdict.RECOMMENDED, null, emptyList())), e.title.name, e.title.imdbId,
+                        PlayerActivity.launch(activity, listOf(RankedStream(candidate, 100, 0L, false, Verdict.RECOMMENDED, null, emptyList())), label, e.title.imdbId,
                             artUrl = e.title.backdropUrl ?: e.title.posterUrl,
-                            meta = PlayerMeta(e.title.name, e.title.year, e.title.genres, e.title.runtimeMin, e.title.age, e.title.imdbScore, e.title.overview))
+                            meta = PlayerMeta(label, e.title.year, e.title.genres, e.title.runtimeMin, e.title.age, e.title.imdbScore, e.title.overview))
                         // The player opens over this same screen; take it down once it is covered.
                         ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 1500)
                     }
-                    StreamStatus.NOT_SIGNED_IN -> { closeStreamLoading(); seerrSheet.show(seerr, jellyfin) { streamNow(e, button) } }
+                    StreamStatus.NOT_SIGNED_IN -> { closeStreamLoading(); seerrSheet.show(seerr, jellyfin) { streamNow(e, button, episode, shownTitle) } }
                     StreamStatus.NOT_FOUND -> failed("No seeded copy of ${e.title.name} was found on your indexers.")
                     StreamStatus.CONNECTING -> failed("Still connecting to the sources. Try again in a minute.")
                     StreamStatus.UNAVAILABLE -> failed("The stream service isn't reachable.")
@@ -1783,6 +1794,21 @@ class MoviesPanel(
         state.text = episodeGlyph(label())
         row.addView(badge, LinearLayout.LayoutParams(dp(34), dp(34)))
         row.addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
+        // Not in the library: its own Stream button, beside the row's Request. Right from the row reaches it.
+        if (mine == null && tmdb != null) {
+            val stream = Cinema.text(activity, "Stream", 20, Cinema.CREAM, weight = 600).apply {
+                gravity = Gravity.CENTER; isFocusable = true; isClickable = true; maxLines = 1
+                setPadding(dp(16), 0, dp(16), 0)
+                background = Cinema.glass(activity, 19f, Cinema.GLASS_STRONG)
+                setOnFocusChangeListener { v, f ->
+                    v.background = if (f) GradientDrawable().apply { cornerRadius = dp(19).toFloat(); setColor(Cinema.CREAM) } else Cinema.glass(activity, 19f, Cinema.GLASS_STRONG)
+                    (v as TextView).setTextColor(if (f) Cinema.INK else Cinema.CREAM)
+                    if (f) reveal(v)
+                }
+                setOnClickListener { v -> streamNow(e, v, s.number to number, "${e.title.name} · S${s.number} E$number") }
+            }
+            row.addView(stream, LinearLayout.LayoutParams(-2, dp(38)).apply { marginStart = dp(12) })
+        }
         row.addView(state, LinearLayout.LayoutParams(dp(40), -2))
         FastFocus.bind(row, surfaces12, listOf(badge, title, state), rest = Cinema.glass(activity, 24f))
         row.setOnClickListener {
