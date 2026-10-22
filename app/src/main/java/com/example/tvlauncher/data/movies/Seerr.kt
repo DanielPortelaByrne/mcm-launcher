@@ -9,12 +9,17 @@ import java.net.URL
 private const val TAG = "Seerr"
 
 /** Where the request service answers, next to the media server on the Deck. */
-const val DEFAULT_SEERR = "http://192.168.1.233:5055"
+/** The Deck by name, as for Jellyfin: its LAN address changes. */
+const val DEFAULT_SEERR = "http://steamdeck.local:5055"
+/** The address the launcher used to hard-code. Saved copies of it are ignored. */
+const val LEGACY_SEERR = "http://192.168.1.233:5055"
 
 /** [PROCESSING] is Seerr's own word: the request is with Radarr or Sonarr, which may not have found anything yet. Only [DOWNLOADING] means bytes are arriving. */
 enum class Availability { NONE, REQUESTED, PROCESSING, DOWNLOADING, PARTIAL, AVAILABLE }
 
 enum class RequestOutcome { QUEUED, ALREADY, NEEDS_SIGN_IN, FAILED }
+
+data class TitleRequestState(val availability: Availability, val staleCandidate: Boolean)
 
 /** The plain-Kotlin half of the Seerr client, so request bodies and answers can be tested. */
 object SeerrApi {
@@ -45,6 +50,21 @@ object SeerrApi {
 
     /** Where one season stands, from the media record Seerr keeps once something has been asked for. */
     fun seasonAvailability(status: Int): Availability = when (status) { 2 -> Availability.REQUESTED; 3 -> Availability.PROCESSING; 4 -> Availability.PARTIAL; 5 -> Availability.AVAILABLE; else -> Availability.NONE }
+
+    /** Imported Arr monitoring is not a request. The server validates repairs against live downloads/files. */
+    fun titleState(json: String): TitleRequestState {
+        val stale = try {
+            val info = JSONObject(json).getJSONObject("mediaInfo")
+            info.optInt("id") > 0 && info.optInt("status") in 2..3 && info.optInt("status4k", 1) == 1 &&
+                info.getJSONArray("requests").length() == 0 && info.getJSONArray("downloadStatus").length() == 0 &&
+                (info.optJSONArray("downloadStatus4k")?.length() ?: 0) == 0 &&
+                info.optJSONArray("seasons").let { seasons -> (0 until (seasons?.length() ?: 0)).all { i ->
+                    val season = seasons!!.getJSONObject(i)
+                    season.optInt("status", 1) in 1..3 && season.optInt("status4k", 1) == 1
+                } }
+        } catch (_: Exception) { false }
+        return TitleRequestState(parseAvailability(json), stale)
+    }
 
     fun outcomeFor(httpCode: Int): RequestOutcome = when (httpCode) {
         200, 201, 202 -> RequestOutcome.QUEUED
@@ -79,9 +99,14 @@ object SeerrApi {
  * Asks the owner's Seerr to download a title. The TV signs in once with the owner's Jellyfin account, typed on the
  * TV; only the session cookie is kept (private storage), never the password. Every call blocks and none throw.
  */
+enum class StreamStatus { READY, NOT_SIGNED_IN, NOT_FOUND, CONNECTING, UNAVAILABLE }
+
+/** [url] is set only when [status] is READY: the film's bytes, which the player reads as they download. */
+data class StreamStart(val status: StreamStatus, val url: String?, val label: String?)
+
 class SeerrClient(context: Context) {
     private val prefs = context.getSharedPreferences("seerr", Context.MODE_PRIVATE)
-    private val base: String get() = prefs.getString("server", null) ?: DEFAULT_SEERR
+    private val base: String get() = prefs.getString("server", null)?.takeIf { it != LEGACY_SEERR } ?: DEFAULT_SEERR
     val isSignedIn: Boolean get() = !prefs.getString("cookie", null).isNullOrBlank()
 
     fun signOut() { prefs.edit().remove("cookie").apply() }
@@ -119,10 +144,15 @@ class SeerrClient(context: Context) {
         try { val code = c.responseCode; if (code == 401) signOut(); code in 200..299 } finally { c.disconnect() }
     } catch (e: Exception) { Log.w(TAG, "cancelRequest failed: ${e.javaClass.simpleName}"); false }
 
-    fun availability(kind: Kind, tmdbId: Long): Availability = try {
-        val c = open("GET", base + SeerrApi.path(kind, tmdbId))
-        try { if (c.responseCode == 200) SeerrApi.parseAvailability(c.inputStream.bufferedReader().use { it.readText() }) else Availability.NONE } finally { c.disconnect() }
-    } catch (_: Exception) { Availability.NONE }
+    fun availability(kind: Kind, tmdbId: Long): Availability = titleState(kind, tmdbId)?.availability ?: Availability.NONE
+
+    fun titleState(kind: Kind, tmdbId: Long): TitleRequestState? = get(SeerrApi.path(kind, tmdbId))?.let { SeerrApi.titleState(it) }
+
+    /** Admin-only repair. A conflict or unavailable service keeps the existing state intact. */
+    fun clearStaleStatus(kind: Kind, tmdbId: Long): Boolean = tmdbId > 0 &&
+        pipelineCall("POST", "/media/${if (kind == Kind.SHOW) "tv" else "movie"}/$tmdbId/clear-stale", readTimeoutMs = 30_000)?.let {
+            try { JSONObject(it).getBoolean("cleared") } catch (_: Exception) { false }
+        } == true
 
     /** Everything the owner has asked for, newest first. Empty when not signed in or Seerr cannot be reached. */
     fun requests(): List<SeerrRequest> = requestsOrNull().orEmpty()
@@ -153,14 +183,41 @@ class SeerrClient(context: Context) {
     /** Explicit retry of a completed unsuccessful search; the server checks ownership and rate limits. */
     fun retrySearch(id: Int): Boolean = id > 0 && pipelineCall("POST", "/requests/$id/search") != null
 
-    private fun pipelineCall(method: String, path: String): String? = try {
+    private fun pipelineCall(method: String, path: String, readTimeoutMs: Int = 6000): String? = try {
         val configured = prefs.getString("pipeline_server", null)
         val endpoint = configured ?: java.net.URI("http", null, host, 5056, null, null, null).toString()
         val c = open(method, endpoint.trimEnd('/') + path)
-        c.connectTimeout = 3000; c.readTimeout = 6000
+        c.connectTimeout = 3000; c.readTimeout = readTimeoutMs
         c.setRequestProperty("X-MCM-Action", "1")
         try { if (c.responseCode in 200..299) c.inputStream.bufferedReader().use { it.readText() } else null } finally { c.disconnect() }
     } catch (_: Exception) { null }
+
+    /**
+     * Asks the home stream service for a seeded copy of a film and returns where the player can read it. It searches the
+     * same indexers the library uses, so nothing goes through Stremio. The service waits for torrent metadata, so this call is slow.
+     */
+    fun startStream(title: String, year: Int?): StreamStart = try {
+        val endpoint = (prefs.getString("stream_server", null) ?: java.net.URI("http", null, host, 5057, null, null, null).toString()).trimEnd('/')
+        val c = open("POST", "$endpoint/start")
+        c.readTimeout = 120_000
+        c.doOutput = true
+        try {
+            c.outputStream.use { it.write(JSONObject().put("title", title).put("year", year?.toString().orEmpty()).toString().toByteArray()) }
+            when (c.responseCode) {
+                200 -> {
+                    val body = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+                    StreamStart(StreamStatus.READY, endpoint + body.getString("path"), body.optString("label").ifBlank { null })
+                }
+                401 -> { signOut(); StreamStart(StreamStatus.NOT_SIGNED_IN, null, null) }
+                404, 422 -> StreamStart(StreamStatus.NOT_FOUND, null, null)
+                504 -> StreamStart(StreamStatus.CONNECTING, null, null)
+                else -> StreamStart(StreamStatus.UNAVAILABLE, null, null)
+            }
+        } finally { c.disconnect() }
+    } catch (e: Exception) {
+        Log.w(TAG, "startStream failed: ${e.javaClass.simpleName}")
+        StreamStart(StreamStatus.UNAVAILABLE, null, null)
+    }
 
     fun seasons(tmdbId: Long): List<SeasonInfo> = get(SeerrApi.path(Kind.SHOW, tmdbId))?.let { SeerrSeasons.parseSeasons(it) }.orEmpty()
 
@@ -176,7 +233,7 @@ class SeerrClient(context: Context) {
     fun radarrSettings(): String? = get("/api/v1/settings/radarr")
 
     /** The machine Seerr runs on, as the TV reaches it. */
-    val host: String get() = try { URL(base).host } catch (_: Exception) { "192.168.1.233" }
+    val host: String get() = try { URL(base).host } catch (_: Exception) { "steamdeck.local" }
 
     private fun get(path: String): String? = try {
         val c = open("GET", base + path)

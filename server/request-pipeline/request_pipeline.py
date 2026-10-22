@@ -231,6 +231,110 @@ class Pipeline:
                 self.qbit_retry_at = time.time() + 60
                 raise ServiceError('qBittorrent authentication unavailable') from None
 
+    def clear_stale_media(self, kind, tmdb_id):
+        """Explicit admin repair of imported monitoring with no request or files.
+
+        Clearing Seerr alone is temporary: its next Arr scan imports monitored
+        seasons again. Stop that empty entry's monitoring before clearing only
+        the Seerr record. Never remove an Arr entry, torrent or media file.
+        """
+        app, resource = ('sonarr', 'series') if kind == 'tv' else ('radarr', 'movie')
+        media_path = '/api/v1/' + kind + '/' + str(tmdb_id)
+
+        def candidate():
+            info = self.api('seerr', media_path).get('mediaInfo') or {}
+            if (not info.get('id') or info.get('status') not in (2, 3)
+                    or info.get('status4k', 1) != 1 or info.get('requests') != []
+                    or info.get('downloadStatus') != [] or info.get('downloadStatus4k', []) != []):
+                return None
+            if any(s.get('status') not in (1, 2, 3) or s.get('status4k', 1) != 1 for s in info.get('seasons', [])):
+                return None
+            # Check every user's requests, not the caller's filtered list.
+            if any(r.get('type') == kind and r.get('media', {}).get('tmdbId') == tmdb_id for r in self.requests()):
+                return None
+            return info
+
+        info = candidate()
+        if info is None:
+            return False
+        records = self.api(app, '/api/v3/' + resource)
+        matches = [r for r in records if r.get('tmdbId') == tmdb_id]
+        if len(matches) > 1:
+            return False
+        record = matches[0] if matches else None
+
+        def idle():
+            if record:
+                current = self.api(app, '/api/v3/' + resource + '/' + str(record['id']))
+                if current.get('tmdbId') != tmdb_id:
+                    return False
+                if kind == 'tv':
+                    stats = current.get('statistics') or {}
+                    if stats.get('episodeFileCount', 0) or stats.get('sizeOnDisk', 0):
+                        return False
+                    episodes = self.api(app, '/api/v3/episode?seriesId=' + str(record['id']))
+                    if any(e.get('hasFile') or e.get('episodeFileId', 0) or e.get('monitored') for e in episodes):
+                        return False
+                    episode_ids = {e['id'] for e in episodes}
+                else:
+                    if current.get('hasFile') or current.get('movieFileId', 0) or current.get('movieFile'):
+                        return False
+                    episode_ids = set()
+                for command in self.api(app, '/api/v3/command'):
+                    if command.get('status') not in ACTIVE:
+                        continue
+                    body = command.get('body') or {}
+                    if (body.get('seriesId') == record['id'] or record['id'] in body.get('movieIds', [])
+                            or episode_ids.intersection(body.get('episodeIds') or [])):
+                        return False
+            for page in range(1, 101):
+                queue = self.api(app, '/api/v3/queue?pageSize=200&page=' + str(page) + '&includeSeries=true&includeMovie=true')
+                rows = queue['records']  # Missing/malformed status must fail closed.
+                if any((record and q.get('seriesId' if kind == 'tv' else 'movieId') == record['id'])
+                        or (q.get(resource) or {}).get('tmdbId') == tmdb_id
+                        or (q.get('series' if kind == 'tv' else 'movie') or {}).get('tmdbId') == tmdb_id for q in rows):
+                    return False
+                if page * 200 >= queue['totalRecords']:
+                    break
+            else:
+                return False
+            code, torrents = self.qbit('/api/v2/torrents/info')
+            if code != 200 or not isinstance(torrents, list):
+                raise ServiceError('qBittorrent status unavailable')
+            title = release_name((record or {}).get('title'))
+            if not title:
+                detail = self.api('seerr', media_path)
+                title = release_name(detail.get('name') or detail.get('title'))
+            # Also protect an orphaned client download no longer in Arr's queue.
+            return bool(title) and not any(title in release_name(t.get('name')) for t in torrents)
+
+        if not idle():
+            return False
+        # Keep a private rollback snapshot before changing monitoring.
+        backup = self.home / ('stale-' + kind + '-' + str(tmdb_id) + '-' + str(time.time_ns()) + '.json')
+        with os.fdopen(os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'w') as stream:
+            json.dump({'media': info, 'record': record}, stream)
+        if record:
+            record = self.api(app, '/api/v3/' + resource + '/' + str(record['id']))
+            if kind == 'tv':
+                # Already-monitored episodes may represent work outside Seerr.
+                # Such entries require normal cancellation, not this stale repair.
+                episodes = self.api(app, '/api/v3/episode?seriesId=' + str(record['id']))
+                if any(e.get('monitored') for e in episodes):
+                    return False
+                for season in record['seasons']:
+                    season['monitored'] = False
+            record['monitored'] = False
+            fresh = candidate()
+            if fresh is None or fresh['id'] != info['id'] or not idle():
+                return False
+            self.api(app, '/api/v3/' + resource + '/' + str(record['id']), 'PUT', record)
+        fresh = candidate()
+        if fresh is None or fresh['id'] != info['id'] or not idle():
+            return False
+        self.api('seerr', '/api/v1/media/' + str(info['id']), 'DELETE')
+        return True
+
     def allowed_hashes(self, cookie, user):
         admin = bool(int(user.get('permissions', 0)) & 2)  # Seerr Permission.ADMIN
         owned = [] if admin else [r for r in self.requests(cookie=cookie) if r.get('requestedBy', {}).get('id') == user['id']]
@@ -704,7 +808,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         match = re.fullmatch(r'/requests/([1-9][0-9]*)/search', self.path)
         torrent_match = re.fullmatch(r'/torrents/([a-fA-F0-9]{40}|[a-fA-F0-9]{64})/(next|now)', self.path)
-        if not match and not torrent_match:
+        stale_match = re.fullmatch(r'/media/(tv|movie)/([1-9][0-9]*)/clear-stale', self.path)
+        if not match and not torrent_match and not stale_match:
             self.reply(404, {'error':'Not found'})
             return
         if self.headers.get('X-MCM-Action') != '1':
@@ -714,6 +819,13 @@ class Handler(BaseHTTPRequestHandler):
         if not auth:
             return
         try:
+            if stale_match:
+                if not int(auth[1].get('permissions', 0)) & 2:
+                    self.reply(403, {'error':'Only an admin can clear imported monitoring'})
+                    return
+                cleared = self.server.pipeline.clear_stale_media(stale_match[1], int(stale_match[2]))
+                self.reply(200 if cleared else 409, {'cleared':cleared})
+                return
             if torrent_match:
                 value = torrent_match[1].lower()
                 if value not in self.server.pipeline.allowed_hashes(*auth):

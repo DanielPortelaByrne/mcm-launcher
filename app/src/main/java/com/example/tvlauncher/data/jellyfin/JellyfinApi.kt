@@ -22,7 +22,10 @@ data class JellyfinItem(
     /** For an episode: season and episode numbers. */
     val season: Int? = null,
     val episode: Int? = null,
-    val seriesName: String? = null
+    val seriesName: String? = null,
+    val seriesId: String? = null,
+    val episodeEnd: Int? = null,
+    val missing: Boolean = false
 ) {
     val isSeries: Boolean get() = type == "Series"
     val isEpisode: Boolean get() = type == "Episode"
@@ -97,7 +100,22 @@ object JellyfinApi {
 
     /** Every episode of a series the signed-in user can see, with their watch state. */
     fun episodesUrl(base: String, userId: String, seriesId: String): String =
-        "$base/Shows/${enc(seriesId)}/Episodes?userId=${enc(userId)}&Fields=Overview"
+        "$base/Shows/${enc(seriesId)}/Episodes?userId=${enc(userId)}&Fields=Overview,MediaSources"
+
+    /** Sequence follows the episode being watched, including rewatches; never jumps over a gap in a season. */
+    fun followingEpisode(current: JellyfinItem, episodes: List<JellyfinItem>): JellyfinItem? {
+        val season = current.season ?: return null
+        val number = current.episodeEnd ?: current.episode ?: return null
+        if (!current.isEpisode || current.seriesId == null) return null
+        val ordered = episodes.filter { it.isEpisode && it.id != current.id &&
+            it.seriesId == current.seriesId && it.season != null && it.episode != null &&
+            (it.season == season && it.episode > number || season > 0 && it.season > season) }
+            .sortedWith(compareBy<JellyfinItem> { it.season }.thenBy { it.episode })
+        val next = ordered.firstOrNull() ?: return null
+        val sequential = next.season == season && next.episode == number + 1 ||
+            season > 0 && next.season == season + 1 && next.episode == 1
+        return next.takeIf { sequential && !it.missing }
+    }
 
     /** Fetch fresh user data before playing, including from an old Continue watching card. */
     fun itemUrl(base: String, userId: String, itemId: String): String =
@@ -134,7 +152,13 @@ object JellyfinApi {
     /** A copy Jellyfin re-encodes for this TV, used when the original file will not play as stored. */
     fun transcodeUrl(base: String, item: JellyfinItem, deviceId: String): String =
         "$base/Videos/${item.id}/master.m3u8?DeviceId=${enc(deviceId)}&MediaSourceId=${enc(item.sourceId)}" +
-            "&VideoCodec=h264&AudioCodec=aac&MaxStreamingBitrate=20000000&TranscodingMaxAudioChannels=6&SegmentContainer=ts"
+            "&VideoCodec=h264&AudioCodec=aac&MaxStreamingBitrate=20000000&TranscodingMaxAudioChannels=2&MaxAudioChannels=2&SegmentContainer=ts"
+
+    /** Preserve the picture and convert unsupported surround audio for a stereo TV/analogue output. */
+    fun stereoStreamUrl(base: String, itemId: String, sourceId: String, deviceId: String): String =
+        "$base/Videos/${enc(itemId)}/master.m3u8?DeviceId=${enc(deviceId)}&MediaSourceId=${enc(sourceId)}" +
+            "&VideoCodec=copy&AudioCodec=aac&AllowAudioStreamCopy=false&TranscodingMaxAudioChannels=2" +
+            "&MaxAudioChannels=2&AudioBitRate=192000&SegmentContainer=ts"
 
     fun posterUrl(base: String, id: String, maxHeight: Int = 450): String = "$base/Items/${enc(id)}/Images/Primary?maxHeight=$maxHeight&quality=90"
 
@@ -241,7 +265,10 @@ object JellyfinApi {
             hasBackdrop = (o.optJSONArray("BackdropImageTags")?.length() ?: 0) > 0,
             season = if (o.has("ParentIndexNumber")) o.optInt("ParentIndexNumber") else null,
             episode = if (o.has("IndexNumber")) o.optInt("IndexNumber") else null,
-            seriesName = o.optString("SeriesName").ifBlank { null }
+            seriesName = o.optString("SeriesName").ifBlank { null },
+            seriesId = o.optString("SeriesId").ifBlank { null },
+            episodeEnd = if (o.has("IndexNumberEnd") && !o.isNull("IndexNumberEnd")) o.optInt("IndexNumberEnd") else null,
+            missing = o.optBoolean("IsMissing") || o.optBoolean("IsVirtualItem") || o.optString("LocationType") == "Virtual"
         )
     }
 }

@@ -11,7 +11,10 @@ import java.util.UUID
 private const val TAG = "Jellyfin"
 
 /** Where the media server answers on the home network. Change it from the connect sheet if the router hands out a new address. */
-const val DEFAULT_JELLYFIN_SERVER = "http://192.168.1.233:8096"
+/** The Deck by name: its LAN address changes, and the name resolves on every TV in the house. */
+const val DEFAULT_JELLYFIN_SERVER = "http://steamdeck.local:8096"
+/** The address the launcher used to hard-code. Saved copies of it are ignored. */
+const val LEGACY_JELLYFIN_SERVER = "http://192.168.1.233:8096"
 
 /** A Quick Connect attempt in progress: [code] is what to type into an already signed-in Jellyfin. */
 data class QuickConnectTicket(val secret: String, val code: String)
@@ -27,7 +30,8 @@ class JellyfinClient(context: Context) {
     private val deviceId: String = prefs.getString("deviceId", null) ?: UUID.randomUUID().toString().also { prefs.edit().putString("deviceId", it).apply() }
     private val deviceName: String = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
 
-    val server: String get() = prefs.getString("server", null) ?: DEFAULT_JELLYFIN_SERVER
+    // A saved address from before the default moved to the Deck's name is treated as unset, so the new default applies.
+    val server: String get() = prefs.getString("server", null)?.takeIf { it != LEGACY_JELLYFIN_SERVER } ?: DEFAULT_JELLYFIN_SERVER
     val isConnected: Boolean get() = !prefs.getString("token", null).isNullOrBlank() && !prefs.getString("userId", null).isNullOrBlank()
     private val token: String? get() = prefs.getString("token", null)
     private val userId: String? get() = prefs.getString("userId", null)
@@ -87,6 +91,8 @@ class JellyfinClient(context: Context) {
     @Synchronized fun library(force: Boolean = false): List<JellyfinItem> {   // one fetch at a time: several rows ask at once
         val uid = userId ?: return emptyList()
         if (!force && libraryAt != 0L && System.currentTimeMillis() - libraryAt < LIBRARY_TTL_MS) return library
+        // The server was unreachable a moment ago: answer from what we have rather than making every row wait again.
+        if (!force && System.currentTimeMillis() - unreachableAt < UNREACHABLE_BACKOFF_MS) return library
         val body = request("GET", JellyfinApi.libraryUrl(JellyfinApi.cleanBase(server), uid)) ?: return library
         library = JellyfinApi.parseItems(body); libraryAt = System.currentTimeMillis()
         return library
@@ -130,6 +136,11 @@ class JellyfinClient(context: Context) {
     fun episodes(seriesId: String): List<JellyfinItem> {
         val uid = userId ?: return emptyList()
         return request("GET", JellyfinApi.episodesUrl(JellyfinApi.cleanBase(server), uid, seriesId))?.let { JellyfinApi.parseItems(it) }.orEmpty()
+    }
+
+    /** Resolve ahead of the end screen; no dependency on a watched-state report reaching the server first. */
+    fun followingEpisode(current: JellyfinItem): JellyfinItem? = current.seriesId?.let {
+        JellyfinApi.followingEpisode(current, episodes(it))
     }
 
     /** The signed-in user's name, to save typing it into the request service. */
@@ -181,13 +192,28 @@ class JellyfinClient(context: Context) {
 
     fun imageUrl(id: String, maxHeight: Int = 300) = JellyfinApi.posterUrl(JellyfinApi.cleanBase(server), id, maxHeight)
 
-    private companion object { const val LIBRARY_TTL_MS = 5 * 60_000L }
+    /** When a request last found the server unreachable. Rows then stop queuing up behind a server that is not there. */
+    @Volatile private var unreachableAt = 0L
+
+    private companion object {
+        const val LIBRARY_TTL_MS = 5 * 60_000L
+        const val UNREACHABLE_BACKOFF_MS = 30_000L
+    }
 
     // --- Plumbing --------------------------------------------------------------------------------
 
-    /** One quiet retry for reads: the TV's Wi-Fi drops a request now and then. */
-    private fun request(method: String, url: String, authed: Boolean = true, json: String? = null): String? =
-        requestOnce(method, url, authed, json) ?: if (method == "GET" && (!authed || isConnected)) requestOnce(method, url, authed, json) else null
+    /**
+     * One quiet retry for reads, but only after a timeout: the TV's Wi-Fi drops a request now and then. A server that
+     * refuses the connection or cannot be routed to will not answer a second try any sooner.
+     */
+    private fun request(method: String, url: String, authed: Boolean = true, json: String? = null): String? {
+        val first = requestOnce(method, url, authed, json)
+        if (first != null || lastFailureWasUnreachable) return first
+        return if (method == "GET" && (!authed || isConnected)) requestOnce(method, url, authed, json) else null
+    }
+
+    /** Set when the last request failed to reach the server at all, rather than failing on the server's answer. */
+    @Volatile private var lastFailureWasUnreachable = false
 
     private fun requestOnce(method: String, url: String, authed: Boolean, json: String?): String? = try {
         val connection = URL(url).openConnection() as HttpURLConnection
@@ -204,5 +230,10 @@ class JellyfinClient(context: Context) {
             else if (code !in 200..299) { Log.w(TAG, "$method ${url.substringBefore('?')} -> HTTP $code"); null }
             else connection.inputStream.bufferedReader().use { it.readText() }
         } finally { connection.disconnect() }
-    } catch (e: Exception) { Log.w(TAG, "$method ${url.substringBefore('?')} failed: ${e.javaClass.simpleName}"); null }
+    } catch (e: Exception) {
+        lastFailureWasUnreachable = e is java.net.ConnectException || e is java.net.NoRouteToHostException || e is java.net.UnknownHostException
+        if (lastFailureWasUnreachable) unreachableAt = System.currentTimeMillis()
+        Log.w(TAG, "$method ${url.substringBefore('?')} failed: ${e.javaClass.simpleName}")
+        null
+    }
 }

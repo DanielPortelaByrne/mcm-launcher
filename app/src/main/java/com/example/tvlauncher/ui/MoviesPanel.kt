@@ -57,6 +57,11 @@ import com.example.tvlauncher.ui.room.SheetAction
 import com.example.tvlauncher.data.movies.SonarrClient
 import com.example.tvlauncher.data.movies.SeerrRequest
 import com.example.tvlauncher.data.movies.Stage
+import com.example.tvlauncher.data.movies.StreamStatus
+import com.example.tvlauncher.data.stream.RankedStream
+import com.example.tvlauncher.data.stream.StreamCandidate
+import com.example.tvlauncher.data.stream.StreamMetadata
+import com.example.tvlauncher.data.stream.Verdict
 import com.example.tvlauncher.data.movies.SeerrClient
 import com.example.tvlauncher.data.movies.Service
 import com.example.tvlauncher.data.movies.ShelfSpec
@@ -934,8 +939,16 @@ class MoviesPanel(
 
         val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
         val primary = pill("Checking…", accent = true)
+        val clearStale = pill("Clear stale request", accent = false).apply { visibility = View.GONE }
         val backButton = pill("Back", accent = false).apply { setOnClickListener { closeDetail(restoreFocus = true) } }
+        // Not in the library: play a seeded copy now, instead of waiting for a download to finish.
+        val stream = pill("Stream now", accent = false).apply {
+            visibility = if (e.library == null && t.kind == Kind.MOVIE) View.VISIBLE else View.GONE
+            setOnClickListener { streamNow(e, this) }
+        }
         buttons.addView(primary, LinearLayout.LayoutParams(dp(230), dp(52)))
+        buttons.addView(stream, LinearLayout.LayoutParams(dp(210), dp(52)).apply { marginStart = dp(10) })
+        buttons.addView(clearStale, LinearLayout.LayoutParams(dp(210), dp(52)).apply { marginStart = dp(10) })
         buttons.addView(backButton, LinearLayout.LayoutParams(dp(120), dp(52)).apply { marginStart = dp(10) })
         // Anything on disk can be taken off it, a series or a film, from its own page.
         if (e.library != null) buttons.addView(pill("Delete", accent = false).apply { setOnClickListener { confirmDelete(e) } },
@@ -962,7 +975,7 @@ class MoviesPanel(
         }
         val scroll = android.widget.ScrollView(activity).apply { isVerticalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(column, FrameLayout.LayoutParams(-1, -2)) }
         detail.addView(scroll, FrameLayout.LayoutParams(-1, -1))
-        setupPrimary(primary, e)
+        setupPrimary(primary, e, clearStale) { openDetail(e, related) }
         // The title page covers the screen, so the page beneath it is not drawn at all while it is open (it keeps its
         // place and its scroll position, so Back returns to exactly where it was).
         body.visibility = View.INVISIBLE
@@ -978,7 +991,7 @@ class MoviesPanel(
     }
 
     /** Watch now for what is in the library; for the rest, queue it, or say where its request has got to. */
-    private fun setupPrimary(button: TextView, e: Entry) {
+    private fun setupPrimary(button: TextView, e: Entry, clearStale: TextView, refresh: () -> Unit) {
         fun set(label: String, enabled: Boolean, action: (() -> Unit)?) {
             button.text = label; button.isEnabled = enabled; button.alpha = if (enabled) 1f else 0.6f
             button.setOnClickListener { action?.invoke() }
@@ -1004,10 +1017,36 @@ class MoviesPanel(
         if (!seerr.isSignedIn) { set("Queue download", true) { queue() }; return }
         set("Checking…", false, null)
         worker.execute {
-            val availability = seerr.availability(e.title.kind, tmdb)
+            val state = seerr.titleState(e.title.kind, tmdb)
             activity.runOnUiThread {
-                if (!detailOpen) return@runOnUiThread
-                when (availability) {
+                if (!detailOpen || !button.isAttachedToWindow) return@runOnUiThread
+                if (state == null) {
+                    set("Retry status check", true) { setupPrimary(button, e, clearStale, refresh) }
+                    return@runOnUiThread
+                }
+                if (state.staleCandidate) {
+                    set("Tracked · no request", false, null)
+                    clearStale.visibility = View.VISIBLE
+                    clearStale.setOnClickListener {
+                        clearStale.isEnabled = false; clearStale.text = "Clearing…"
+                        worker.execute {
+                            val cleared = seerr.clearStaleStatus(e.title.kind, tmdb)
+                            activity.runOnUiThread {
+                                if (!detailOpen || !clearStale.isAttachedToWindow) return@runOnUiThread
+                                if (cleared) {
+                                    Toast.makeText(activity, "Stale request cleared", Toast.LENGTH_SHORT).show()
+                                    refresh()
+                                } else {
+                                    clearStale.isEnabled = true; clearStale.text = "Clear stale request"
+                                    Toast.makeText(activity, "Couldn't clear it. An admin must be signed in, with no requests, downloads or files for this title.", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }
+                    return@runOnUiThread
+                }
+                clearStale.visibility = View.GONE
+                when (state.availability) {
                     Availability.REQUESTED -> set("Requested ✓", false, null)
                     // "Processing" is Seerr's word for "handed to Radarr/Sonarr"; it does not mean anything is downloading.
                     Availability.PROCESSING -> set("Requested ✓ · finding a release", false, null)
@@ -1015,6 +1054,33 @@ class MoviesPanel(
                     Availability.PARTIAL -> set("Partly downloaded", false, null)
                     Availability.AVAILABLE -> set("Downloaded, syncing", false, null)
                     Availability.NONE -> set(if (e.title.kind == Kind.SHOW) "Request all seasons" else "Queue download", true) { queue() }
+                }
+            }
+        }
+    }
+
+    /** Streams a seeded copy from the home stream service into the player, without waiting for a download. */
+    private fun streamNow(e: Entry, button: TextView) {
+        if (!seerr.isSignedIn) { seerrSheet.show(seerr, jellyfin) { streamNow(e, button) }; return }
+        // The search can take a minute, so the button itself says so until the answer arrives.
+        button.text = "Finding a stream…"; button.isEnabled = false; button.alpha = 0.6f
+        Toast.makeText(activity, "Finding a copy of ${e.title.name}. This can take a minute.", Toast.LENGTH_LONG).show()
+        worker.execute {
+            val result = seerr.startStream(e.title.name, e.title.year)
+            activity.runOnUiThread {
+                button.text = "Stream now"; button.isEnabled = true; button.alpha = 1f
+                android.util.Log.i("StreamNow", "status=${result.status} for ${e.title.name}")
+                when (result.status) {
+                    StreamStatus.READY -> {
+                        val url = result.url ?: return@runOnUiThread
+                        val candidate = StreamCandidate("stream:${e.title.key}", PlayerActivity.STREAM_PROVIDER, result.label ?: e.title.name, url, null, StreamMetadata())
+                        PlayerActivity.launch(activity, listOf(RankedStream(candidate, 100, 0L, false, Verdict.RECOMMENDED, null, emptyList())), e.title.name, e.title.imdbId,
+                            artUrl = e.title.backdropUrl ?: e.title.posterUrl)
+                    }
+                    StreamStatus.NOT_SIGNED_IN -> seerrSheet.show(seerr, jellyfin) { streamNow(e, button) }
+                    StreamStatus.NOT_FOUND -> Toast.makeText(activity, "No seeded copy of ${e.title.name} was found on your indexers.", Toast.LENGTH_LONG).show()
+                    StreamStatus.CONNECTING -> Toast.makeText(activity, "Still connecting to the sources. Try again in a minute.", Toast.LENGTH_LONG).show()
+                    StreamStatus.UNAVAILABLE -> Toast.makeText(activity, "The stream service isn't reachable.", Toast.LENGTH_LONG).show()
                 }
             }
         }

@@ -19,14 +19,19 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.PlayerView
 import androidx.media3.common.C
@@ -43,6 +48,16 @@ import com.example.tvlauncher.data.stream.SourceType
 import com.example.tvlauncher.data.stream.VideoCodec
 import org.json.JSONArray
 import org.json.JSONObject
+import com.example.tvlauncher.data.jellyfin.EpisodeAutoplay
+import com.example.tvlauncher.data.jellyfin.JellyfinClient
+import com.example.tvlauncher.data.jellyfin.JellyfinItem
+import com.example.tvlauncher.design.Motion
+import com.example.tvlauncher.design.Type
+import android.graphics.drawable.GradientDrawable
+import android.text.TextUtils
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ProgressBar
 
 private const val TAG = "SmartStream"
 
@@ -62,10 +77,27 @@ data class PlayItem(
 class PlayerActivity : AppCompatActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
+    /** Loading screen for a stream: artwork, title and live status, until the first frame. */
+    private var loadingView: View? = null
+    private var loadingStatus: TextView? = null
+    private var titleLabel: TextView? = null
+    private var art: String? = null
     private lateinit var player: ExoPlayer
     private lateinit var view: PlayerView
     private lateinit var trackSelector: DefaultTrackSelector
     private lateinit var captionsButton: TextView
+    private lateinit var nextCard: NextEpisodeCard
+    private var autoplay = EpisodeAutoplay()
+    private var nextItem: JellyfinItem? = null
+    private var nextPlan: JellyfinPlayback.Plan? = null
+    private var episodeGeneration = 0
+    private var foreground = false
+    private val episodeLookup = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var episodeImages: RemoteImages? = null
+    private val jellyfin by lazy { JellyfinClient(this) }
+    private val cancelNext = object : OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() { cancelAutoplay() }
+    }
     private val captionPrefs by lazy { getSharedPreferences("player", MODE_PRIVATE) }
     /** Whether captions are wanted. Remembered, and on by default, as the player has always shown them. */
     private var captionsOn = true
@@ -87,6 +119,8 @@ class PlayerActivity : AppCompatActivity() {
     private val resumePrefs by lazy { getSharedPreferences("resume_positions", MODE_PRIVATE) }
 
     private var index = 0
+    private var audioFallbackQueued = false
+    private var releasingPlayer = false
     private var prepareAt = 0L
     private var started = false
     private var ended = false
@@ -103,6 +137,18 @@ class PlayerActivity : AppCompatActivity() {
     private val saveTick = object : Runnable {
         override fun run() { saveResume(); snapshotToContinue(); reportToJellyfin("Progress"); handler.postDelayed(this, 15_000) }
     }
+    private val autoplayTick = object : Runnable {
+        override fun run() {
+            if (!foreground || isFinishing || isDestroyed || !ended) return
+            val now = SystemClock.elapsedRealtime()
+            nextCard.countdown(autoplay.remainingMs(now), autoplay.fraction(now))
+            if (autoplay.takeNext(now) != null) {
+                startNextEpisode()
+            } else if (autoplay.remainingMs(now) != null) {
+                handler.postDelayed(this, if (Motion.animationsOn(nextCard)) 16L else 250L)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -112,6 +158,7 @@ class PlayerActivity : AppCompatActivity() {
         live = intent.getBooleanExtra(EXTRA_LIVE, false)
         jf = com.example.tvlauncher.data.jellyfin.JellyfinReport.fromJson(intent.getStringExtra(EXTRA_JF))
         title =intent.getStringExtra(EXTRA_TITLE).orEmpty()
+        art = intent.getStringExtra(EXTRA_ART)
         history = PlaybackStore(this)
         continueStore = ContinueWatching(this)
         payload = intent.getStringExtra(EXTRA_PAYLOAD)
@@ -122,7 +169,16 @@ class PlayerActivity : AppCompatActivity() {
         trackSelector = DefaultTrackSelector(this)
         captionsOn = captionPrefs.getBoolean("captions", true)
         player = ExoPlayer.Builder(this, DefaultRenderersFactory(this).setEnableDecoderFallback(true))
-            .setTrackSelector(trackSelector).setBandwidthMeter(bandwidth).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000).build()
+            .setTrackSelector(trackSelector).setBandwidthMeter(bandwidth).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000)
+            .apply {
+                // Library playback starts promptly over the LAN. Keep the normal
+                // long-term and rebuffer reserves; only the first-picture threshold changes.
+                if (jf != null && !live) setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(
+                    DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
+                    750, DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS).build())
+                // A torrent stream arrives unevenly: start quickly, then hold a deep buffer so one slow stretch doesn't stop playback.
+                if (streamOnly()) setLoadControl(streamLoadControl())
+            }.build()
         view = PlayerView(this).apply {
             player = this@PlayerActivity.player
             setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
@@ -149,6 +205,16 @@ class PlayerActivity : AppCompatActivity() {
             bottomBar.addView(captionsButton, at, android.widget.LinearLayout.LayoutParams(-2, dp(40)).apply { setMargins(dp(8), 0, dp(8), 0); gravity = Gravity.CENTER_VERTICAL })
         }
         val root = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()); addView(view, -1, -1) }
+        nextCard = NextEpisodeCard(this, play = { playNextNow() }, cancel = { cancelAutoplay() })
+        root.addView(nextCard, FrameLayout.LayoutParams(-1, -1))
+        onBackPressedDispatcher.addCallback(this, cancelNext)
+        titleLabel = Type.text(this, title, Type.Style.TITLE).apply { textSize = 26f; maxLines = 1; ellipsize = TextUtils.TruncateAt.END; visibility = View.GONE }
+        root.addView(titleLabel, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(48), dp(32), dp(48), 0) })
+        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { updateTitleLabel(it == View.VISIBLE) })
+        if (streamOnly()) {
+            loadingView = buildLoading().also { root.addView(it, FrameLayout.LayoutParams(-1, -1)) }
+            pollStatus()
+        }
         setContentView(root)
         applyCaptions()
         updateCaptionsLabel()
@@ -156,43 +222,113 @@ class PlayerActivity : AppCompatActivity() {
         handler.postDelayed(saveTick, 15_000)
         val report = jf
         if (report == null) startAttempt(0) else {
-            val client = com.example.tvlauncher.data.jellyfin.JellyfinClient(this)
+            val client = jellyfin
             reporter.execute {
                 val fresh = client.item(report.itemId)
                 handler.post {
                     if (isFinishing || isDestroyed) return@post
                     jf = fresh?.let { report.copy(sourceId = it.sourceId, startMs = if (it.played) 0L else it.resumeMs) } ?: report
                     startAttempt(0)
+                    prefetchNextEpisode(fresh)
                 }
             }
         }
+    }
+
+    private fun prefetchNextEpisode(current: JellyfinItem?) {
+        val report = jf ?: return
+        if (live || current?.isEpisode != true || current.seriesId == null ||
+            com.example.tvlauncher.data.jellyfin.JellyfinApi.cleanBase(jellyfin.server) != report.base) return
+        val generation = ++episodeGeneration
+        episodeLookup.execute {
+            val next = jellyfin.followingEpisode(current) ?: return@execute
+            val name = listOfNotNull(next.seriesName, next.episodeLabel(), next.name).joinToString(" · ")
+            val plan = JellyfinPlayback.prepare(jellyfin, next, name, "jf:${next.id}")
+            handler.post {
+                if (generation != episodeGeneration || isFinishing || isDestroyed) return@post
+                nextItem = next; nextPlan = plan
+                autoplay.ready(next.id, SystemClock.elapsedRealtime())
+                nextCard.bind(next)
+                val images = episodeImages ?: RemoteImages(this).also { episodeImages = it }
+                images.load(jellyfin.imageUrl(next.id, 300), jellyfin.playbackHeaders(), maxWidth = 480) { bitmap ->
+                    if (generation == episodeGeneration) nextCard.artwork.setImageBitmap(bitmap)
+                }
+                showNextEpisode()
+            }
+        }
+    }
+
+    private fun showNextEpisode() {
+        if (!ended || !foreground || nextPlan == null || autoplay.cancelled) return
+        view.hideController()
+        nextCard.showCard()
+        cancelNext.isEnabled = true
+        handler.removeCallbacks(autoplayTick)
+        autoplayTick.run()
+    }
+
+    private fun cancelAutoplay() {
+        autoplay.cancel()
+        handler.removeCallbacks(autoplayTick)
+        if (::nextCard.isInitialized) nextCard.hideCard()
+        cancelNext.isEnabled = false
+        if (::view.isInitialized) { view.requestFocus(); view.showController() }
+    }
+
+    private fun playNextNow() {
+        if (foreground && autoplay.takeNext(SystemClock.elapsedRealtime(), playNow = true) != null) startNextEpisode()
+    }
+
+    private fun startNextEpisode() {
+        val plan = nextPlan ?: return
+        val next = nextItem ?: return
+        handler.removeCallbacks(autoplayTick)
+        nextCard.hideCard(); cancelNext.isEnabled = false
+        record(failed = false)
+        // Reuse the player and activity: a long viewing session never builds an activity stack.
+        val nextIntent = playbackIntent(this, plan.streams, plan.title, plan.resumeKey, plan.report)
+        intent = nextIntent
+        items = parse(nextIntent.getStringExtra(EXTRA_ITEMS))
+        imdbId = plan.resumeKey; title = plan.title; jf = plan.report
+        payload = nextIntent.getStringExtra(EXTRA_PAYLOAD)
+        nextItem = null; nextPlan = null; autoplay = EpisodeAutoplay(); episodeGeneration++
+        startAttempt(0)
+        prefetchNextEpisode(next)
     }
 
     // --- attempts ---------------------------------------------------------------------------------
 
     private fun startAttempt(i: Int) {
         index = i
+        if (i == 0) audioFallbackQueued = false
         val item = items[i]
         started = false; ended = false; recorded = false
         startupMs = null; bufferEvents = 0; bufferMs = 0; bufferStart = 0; seeking = false; playMs = 0; playingSince = 0
         Log.i(TAG, "Attempt ${i + 1}/${items.size}: ${item.label} [${item.provider}]")
 
         // A torrent has to find peers before the first byte arrives, so the engine gets far longer than the 8 s default.
+        // A torrent has to find peers, and a live torrent can pause for a while between pieces: wait for those, not 15 s.
+        val slow = item.viaEngine || item.provider == STREAM_PROVIDER
         val http = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setDefaultRequestProperties(item.headers)
-            .setConnectTimeoutMs(if (item.viaEngine) 60_000 else 15_000).setReadTimeoutMs(if (item.viaEngine) 60_000 else 15_000)
+            .setConnectTimeoutMs(if (slow) 60_000 else 15_000).setReadTimeoutMs(if (slow) 60_000 else 15_000)
         // A Jellyfin title picks up where the server says the viewer left off; anything else, where this TV last did.
         val serverStart = jf?.startMs
         val resume = com.example.tvlauncher.data.jellyfin.JellyfinApi.resumePosition(serverStart, resumePrefs.getLong(imdbId ?: "", 0L))
-        player.setMediaSource(DefaultMediaSourceFactory(this).setDataSourceFactory(http).createMediaSource(MediaItem.fromUri(Uri.parse(item.url))), resume)
+        // Retry transient network errors more patiently for streams: a stalled torrent recovers far more often than it dies.
+        val retries = if (slow) STREAM_LOAD_RETRIES else DEFAULT_LOAD_RETRIES
+        player.setMediaSource(DefaultMediaSourceFactory(this, extractorsFor(item)).setDataSourceFactory(http)
+            .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(retries))
+            .createMediaSource(MediaItem.fromUri(Uri.parse(item.url))), resume)
         prepareAt = SystemClock.elapsedRealtime()
         player.prepare()
         player.playWhenReady = true
         handler.removeCallbacks(startupTimeout)
-        handler.postDelayed(startupTimeout, if (item.viaEngine) ENGINE_STARTUP_TIMEOUT_MS else STARTUP_TIMEOUT_MS)
+        handler.postDelayed(startupTimeout, if (slow) ENGINE_STARTUP_TIMEOUT_MS else STARTUP_TIMEOUT_MS)
     }
 
     /** The current attempt cannot work: log it against its provider, then move on or hand over to Stremio. */
     private fun fail(reason: String) {
+        if (releasingPlayer || isFinishing || isDestroyed) return
         handler.removeCallbacks(startupTimeout)
         Log.w(TAG, "Attempt ${index + 1} failed: $reason")
         val position = if (started) player.currentPosition else 0L
@@ -205,7 +341,29 @@ class PlayerActivity : AppCompatActivity() {
         } else fallBackToStremio("no version could be played")
     }
 
+    /**
+     * Most MKV files keep their seek index (Cues) at the very end. A torrent delivers that last, so waiting for it would
+     * delay playback until the download was nearly finished. A stream plays without it; seeking is then approximate.
+     */
+    private fun extractorsFor(item: PlayItem): DefaultExtractorsFactory = DefaultExtractorsFactory().apply {
+        if (item.provider == STREAM_PROVIDER) setMatroskaExtractorFlags(MatroskaExtractor.FLAG_DISABLE_SEEK_FOR_CUES)
+    }
+
+    /** Streams from the home service never hand over to Stremio: the viewer asked for the film in this player. */
+    private fun streamOnly(): Boolean = items.isNotEmpty() && items.all { it.provider == STREAM_PROVIDER }
+
+    /** Start quickly, hold up to 90 s ahead, and rebuild after a rebuffer only once 6 s are buffered again. */
+    private fun streamLoadControl(): DefaultLoadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(STREAM_MIN_BUFFER_MS, STREAM_MAX_BUFFER_MS, STREAM_START_BUFFER_MS, STREAM_REBUFFER_BUFFER_MS)
+        .setTargetBufferBytes(STREAM_TARGET_BUFFER_BYTES)
+        .build()
+
     private fun fallBackToStremio(reason: String) {
+        if (streamOnly()) {
+            Log.w(TAG, "Stream failed: $reason")
+            Toast.makeText(this, "Couldn't play this stream. Try again in a minute.", Toast.LENGTH_LONG).show()
+            finish(); return
+        }
         if (live) {
             Log.w(TAG, "Live channel failed: $reason")
             Toast.makeText(this, "This channel isn't available right now", Toast.LENGTH_LONG).show()
@@ -224,11 +382,33 @@ class PlayerActivity : AppCompatActivity() {
     // --- telemetry --------------------------------------------------------------------------------
 
     private val listener = object : Player.Listener {
-        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) { updateCaptionsLabel() }
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            updateCaptionsLabel()
+            val audio = tracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
+            audio.forEach { group ->
+                val format = group.mediaTrackGroup.getFormat(0)
+                Log.i(TAG, "Audio: ${format.sampleMimeType}, channels=${format.channelCount}, selected=${group.isSelected}, supported=${group.isTrackSupported(0)}")
+            }
+            // A valid picture does not mean its soundtrack can play. For example, Chromecast HD
+            // cannot decode AC-3/E-AC-3 when the connected TV only accepts stereo PCM.
+            val report = jf ?: return
+            if (index != 0 || audioFallbackQueued || audio.isEmpty() || tracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) return
+            audioFallbackQueued = true
+            handler.post {
+                if (!foreground || releasingPlayer || isFinishing || isDestroyed || index != 0 || jf?.itemId != report.itemId) return@post
+                val stereo = items[0].copy(
+                    url = com.example.tvlauncher.data.jellyfin.JellyfinApi.stereoStreamUrl(
+                        report.base, report.itemId, report.sourceId, "mcm-stereo-${jfSession.id}"),
+                    label = "Stereo audio")
+                items = listOf(items[0], stereo) + items.drop(1)
+                fail("Soundtrack is unsupported; converting audio to stereo")
+            }
+        }
 
         override fun onRenderedFirstFrame() {
             if (started) return
             started = true
+            hideLoading()
             startupMs = SystemClock.elapsedRealtime() - prepareAt
             handler.removeCallbacks(startupTimeout)
             Log.i(TAG, "First frame after ${startupMs} ms")
@@ -241,14 +421,25 @@ class PlayerActivity : AppCompatActivity() {
                     bufferStart = SystemClock.elapsedRealtime(); bufferEvents++
                 }
                 Player.STATE_READY -> { closeBuffer(); seeking = false }
-                Player.STATE_ENDED -> { closeBuffer(); ended = true; reportToJellyfin("Stopped", atEnd = true); resumePrefs.edit().remove(imdbId ?: "").apply()
-                    continueStore.save(ResumeItem(title, null, packageName, null, player.duration, player.duration, null, System.currentTimeMillis()), null) }
+                Player.STATE_ENDED -> if (!ended) {
+                    closeBuffer(); ended = true; reportToJellyfin("Stopped", atEnd = true); resumePrefs.edit().remove(imdbId ?: "").apply()
+                    continueStore.save(ResumeItem(title, null, packageName, null, player.duration, player.duration, null, System.currentTimeMillis()), null)
+                    if (!foreground) autoplay.cancel()
+                    autoplay.end(SystemClock.elapsedRealtime())
+                    showNextEpisode()
+                }
             }
         }
 
         override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
             // Seeking is the viewer's choice, not a network fault: never count the wait that follows it.
-            if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) { seeking = true; closeBuffer(discard = true) }
+            if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) {
+                seeking = true; closeBuffer(discard = true)
+                if (ended && new.positionMs < player.duration) {
+                    ended = false; handler.removeCallbacks(autoplayTick); nextCard.hideCard(); cancelNext.isEnabled = false
+                    autoplay = EpisodeAutoplay().also { state -> nextItem?.let { state.ready(it.id, SystemClock.elapsedRealtime()) } }
+                }
+            }
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -267,6 +458,68 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun dp(v: Int) = Math.round(v * resources.displayMetrics.density)
+
+    /** The film's artwork dimmed under its title, with what the home server is doing right now. */
+    private fun buildLoading(): View {
+        val box = FrameLayout(this).apply { setBackgroundColor(0xFF0E0A07.toInt()) }
+        val artView = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0.45f }
+        box.addView(artView, FrameLayout.LayoutParams(-1, -1))
+        art?.let { url -> com.example.tvlauncher.ui.RemoteImages(this).load(url, maxWidth = 1280) { artView.setImageBitmap(it) } }
+        box.addView(View(this).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xFF0E0A07.toInt(), 0x330E0A07))
+        }, FrameLayout.LayoutParams(-1, -1))
+        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(64), 0, dp(64), dp(80)) }
+        column.addView(Type.text(this, "NOW LOADING", Type.Style.EYEBROW).apply { setTextColor(getColor(com.example.tvlauncher.R.color.butter)) })
+        column.addView(Type.text(this, title, Type.Style.TITLE).apply { textSize = 52f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END },
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        loadingStatus = Type.text(this, "Finding a copy…", Type.Style.CAPTION).apply { textSize = 18f; setTextColor(0xD9F3E9CF.toInt()) }
+        column.addView(loadingStatus, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+        column.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { isIndeterminate = true },
+            LinearLayout.LayoutParams(dp(360), dp(4)).apply { topMargin = dp(16) })
+        box.addView(column, FrameLayout.LayoutParams(-1, -1, Gravity.BOTTOM))
+        return box
+    }
+
+    /** Asks the home server where the film is, once a second, until the first frame is on screen. */
+    private fun pollStatus() {
+        if (started || isFinishing || !streamOnly()) return
+        val url = items.firstOrNull()?.url?.replace("/stream/", "/status/") ?: return
+        Thread {
+            val info = try {
+                val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                c.connectTimeout = 4000; c.readTimeout = 4000
+                try { if (c.responseCode == 200) JSONObject(c.inputStream.bufferedReader().use { it.readText() }) else null } finally { c.disconnect() }
+            } catch (_: Exception) { null }
+            runOnUiThread { applyStatus(info) }
+        }.start()
+    }
+
+    private fun applyStatus(info: JSONObject?) {
+        if (started || isFinishing) return
+        when (info?.optString("phase")) {
+            "connecting" -> loadingStatus?.text = "Finding peers · ${info.optInt("seeds")} seeds"
+            "buffering" -> loadingStatus?.text = "Buffering · ${info.optInt("peers")} peers · ${(info.optDouble("progress") * 100).toInt()}% of the film so far"
+            "ready" -> loadingStatus?.text = "Starting…"
+            "failed" -> {
+                Toast.makeText(this, "Couldn't start this film. Try again in a minute.", Toast.LENGTH_LONG).show()
+                finish(); return
+            }
+            else -> loadingStatus?.text = "Connecting to the sources…"
+        }
+        handler.postDelayed({ pollStatus() }, 1000)
+    }
+
+    private fun hideLoading() {
+        loadingView?.animate()?.alpha(0f)?.setDuration(400)?.withEndAction {
+            loadingView?.visibility = View.GONE
+            updateTitleLabel(view.isControllerFullyVisible)
+        }?.start()
+    }
+
+    /** The title sits over the picture only while the controls are up, and never over the loading screen. */
+    private fun updateTitleLabel(controlsVisible: Boolean) {
+        titleLabel?.visibility = if (controlsVisible && loadingView?.visibility != View.VISIBLE) View.VISIBLE else View.GONE
+    }
 
     private fun hasCaptions(): Boolean = ::player.isInitialized && player.currentTracks.groups.any { it.type == C.TRACK_TYPE_TEXT }
 
@@ -290,6 +543,13 @@ class PlayerActivity : AppCompatActivity() {
 
     /** The remote's captions key toggles captions from anywhere in the player. */
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (::nextCard.isInitialized && nextCard.visibility == View.VISIBLE &&
+            event.keyCode in setOf(KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_STOP)) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                if (event.keyCode == KeyEvent.KEYCODE_MEDIA_STOP) cancelAutoplay() else playNextNow()
+            }
+            return true
+        }
         if (event.keyCode == KeyEvent.KEYCODE_CAPTIONS) {
             if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) toggleCaptions()
             return true
@@ -334,7 +594,8 @@ class PlayerActivity : AppCompatActivity() {
             title, items[index].label.takeIf { it.isNotBlank() }, packageName, null, position, player.duration, null,
             System.currentTimeMillis(), payload
         )
-        captureFrame { frame -> continueStore.save(item, frame) }
+        val generation = episodeGeneration
+        captureFrame { frame -> if (generation == episodeGeneration && !ended) continueStore.save(item, frame) }
     }
 
     private fun captureFrame(onDone: (Bitmap?) -> Unit) {
@@ -353,6 +614,20 @@ class PlayerActivity : AppCompatActivity() {
             val p = player.currentPosition
             if (p > 60_000 && p < player.duration * 0.95) resumePrefs.edit().putLong(id, p).apply()
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        foreground = true
+        if (::nextCard.isInitialized) showNextEpisode()
+    }
+
+    override fun onPause() {
+        foreground = false
+        if (ended) autoplay.cancel()
+        handler.removeCallbacks(autoplayTick)
+        if (::nextCard.isInitialized) nextCard.countdown(null, 0f)
+        super.onPause()
     }
 
     override fun onStop() {
@@ -395,25 +670,48 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        episodeGeneration++
+        episodeLookup.shutdownNow()
+        episodeImages?.close()
         handler.removeCallbacksAndMessages(null)
-        if (::player.isInitialized) { record(failed = false); player.release() }
+        if (::player.isInitialized) {
+            record(failed = false)
+            releasingPlayer = true
+            player.removeListener(listener)
+            player.release()
+        }
         reporter.shutdown() // let the final stop report finish, then release its thread
         super.onDestroy()
     }
 
     companion object {
+        /** Provider name for films from the home stream service. */
+        const val STREAM_PROVIDER = "Stream"
+        private const val STREAM_MIN_BUFFER_MS = 30_000
+        private const val STREAM_MAX_BUFFER_MS = 90_000
+        private const val STREAM_START_BUFFER_MS = 1_500
+        private const val STREAM_REBUFFER_BUFFER_MS = 6_000
+        private const val STREAM_TARGET_BUFFER_BYTES = 96 * 1024 * 1024
+        private const val STREAM_LOAD_RETRIES = 8
+        private const val DEFAULT_LOAD_RETRIES = 3
+
         private const val EXTRA_ITEMS = "items"
         private const val EXTRA_IMDB = "imdb"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_PAYLOAD = "payload"
         private const val EXTRA_LIVE = "live"
+        private const val EXTRA_ART = "art"
         private const val EXTRA_JF = "jf"
         private const val STARTUP_TIMEOUT_MS = 25_000L
         /** A torrent has to find peers and buffer first. */
         private const val ENGINE_STARTUP_TIMEOUT_MS = 75_000L
 
         /** Starts playback of [ranked] in order, capped at three attempts. */
-        fun launch(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?, report: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null) {
+        fun launch(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?, report: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null, artUrl: String? = null) {
+            context.startActivity(playbackIntent(context, ranked, title, imdbId, report).putExtra(EXTRA_ART, artUrl))
+        }
+
+        private fun playbackIntent(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?, report: com.example.tvlauncher.data.jellyfin.JellyfinReport?): Intent {
             val a = JSONArray()
             ranked.filter { it.playable }.take(3).forEach { r ->
                 val c = r.candidate
@@ -422,8 +720,8 @@ class PlayerActivity : AppCompatActivity() {
                     .put("bitrate", r.requiredBps).put("label", c.meta.qualityLabel()).put("engine", c.viaEngine))
             }
             val payload = JSONObject().put("items", a.toString()).put("imdb", imdbId ?: "").put("title", title).put("jf", report?.toJson() ?: "").toString()
-            context.startActivity(Intent(context, PlayerActivity::class.java)
-                .putExtra(EXTRA_ITEMS, a.toString()).putExtra(EXTRA_IMDB, imdbId).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_PAYLOAD, payload).putExtra(EXTRA_JF, report?.toJson()))
+            return Intent(context, PlayerActivity::class.java)
+                .putExtra(EXTRA_ITEMS, a.toString()).putExtra(EXTRA_IMDB, imdbId).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_PAYLOAD, payload).putExtra(EXTRA_JF, report?.toJson())
         }
 
         /** Plays one live channel from [url]. [headers] carry any sign-in the stream needs. */
