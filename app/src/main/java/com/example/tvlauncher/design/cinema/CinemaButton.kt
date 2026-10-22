@@ -14,9 +14,9 @@ import com.example.tvlauncher.design.Cinema
 /**
  * The Cinema pill button (`.btn`): 76 mockup pixels tall, fully rounded, icon then label.
  *
- * Focus is cream: the focused button fills cream with dark text and grows a soft 6px halo, and every other button
- * rests as glass. The one exception is [Kind.TERRA] ("Queue download"), which keeps its terracotta gradient so the
- * page's call to action reads even when focus is elsewhere. The halo is drawn outside the view's bounds, so its
+ * Focus is cream: the focused button fills cream with dark text and blooms a soft glow behind it, and every other
+ * button rests as glass. The one exception is [Kind.TERRA] ("Queue download"), which keeps its terracotta gradient so
+ * the page's call to action reads even when focus is elsewhere. The glow is drawn outside the view's bounds, so its
  * parents must not clip children.
  */
 class CinemaButton(context: Context, kind: Kind, label: CharSequence, iconRes: Int? = null) : LinearLayout(context) {
@@ -24,9 +24,12 @@ class CinemaButton(context: Context, kind: Kind, label: CharSequence, iconRes: I
 
     val label: TextView = Cinema.text(context, label, 25, Cinema.CREAM, weight = 600).apply { maxLines = 1 }
     private val icon: ImageView? = iconRes?.let { Cinema.icon(context, it, Cinema.CREAM) }
-    private val halo = Paint(Paint.ANTI_ALIAS_FLAG)
+    // Focus glow: a soft blurred bloom behind the button (no ring or outline, per the Cinema language).
+    private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        if (android.os.Build.VERSION.SDK_INT >= 28) maskFilter = android.graphics.BlurMaskFilter(Cinema.pxf(context, 22), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
     private val haloBox = RectF()
-    private val haloWidth = Cinema.pxf(context, 6)
+    private val haloWidth = Cinema.pxf(context, 4)
 
     var kind: Kind = kind
         set(value) { field = value; restyle() }
@@ -62,7 +65,7 @@ class CinemaButton(context: Context, kind: Kind, label: CharSequence, iconRes: I
         background = fill
         label.setTextColor(text)
         icon?.setColorFilter(text)
-        halo.color = if (kind == Kind.TERRA) Cinema.alpha(Cinema.TERRA, 0.22f) else Cinema.alpha(Cinema.CREAM, 0.16f)
+        halo.color = if (kind == Kind.TERRA) Cinema.alpha(Cinema.TERRA, 0.55f) else Cinema.alpha(Cinema.CREAM, 0.32f)
         invalidate()
     }
 

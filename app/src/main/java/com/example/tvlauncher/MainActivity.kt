@@ -435,6 +435,7 @@ class MainActivity : AppCompatActivity() {
         // review never have to press their way across the home screen.
         if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 && intent.getBooleanExtra("debug_cinema", false)) {
             onNavTabSelected(NavTab.MOVIES)
+            intent.getStringExtra("debug_cinema_dest")?.let { moviesPanel.debugGo(it) }
         }
     }
 

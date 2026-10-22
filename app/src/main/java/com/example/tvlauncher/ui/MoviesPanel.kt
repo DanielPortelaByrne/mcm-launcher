@@ -70,7 +70,11 @@ import com.example.tvlauncher.design.Cinema
 import com.example.tvlauncher.design.LauncherTheme
 import com.example.tvlauncher.design.SectionHeader
 import com.example.tvlauncher.design.cinema.AmbientBackground
+import com.example.tvlauncher.design.cinema.CinemaButton
 import com.example.tvlauncher.design.cinema.FrostView
+import com.example.tvlauncher.design.cinema.HeroBackdrop
+import com.example.tvlauncher.design.cinema.PosterCard
+import com.example.tvlauncher.design.cinema.Scrim
 import com.example.tvlauncher.design.cinema.StripeDrawable
 import com.example.tvlauncher.design.Type
 import com.example.tvlauncher.ui.room.JellyfinConnectSheet
@@ -118,6 +122,8 @@ class MoviesPanel(
     /** A heading with its scrolling row. Hidden when the row turns out to be empty. */
     private class Row(val heading: View?, val scroller: View, val inner: LinearLayout) {
         fun hide() { heading?.visibility = View.GONE; scroller.visibility = View.GONE }
+        /** Shows how many titles the row holds beside its heading ("History films  9"). */
+        fun setCount(n: Int) { (heading?.findViewWithTag<TextView>(Cinema.COUNT_TAG))?.let { it.text = "$n"; it.visibility = View.VISIBLE } }
     }
 
     private val worker = Executors.newFixedThreadPool(3)
@@ -137,10 +143,7 @@ class MoviesPanel(
     private var searchPending: Runnable? = null
 
     private lateinit var storageView: TextView
-    private lateinit var heroImage: ImageView
     private lateinit var heroTitle: TextView
-    private lateinit var heroMeta: TextView
-    private lateinit var heroStreaming: TextView
     private lateinit var heroBody: TextView
     private lateinit var heroButtons: LinearLayout
     private var heroSet = false
@@ -151,6 +154,15 @@ class MoviesPanel(
     /** The Cinema ground behind every page: espresso with warm and teal glows and the faint arch columns. Painted once. */
     private var ambientView: AmbientBackground? = null
     private var frost: FrostView? = null
+    private var edgeFade: View? = null
+
+    /** The right-edge fade shows over rows, not over the featured title's picture. */
+    private fun updateEdgeFade() {
+        val f = edgeFade ?: return
+        val overHero = heroSet && ::heroFrame.isInitialized && heroFrame.isAttachedToWindow && page.scrollY < heroFrame.height / 2
+        val target = if (overHero) 0f else 1f
+        if (f.alpha != target && f.tag != target) { f.tag = target; f.animate().alpha(target).setDuration(200).start() }
+    }
 
     private fun showAmbient() {
         if (ambientView != null) return
@@ -172,7 +184,7 @@ class MoviesPanel(
         styleTabs(); build(); loadStorage()
     }
 
-    fun hide() { closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++ }
+    fun hide() { closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++; ui.removeCallbacks(heroTick) }
     fun close() {
         navigationFocusListener?.let { if (top.viewTreeObserver.isAlive) top.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
         worker.shutdownNow(); images.close()
@@ -185,6 +197,18 @@ class MoviesPanel(
         if (!top.hasFocus()) { activeNavigationItem()?.requestFocus(); return true }
         if (current != Dest.Home) { current = Dest.Home; styleTabs(); build(); return true }
         return false
+    }
+
+    /** Debug builds only (see MainActivity): opens a destination by name for UI-review screenshots. */
+    fun debugGo(name: String) {
+        val dest = when (name) {
+            "search" -> Dest.Search; "films" -> Dest.Films; "series" -> Dest.Series; "docs" -> Dest.Docs
+            "library" -> Dest.Library; "downloads" -> Dest.Downloads; else -> Dest.Home
+        }
+        overlay.findFocus()?.clearFocus()
+        go(dest)
+        // With nothing focused, the page puts focus on its featured title's first button once it arrives.
+        if (dest === Dest.Downloads || dest === Dest.Search) ui.postDelayed({ if (overlay.findFocus() == null || top.hasFocus()) focusContent() }, 2500)
     }
 
     private fun go(dest: Dest, remember: Boolean = false) {
@@ -208,6 +232,13 @@ class MoviesPanel(
             lp.setMargins(Cinema.px(activity, 32), Cinema.px(activity, 32), 0, Cinema.px(activity, 32))
             top.layoutParams = lp
         }
+        // Rows fade into the ground at the right edge (`.fade-r`), once the featured title has scrolled away.
+        edgeFade = View(activity).apply {
+            background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(Cinema.alpha(Cinema.BG, 0f), Cinema.alpha(Cinema.BG, 0.75f), Cinema.BG))
+            isFocusable = false; alpha = 0f
+        }
+        body.addView(edgeFade, body.indexOfChild(page) + 1, FrameLayout.LayoutParams(Cinema.px(activity, 220), -1, Gravity.END))
         // Frosted glass behind the rail: a blur of the page and ground beneath, in a sibling so the rail's stripe bar
         // can still draw past the pill's edge.
         frost = FrostView(activity, listOfNotNull(ambientView, page), 46f).also { f ->
@@ -218,7 +249,7 @@ class MoviesPanel(
         // The active item's stripe bar sits just outside the pill's left edge.
         body.clipChildren = false; body.clipToPadding = false
         (page.layoutParams as? ViewGroup.MarginLayoutParams)?.let { it.marginStart = 0; page.layoutParams = it }
-        page.setOnScrollChangeListener { _, _, _, _, _ -> fillNear(); frost?.refresh() }
+        page.setOnScrollChangeListener { _, _, _, _, _ -> fillNear(); frost?.refresh(); updateEdgeFade() }
         (page as? CinemaContentScrollView)?.navigationTarget = { activeNavigationItem() }
         val brand = LinearLayout(activity).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
@@ -330,7 +361,7 @@ class MoviesPanel(
     }
 
     /**
-     * The rail's three looks: the focused item is a cream pill with dark icon and label; the page you are on has a
+     * The rail's three looks: the focused item is a full-width cream band with dark icon and label; the page you are on has a
      * glass circle, a saffron icon and the stripe bar at the pill's edge; the rest are quiet.
      */
     private fun styleTabs() = tabs.forEach { (view, dest) ->
@@ -339,9 +370,10 @@ class MoviesPanel(
         val focused = view.hasFocus()
         val item = view as RailItem
         item.marked = selected
-        view.background = if (focused) android.graphics.drawable.GradientDrawable().apply { cornerRadius = Cinema.pxf(activity, 32); setColor(Cinema.CREAM) } else null
+        // Focus fills the rail's whole width as a cream band, edge to edge, rather than a pill inside it.
+        view.background = if (focused) android.graphics.drawable.ColorDrawable(Cinema.CREAM) else null
         item.circle?.background = if (selected && !focused) android.graphics.drawable.GradientDrawable().apply {
-            shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Cinema.GLASS_STRONG); setStroke(1, Cinema.alpha(Cinema.SAFFRON, 0.35f))
+            shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Cinema.GLASS_STRONG)
         } else null
         val colour = when { focused -> Cinema.INK; selected -> Cinema.SAFFRON; else -> Cinema.RAIL_ICON }
         navigationLabels[view]?.let { (image, name) ->
@@ -373,12 +405,13 @@ class MoviesPanel(
     private fun build() {
         val gen = ++generation
         searchPending?.let { ui.removeCallbacks(it) }
+        ui.removeCallbacks(heroTick)
         content.removeAllViews(); page.scrollTo(0, 0); heroSet = false; pending.clear(); lastContentFocus = null
         // The rail floats over the page, so nothing is reserved for a top bar. A page that opens on a featured title
         // starts at the very top, so its picture runs up to the screen edge; the others start a little way down.
         val opensOnHero = current === Dest.Home || current === Dest.Films || current === Dest.Series || current === Dest.Docs || current === Dest.Library
         content.setPadding(0, if (opensOnHero) 0 else Cinema.px(activity, 52), 0, dp(48))
-        frost?.post { frost?.refresh(500) }
+        frost?.post { frost?.refresh(500); updateEdgeFade() }
         jellyfin.takeIf { it.isConnected }?.let { j -> worker.execute { j.library() } }   // so poster badges are ready without waiting
         when (val d = current) {
             Dest.Home -> { buildHero(); libraryRow(gen, "My library", 18); serviceTiles(); genreTiles(); shelves(Catalog.homePage(), gen) }
@@ -417,7 +450,8 @@ class MoviesPanel(
         // and drawn only when it is about to be seen, which is what keeps opening the page quick.
         specs.forEach { spec ->
             val row = row(spec.heading, null)
-            row.inner.minimumHeight = dp(ROW_HEIGHT)
+            // Room for the row before it loads, so the page does not jump: a poster row, or a shorter Top 10 row.
+            row.inner.minimumHeight = Cinema.px(activity, if (spec.ranked) 368 else 488)
             pending += Lazy(row) { loadShelf(spec, row, gen) }
         }
         page.post { fillNear() }
@@ -426,7 +460,8 @@ class MoviesPanel(
     private fun loadShelf(spec: ShelfSpec, row: Row, gen: Int) {
         worker.execute {
             if (jellyfin.isConnected) jellyfin.library()   // loaded once, then every row can badge what you already own
-            val entries = catalog.shelf(spec).titles.take(SHELF_LIMIT).map { entry(it) }
+            // A Top 10 row is exactly that: ten numbered posters, nothing after them.
+            val entries = catalog.shelf(spec).titles.take(if (spec.ranked) 10 else SHELF_LIMIT).map { entry(it) }
             activity.runOnUiThread {
                 if (gen != generation) return@runOnUiThread
                 if (entries.isEmpty()) { row.hide(); return@runOnUiThread }
@@ -435,7 +470,11 @@ class MoviesPanel(
                     val ranked = spec.ranked && i < 10
                     row.inner.addView(if (ranked) rankCard(i + 1, e, related) else card(e, related), cardParams(i, wide = ranked))
                 }
-                if (!heroSet) entries.firstOrNull { it.title.backdropUrl != null }?.let { setHero(it, related) }
+                row.setCount(entries.size)
+                if (!heroSet) {
+                    val featured = entries.withIndex().filter { it.value.title.backdropUrl != null }.take(3)
+                    setHero(featured.map { it.value }, related, featured.map { rankLabel(spec.heading, spec.ranked, it.index) })
+                }
                 page.post { fillNear() }
             }
         }
@@ -472,7 +511,8 @@ class MoviesPanel(
                 row.inner.removeAllViews()
                 if (items.isEmpty()) { row.inner.addView(note("Nothing in your library yet, or Jellyfin couldn't be reached")); return@runOnUiThread }
                 val entries = libraryEntries(items)
-                entries.forEachIndexed { i, e -> row.inner.addView(card(e, entries.map { it.title }), cardParams(i)) }
+                entries.forEachIndexed { i, e -> row.inner.addView(card(e, entries.map { it.title }, badge = false), cardParams(i)) }
+                row.setCount(entries.size)
             }
         }
     }
@@ -497,12 +537,12 @@ class MoviesPanel(
                 holder.removeAllViews()
                 if (items.isEmpty()) { holder.addView(note("Nothing in your library yet, or Jellyfin couldn't be reached").apply { setPadding(margin, dp(10), 0, dp(10)) }); return@runOnUiThread }
                 val all = libraryEntries(items)
-                all.firstOrNull { it.title.backdropUrl != null }?.let { setHero(it, all.map { e -> e.title }) }
+                all.filter { it.title.backdropUrl != null }.take(3).let { f -> setHero(f, all.map { e -> e.title }, f.map { "Recently added" }) }
                 fun add(heading: String, list: List<Entry>) {
                     if (list.isEmpty()) return
                     val r = row(heading, "${list.size}", into = holder)
                     val related = list.map { it.title }
-                    list.forEachIndexed { i, e -> r.inner.addView(card(e, related), cardParams(i)) }
+                    list.forEachIndexed { i, e -> r.inner.addView(card(e, related, badge = false), cardParams(i)) }
                 }
                 add("Recently added", all.take(20))
                 add("Films", all.filter { it.title.kind == Kind.MOVIE })
@@ -929,45 +969,128 @@ class MoviesPanel(
 
     // --- Featured title ----------------------------------------------------------------------------
 
+    /**
+     * The featured title (`01-movies-top`): the backdrop on the right, faded in from the left and down into the page,
+     * with the eyebrow, a big Fraunces title, the meta line, synopsis, provider and buttons on the left, and the
+     * stripe indicators beneath. The picture runs past the frame's bottom, under the first row, as in the mockup.
+     */
     private fun buildHero() {
-        // No background of its own: the panel's ground colour already sits behind the picture, so an opaque fill here
-        // would only be one more full-width layer to paint. The two fades over the picture are one drawable.
-        val hero = HeroFrame(activity, dp(330))
-        heroImage = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
-        hero.addView(heroImage, FrameLayout.LayoutParams(-1, -1))
-        hero.addView(View(activity).apply {
-            background = ScrimDrawable(intArrayOf(0xF21A140E.toInt(), 0xB31A140E.toInt(), 0x001A140E), intArrayOf(0x001A140E, 0xFF1A140E.toInt()))
-        }, FrameLayout.LayoutParams(-1, -1))
-        // Three painted stripes on the hero's lower edge: the room's own mid-century signature.
-        hero.addView(Stripes(activity), FrameLayout.LayoutParams(dp(90), dp(8), Gravity.BOTTOM or Gravity.START).apply { leftMargin = pageStart; bottomMargin = dp(4) })
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(pageStart, Cinema.px(activity, 140), 0, dp(30)) }
-        column.addView(Type.text(activity, "FEATURED", Type.Style.EYEBROW))
-        heroTitle = Type.text(activity, "", Type.Style.TITLE).apply { textSize = 34f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
-        heroMeta = Type.text(activity, "", Type.Style.CAPTION).apply { maxLines = 1 }
-        heroStreaming = Type.text(activity, "", Type.Style.CAPTION).apply { maxLines = 1; setTextColor(activity.getColor(R.color.butter)) }
-        heroBody = Type.text(activity, "", Type.Style.CAPTION).apply { maxLines = 3; ellipsize = TextUtils.TruncateAt.END; setLineSpacing(0f, 1.1f) }
-        column.addView(heroTitle, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        column.addView(heroMeta, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-        column.addView(heroStreaming, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
-        column.addView(heroBody, LinearLayout.LayoutParams(dp(520), -2).apply { topMargin = dp(6) })
+        ui.removeCallbacks(heroTick)
+        val hero = HeroFrame(activity, Cinema.px(activity, HERO_HEIGHT)).apply { clipChildren = false; clipToPadding = false }
+        heroBackdrop = HeroBackdrop(activity, focusX = 0.5f, fadeTo = 0.38f)
+        hero.addView(heroBackdrop, FrameLayout.LayoutParams(Cinema.px(activity, 1230), Cinema.px(activity, 1080), Gravity.END or Gravity.TOP))
+        hero.addView(View(activity).apply { background = Scrim.hero() }, FrameLayout.LayoutParams(-1, Cinema.px(activity, 1080)))
+        val column = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false
+            setPadding(pageStart, Cinema.px(activity, 140), pageEnd, 0)
+        }
+        heroEyebrow = FrameLayout(activity)
+        heroTitle = Cinema.title(activity, "", 128)
+        heroMeta = FrameLayout(activity)
+        heroBody = Cinema.synopsis(activity, "", 26, maxLines = 3)
+        heroProvider = FrameLayout(activity)
         heroButtons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; visibility = View.INVISIBLE }
-        column.addView(heroButtons, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(12) })
-        hero.addView(column, FrameLayout.LayoutParams(-1, -1))
+        heroDots = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        column.addView(heroEyebrow)
+        column.addView(heroTitle, LinearLayout.LayoutParams(Cinema.px(activity, 1100), -2).apply { topMargin = Cinema.px(activity, 22) })
+        column.addView(heroMeta, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 30) })
+        column.addView(heroBody, LinearLayout.LayoutParams(Cinema.px(activity, 820), -2).apply { topMargin = Cinema.px(activity, 26) })
+        column.addView(heroProvider, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 30) })
+        column.addView(heroButtons, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 34) })
+        column.addView(heroDots, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 82) })
+        hero.addView(column, FrameLayout.LayoutParams(-1, -2))
         hero.content = column
+        heroFrame = hero
         content.addView(hero, LinearLayout.LayoutParams(-1, -2))
     }
 
-    private fun setHero(e: Entry, related: List<Title>) {
+    private lateinit var heroFrame: View
+    private lateinit var heroBackdrop: HeroBackdrop
+    private lateinit var heroEyebrow: FrameLayout
+    private lateinit var heroMeta: FrameLayout
+    private lateinit var heroProvider: FrameLayout
+    private lateinit var heroDots: LinearLayout
+    private var heroEntries: List<Entry> = emptyList()
+    private var heroRelated: List<Title> = emptyList()
+    private var heroLabels: List<String> = emptyList()
+    private var heroIndex = 0
+    private val heroTick = Runnable { advanceHero() }
+
+    /** Up to three featured titles, each with its eyebrow label ("#1 in films today"); the hero turns through them. */
+    private fun setHero(entries: List<Entry>, related: List<Title>, labels: List<String>) {
+        if (entries.isEmpty()) return
         heroSet = true
-        heroTitle.text = e.title.name; heroMeta.text = e.title.metaLine()
-        heroStreaming.text = e.title.streamingLine().orEmpty(); heroStreaming.visibility = if (heroStreaming.text.isEmpty()) View.GONE else View.VISIBLE
-        heroBody.text = e.title.overview.orEmpty()
+        heroEntries = entries.take(3); heroRelated = related; heroLabels = labels.take(3)
+        heroDots.removeAllViews()
+        if (heroEntries.size > 1) heroEntries.indices.forEach { i ->
+            heroDots.addView(View(activity), LinearLayout.LayoutParams(Cinema.px(activity, 64), Cinema.px(activity, 10)).apply { if (i > 0) marginStart = Cinema.px(activity, 8) })
+        }
+        showHero(0)
+        ui.removeCallbacks(heroTick)
+        if (heroEntries.size > 1) ui.postDelayed(heroTick, HERO_TURN_MS)
+    }
+
+    private fun advanceHero() {
+        if (!isVisible || detailOpen || heroEntries.size < 2 || !heroFrame.isAttachedToWindow) return
+        // Only turn while the hero is on screen; otherwise just wait for the next turn.
+        if (page.scrollY < heroFrame.height / 2) {
+            val column = (heroFrame as HeroFrame).content
+            column?.animate()?.alpha(0f)?.setDuration(180)?.withEndAction { showHero((heroIndex + 1) % heroEntries.size); column.animate().alpha(1f).setDuration(260).start() }?.start()
+        }
+        ui.postDelayed(heroTick, HERO_TURN_MS)
+    }
+
+    private fun showHero(index: Int) {
+        heroIndex = index
+        val e = heroEntries[index]
+        val t = e.title
+        heroEyebrow.removeAllViews()
+        heroEyebrow.addView(Cinema.eyebrow(activity, listOfNotNull("Featured", heroLabels.getOrNull(index))))
+        heroTitle.text = t.name
+        Cinema.style(heroTitle, heroTitleSize(t.name), Cinema.CREAM, serif = true, tracking = -0.02f)
+        heroMeta.removeAllViews(); heroMeta.addView(meta(t))
+        heroBody.text = t.overview.orEmpty(); heroBody.visibility = if (t.overview.isNullOrBlank()) View.GONE else View.VISIBLE
+        heroProvider.removeAllViews(); Cinema.provider(activity, t.services)?.let { heroProvider.addView(it) }
+        heroProvider.visibility = if (heroProvider.childCount == 0) View.GONE else View.VISIBLE
+        // Rebuilding the buttons keeps focus on the same position if the hero had it.
+        val focusedAt = (0 until heroButtons.childCount).firstOrNull { heroButtons.getChildAt(it).isFocused } ?: -1
         heroButtons.removeAllViews()
-        e.library?.let { lib -> heroButtons.addView(pill("Watch now", accent = true).apply { setOnClickListener { watch(lib, e.title) } }, LinearLayout.LayoutParams(dp(170), dp(44)).apply { marginEnd = dp(10) }) }
-        heroButtons.addView(pill("More info", accent = false).apply { setOnClickListener { openDetail(e, related) } }, LinearLayout.LayoutParams(dp(150), dp(44)))
+        val gap = Cinema.px(activity, 20)
+        fun add(b: CinemaButton) = heroButtons.addView(b, LinearLayout.LayoutParams(-2, Cinema.px(activity, 76)).apply { if (heroButtons.childCount > 0) marginStart = gap })
+        e.library?.let { lib -> add(CinemaButton(activity, CinemaButton.Kind.PRIMARY, "Watch now", R.drawable.ic_cin_play).apply { setOnClickListener { watch(lib, t) } }) }
+            ?: if (t.kind == Kind.MOVIE) add(CinemaButton(activity, CinemaButton.Kind.PRIMARY, "Stream now", R.drawable.ic_cin_play).apply { setOnClickListener { streamNow(e, this) } }) else Unit
+        add(CinemaButton(activity, CinemaButton.Kind.GLASS, "More info", R.drawable.ic_cin_info).apply { setOnClickListener { openDetail(e, heroRelated) } })
         heroButtons.visibility = View.VISIBLE
-        e.title.backdropUrl?.let { u -> images.load(u, maxWidth = 1280) { b -> heroImage.setImageBitmap(b); heroImage.animate().alpha(1f).setDuration(350).start(); frost?.refresh(400) } }
-        if (overlay.findFocus() == null && current != Dest.Search) requestFocusRobust(overlay as ViewGroup, heroButtons.getChildAt(0))
+        (0 until heroDots.childCount).forEach { i ->
+            heroDots.getChildAt(i).background = if (i == index) StripeDrawable(horizontalBands = true, radius = Cinema.pxf(activity, 5))
+                else android.graphics.drawable.GradientDrawable().apply { cornerRadius = Cinema.pxf(activity, 5); setColor(Cinema.alpha(Cinema.CREAM, 0.22f)) }
+        }
+        heroBackdrop.show(null)
+        (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
+            images.load(u, maxWidth = 1280) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400) } }
+        }
+        if (focusedAt >= 0) heroButtons.getChildAt(minOf(focusedAt, heroButtons.childCount - 1))?.requestFocus()
+        else if (overlay.findFocus() == null && current != Dest.Search) requestFocusRobust(overlay as ViewGroup, heroButtons.getChildAt(0))
+    }
+
+    /** Long names step down from the mockup's 128px so they still fit on two lines. */
+    private fun heroTitleSize(name: String) = when { name.length > 30 -> 76; name.length > 18 -> 96; else -> 128 }
+
+    /** The meta line for a title: certificate, year, running time, genres, IMDb score; only what is known. */
+    private fun meta(t: Title, sizePx: Int = 23): View = Cinema.meta(activity, t.age?.substringAfter("GB-"),
+        listOfNotNull(t.year?.toString(), t.runtimeMin?.takeIf { it > 0 }?.let { if (it >= 60) "${it / 60}h ${it % 60}m" else "$it min" }, t.genres.take(3).joinToString(" · ").ifBlank { null }),
+        t.imdbScore?.let { String.format(Locale.UK, "%.1f", it) }, sizePx)
+
+    /** "Top 10 films", 0 -> "#1 in films today"; any other shelf is labelled by its own heading. */
+    private fun rankLabel(heading: String, ranked: Boolean, position: Int): String {
+        if (!ranked) return heading
+        val rest = heading.removePrefix("Top 10").trim()
+        return when {
+            rest.isEmpty() || rest == "today" -> "#${position + 1} today"
+            rest.startsWith("on ") -> "#${position + 1} $rest today"
+            heading.startsWith("Trending in ") -> "#${position + 1} in ${heading.removePrefix("Trending in ")}"
+            else -> "#${position + 1} in $rest today"
+        }
     }
 
     // --- Title page --------------------------------------------------------------------------------
@@ -1119,15 +1242,16 @@ class MoviesPanel(
     }
 
     /** Streams a seeded copy from the home stream service into the player, without waiting for a download. */
-    private fun streamNow(e: Entry, button: TextView) {
+    private fun streamNow(e: Entry, button: View) {
         if (!seerr.isSignedIn) { seerrSheet.show(seerr, jellyfin) { streamNow(e, button) }; return }
+        fun label(text: String) { when (button) { is CinemaButton -> button.setText(text); is TextView -> button.text = text } }
         // The search can take a minute, so the button itself says so until the answer arrives.
-        button.text = "Finding a stream…"; button.isEnabled = false; button.alpha = 0.6f
+        label("Finding a stream…"); button.isEnabled = false; button.alpha = 0.6f
         Toast.makeText(activity, "Finding a copy of ${e.title.name}. This can take a minute.", Toast.LENGTH_LONG).show()
         worker.execute {
             val result = seerr.startStream(e.title.name, e.title.year)
             activity.runOnUiThread {
-                button.text = "Stream now"; button.isEnabled = true; button.alpha = 1f
+                label("Stream now"); button.isEnabled = true; button.alpha = 1f
                 android.util.Log.i("StreamNow", "status=${result.status} for ${e.title.name}")
                 when (result.status) {
                     StreamStatus.READY -> {
@@ -1339,36 +1463,34 @@ class MoviesPanel(
 
     // --- Category tiles ------------------------------------------------------------------------
 
-    private val tileColours = listOf(R.color.terracotta, R.color.deep_teal, R.color.butter, R.color.olive, R.color.cobalt, R.color.walnut)
+    /** The stripe set's colours plus the arches' olive and a deep teal, for the painted browse tiles. */
+    private val tileColours = intArrayOf(Cinema.STRIPE_TERRA, 0xFF2F6E66.toInt(), Cinema.STRIPE_SAFFRON, 0xFF4D5B2C.toInt(), Cinema.STRIPE_RED, Cinema.MAROON)
 
     private fun serviceTiles() {
         val r = row("Browse by service", null)
-        Catalog.SERVICES.forEachIndexed { i, s ->
-            r.inner.addView(tile(s.label, i, wide = true) { go(Dest.OnService(s), remember = true) }, LinearLayout.LayoutParams(dp(176), dp(92)).apply { if (i > 0) marginStart = dp(12) })
-        }
+        Catalog.SERVICES.forEachIndexed { i, s -> r.inner.addView(tile(s.label, i, wide = true) { go(Dest.OnService(s), remember = true) }, cardParams(i)) }
     }
 
     private fun genreTiles() {
         val r = row("Browse by genre", null)
-        Catalog.GENRES.forEachIndexed { i, g ->
-            r.inner.addView(tile(g.label, i + 2, wide = false) { go(Dest.InGenre(g), remember = true) }, LinearLayout.LayoutParams(dp(132), dp(72)).apply { if (i > 0) marginStart = dp(12) })
-        }
+        Catalog.GENRES.forEachIndexed { i, g -> r.inner.addView(tile(g.label, i + 2, wide = false) { go(Dest.InGenre(g), remember = true) }, cardParams(i)) }
     }
 
-    /** A painted tile: a flat colour from the room's palette with a sun or stripes in it, and the name in serif. */
+    /** A painted tile: a flat Cinema colour with a pale sun or stripes in it, the name in Fraunces; it grows and glows on focus. */
     private fun tile(label: String, seed: Int, wide: Boolean, onSelect: () -> Unit): View {
-        val radius = dp(16).toFloat()
-        val colour = activity.getColor(tileColours[seed % tileColours.size])
-        val light = colour == activity.getColor(R.color.butter)
-        val tile = FrameLayout(activity).apply { isFocusable = true; isClickable = true; contentDescription = label }
-        tile.addView(TextView(activity).apply {
-            text = label; textSize = if (wide) 20f else 17f; gravity = Gravity.BOTTOM or Gravity.START; maxLines = 2
-            typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(if (light) R.color.ink else R.color.ivory))
-            setPadding(dp(14), dp(8), dp(10), dp(10))
+        val colour = tileColours[seed % tileColours.size]
+        val light = colour == Cinema.STRIPE_SAFFRON
+        val card = PosterCard(activity, if (wide) 352 else 264, if (wide) 184 else 144, titled = false, radiusPx = 22f)
+        card.contentDescription = label
+        card.poster.background = MotifDrawable(colour, Cinema.pxf(activity, 22), seed)
+        card.poster.foreground = null
+        card.poster.addView(Cinema.text(activity, label, if (wide) 36 else 30, if (light) Cinema.INK else Cinema.CREAM, serif = true, weight = 500).apply {
+            gravity = Gravity.BOTTOM or Gravity.START; maxLines = 2
+            setPadding(Cinema.px(activity, 26), 0, Cinema.px(activity, 20), Cinema.px(activity, 20))
         }, FrameLayout.LayoutParams(-1, -1))
-        FastFocus.bind(tile, surfaces16, listOf(tile.getChildAt(0) as TextView), rest = MotifDrawable(colour, radius, seed)) { lit -> if (lit) reveal(tile) }
-        tile.setOnClickListener { onSelect() }
-        return tile
+        card.onFocus = { lit -> if (lit) reveal(card) }
+        card.setOnClickListener { onSelect() }
+        return card
     }
 
     // --- Pieces ------------------------------------------------------------------------------------
@@ -1377,16 +1499,13 @@ class MoviesPanel(
     private fun row(heading: String?, caption: String?, into: LinearLayout = content, inset: Boolean = true): Row {
         val margin = if (inset) pageStart else 0
         val end = if (inset) pageEnd else 0
+        // `.rowhead`: stripe marker, Fraunces 38px heading, the count. Spacing from the mockup: 50px above the heading,
+        // cards 78px below its top, 66px from a row's last line to the next heading.
         val head = heading?.let { h ->
-            LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(margin, dp(30), end, dp(10))
-                addView(View(activity).apply { setBackgroundColor(activity.getColor(R.color.terracotta)) }, LinearLayout.LayoutParams(dp(4), dp(22)).apply { marginEnd = dp(10) })
-                addView(Type.text(activity, h, Type.Style.HEADING))
-                if (caption != null) addView(Type.text(activity, caption, Type.Style.CAPTION), LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
-            }
+            Cinema.rowHeading(activity, h, caption).apply { setPadding(margin, Cinema.px(activity, 50), end, Cinema.px(activity, 14)) }
         }
         head?.let { into.addView(it) }
-        val inner = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(0, dp(8), 0, dp(12)) }
+        val inner = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(0, Cinema.px(activity, 16), 0, Cinema.px(activity, 16)) }
         val scroller = CalmHorizontalScrollView(activity).apply {
             isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false
             setPadding(margin, 0, end, 0)
@@ -1398,67 +1517,65 @@ class MoviesPanel(
         return Row(head, scroller, inner)
     }
 
+    /** Card spacing from the mockup: posters 28px apart (64px for the small ones on a title page); Top 10 items abut. */
     private fun cardParams(index: Int, small: Boolean = false, wide: Boolean = false) =
-        LinearLayout.LayoutParams(dp(if (wide) 196 else if (small) 108 else 138), -2).apply { if (index > 0) marginStart = dp(14) }
+        LinearLayout.LayoutParams(-2, -2).apply { if (index > 0 && !wide) marginStart = Cinema.px(activity, if (small) 44 else 28) }
 
-    private fun poster(e: Entry): FrameLayout {
-        val frame = FrameLayout(activity).apply { background = GradientDrawable().apply { cornerRadius = dp(8).toFloat(); setColor(0xFF3A2C1E.toInt()) } }
-        if (e.title.posterUrl == null) frame.addView(TextView(activity).apply {
-            text = e.title.name.filter { it.isLetterOrDigit() || it == ' ' }.trim().split(' ').filter { it.isNotEmpty() }.take(2).joinToString("") { it.first().uppercaseChar().toString() }
-            gravity = Gravity.CENTER; textSize = 26f; setTextColor(0x99F3E9CF.toInt())
-        }, FrameLayout.LayoutParams(-1, -1))
-        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        frame.addView(image, FrameLayout.LayoutParams(-1, -1))
-        if (e.library != null) frame.addView(TextView(activity).apply {
-            text = "IN LIBRARY"; textSize = 9f; letterSpacing = 0.08f; setTextColor(0xFFF3E9CF.toInt()); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
-            setPadding(dp(6), dp(2), dp(6), dp(2)); background = GradientDrawable().apply { cornerRadius = dp(6).toFloat(); setColor(activity.getColor(R.color.terracotta)) }
-        }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(5), 0, 0, dp(5)) })
-        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> image.setImageDrawable(androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, b).apply { cornerRadius = dp(8).toFloat() }); frost?.refresh() } }
-        return frame
+    /** "2026 · Animation · 2h 5m": the subline a focused card shows under its name. */
+    private fun subline(t: Title) = listOfNotNull(t.year?.toString(), t.genres.firstOrNull(),
+        t.runtimeMin?.takeIf { it > 0 && t.kind == Kind.MOVIE }?.let { if (it >= 60) "${it / 60}h ${it % 60}m" else "$it min" }).joinToString(" · ")
+
+    /** Fills [card]'s poster: the picture, initials when there is none, and the IN LIBRARY badge. */
+    private fun dress(card: PosterCard, e: Entry, badge: Boolean = true) {
+        if (e.title.posterUrl == null) card.placeholder(e.title.name)
+        if (badge && e.library != null) card.badge()
+        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> card.image.setImageBitmap(b); frost?.refresh() } }
     }
 
-    /** A poster with its name beneath. Lights ivory on focus; a small badge says when it is already in the library. */
-    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true): View {
-        val radius = dp(12).toFloat()
-        val w = if (small) 100 else 130
-        val h = if (small) 150 else 195
-        val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; clipChildren = false; clipToPadding = false; setPadding(dp(4), dp(4), dp(4), dp(8)); contentDescription = e.title.name }
-        tile.addView(poster(e), LinearLayout.LayoutParams(dp(w), dp(h)))
-        val name = Type.text(activity, e.title.name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 12f }
-        tile.addView(name, LinearLayout.LayoutParams(dp(w), -2).apply { topMargin = dp(6) })
-        FastFocus.bind(tile, surfaces12, listOf(name)) { lit -> if (lit) reveal(tile) }
-        tile.setOnClickListener { if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }
-        return tile
+    /** A poster with its name beneath; grows and glows on focus; a badge says when it is already in the library. */
+    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true): View {
+        val card = PosterCard(activity, if (small) 200 else 260, if (small) 300 else 390)
+        card.contentDescription = e.title.name
+        card.title?.text = e.title.name
+        card.subline?.text = subline(e.title)
+        dress(card, e, badge)
+        card.onFocus = { lit -> if (lit) reveal(card) }
+        card.setOnClickListener { if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }
+        return card
     }
 
-    /** A "Top 10" card: a big serif numeral standing beside the poster. */
+    /** A Top 10 item: an outlined Fraunces numeral tucked behind the left of the poster (`.top10`). */
     private fun rankCard(rank: Int, e: Entry, related: List<Title>): View {
-        val radius = dp(12).toFloat()
-        val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; clipChildren = false; clipToPadding = false; setPadding(dp(4), dp(4), dp(4), dp(6)); contentDescription = "$rank. ${e.title.name}" }
-        val line = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
-        val numeral = TextView(activity).apply {
-            text = rank.toString(); textSize = if (rank >= 10) 56f else 80f; gravity = Gravity.BOTTOM or Gravity.END; includeFontPadding = false
-            typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(R.color.butter)); setPadding(0, 0, dp(4), dp(2))
+        val box = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
+        val numeral = Cinema.text(activity, "$rank", 210, Cinema.alpha(Cinema.SAFFRON, 0.6f), serif = true, weight = 600, tracking = -0.06f).apply {
+            paint.style = Paint.Style.STROKE; paint.strokeWidth = Cinema.pxf(activity, 2.5f); maxLines = 1
         }
-        line.addView(numeral, LinearLayout.LayoutParams(dp(if (rank >= 10) 78 else 58), dp(195)))
-        line.addView(poster(e), LinearLayout.LayoutParams(dp(130), dp(195)))
-        tile.addView(line, LinearLayout.LayoutParams(-2, -2))
-        val name = Type.text(activity, e.title.name, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 12f }
-        tile.addView(name, LinearLayout.LayoutParams(dp(130), -2).apply { topMargin = dp(6); gravity = Gravity.END })
-        FastFocus.bind(tile, surfaces12, listOf(numeral, name)) { lit -> if (lit) reveal(tile) }
-        tile.setOnClickListener { openDetail(e, related) }
-        return tile
+        box.addView(numeral, FrameLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 28) })
+        val card = PosterCard(activity, 224, 336, titled = false)
+        card.contentDescription = "$rank. ${e.title.name}"
+        dress(card, e)
+        card.onFocus = { lit -> if (lit) reveal(card) }
+        card.setOnClickListener { openDetail(e, related) }
+        box.addView(card, FrameLayout.LayoutParams(-2, -2).apply { leftMargin = Cinema.px(activity, 118) })
+        box.minimumWidth = Cinema.px(activity, 350)
+        return box
     }
 
+    /** A glass card asking for something (connect Jellyfin, sign in); cream when focused. */
     private fun actionCard(title: String, subtitle: String, onSelect: () -> Unit): View {
-        val radius = dp(14).toFloat()
-        val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), dp(10), dp(18), dp(10)) }
-        val head = Type.text(activity, title, Type.Style.BODY)
-        val sub = Type.text(activity, subtitle, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+        val tile = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true; gravity = Gravity.CENTER_VERTICAL; setPadding(Cinema.px(activity, 36), 0, Cinema.px(activity, 36), 0) }
+        val head = Cinema.text(activity, title, 26, Cinema.CREAM, weight = 500)
+        val sub = Cinema.text(activity, subtitle, 20, Cinema.MUTED).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
         tile.addView(head); tile.addView(sub)
-        FastFocus.bind(tile, surfaces12, listOf(head, sub), rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(tile) }
+        val rest = Cinema.glass(activity, 26f, Cinema.GLASS); val lit = Cinema.glass(activity, 26f, Cinema.CREAM)
+        tile.background = rest
+        tile.setOnFocusChangeListener { _, f ->
+            tile.background = if (f) lit else rest
+            head.setTextColor(if (f) Cinema.INK else Cinema.CREAM); sub.setTextColor(if (f) Cinema.INK else Cinema.MUTED)
+            if (f) reveal(tile)
+        }
         tile.setOnClickListener { onSelect() }
-        tile.layoutParams = LinearLayout.LayoutParams(dp(360), dp(64))
+        tile.layoutParams = LinearLayout.LayoutParams(Cinema.px(activity, 720), Cinema.px(activity, 128))
         return tile
     }
 
@@ -1476,7 +1593,7 @@ class MoviesPanel(
         }
     }
 
-    private fun note(text: String) = Type.text(activity, text, Type.Style.CAPTION).apply { setPadding(dp(4), dp(10), 0, dp(10)) }
+    private fun note(text: String) = Cinema.text(activity, text, 22, Cinema.MUTED).apply { setPadding(dp(4), dp(10), 0, dp(10)) }
 
     private val surfaces12 by lazy { FastFocus.Surfaces(activity, dp(12).toFloat()) }
     private val surfaces16 by lazy { FastFocus.Surfaces(activity, dp(16).toFloat()) }
@@ -1488,8 +1605,9 @@ class MoviesPanel(
     private fun px(res: Int) = activity.resources.getDimensionPixelSize(res)
 
     private companion object {
-        const val ROW_HEIGHT = 262   // dp reserved for a poster row that has not loaded yet, so the page does not jump
         const val SHELF_LIMIT = 16
+        const val HERO_HEIGHT = 762      // mockup px: the first row's heading sits at 812
+        const val HERO_TURN_MS = 9_000L  // the featured title turns this often
         const val RAIL_WIDTH = 92        // mockup px, collapsed
         const val RAIL_WIDTH_OPEN = 420  // mockup px, with labels while the rail has focus
     }
@@ -1531,17 +1649,6 @@ class MoviesPanel(
         }
     }
 
-    /** Three short stripes in the palette, the hero's signature. */
-    private class Stripes(context: Context) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        override fun onDraw(canvas: Canvas) {
-            val w = width / 3f
-            listOf(R.color.terracotta, R.color.butter, R.color.deep_teal).forEachIndexed { i, c ->
-                paint.color = context.getColor(c); canvas.drawRect(i * w, 0f, (i + 1) * w - 3f, height.toFloat(), paint)
-            }
-        }
-    }
-
     /** A tile's painted face: a flat colour with a pale sun, a pair of stripes or a half moon, varying with [seed]. */
     private class MotifDrawable(private val colour: Int, private val radius: Float, private val seed: Int) : Drawable() {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -1550,7 +1657,7 @@ class MoviesPanel(
             val clip = Path().apply { addRoundRect(RectF(b), radius, radius, Path.Direction.CW) }
             canvas.save(); canvas.clipPath(clip)
             paint.color = colour; canvas.drawRect(RectF(b), paint)
-            paint.color = Color.argb(46, 243, 233, 207)
+            paint.color = Color.argb(46, 246, 236, 219)
             when (seed % 3) {
                 0 -> canvas.drawCircle(b.left + w * 0.84f, b.top + h * 0.28f, h * 0.46f, paint)
                 1 -> { canvas.drawRect(b.left + w * 0.62f, b.top.toFloat(), b.left + w * 0.72f, b.bottom.toFloat(), paint); canvas.drawRect(b.left + w * 0.78f, b.top.toFloat(), b.left + w * 0.84f, b.bottom.toFloat(), paint) }

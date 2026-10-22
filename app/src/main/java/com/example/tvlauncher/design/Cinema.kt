@@ -62,6 +62,9 @@ object Cinema {
     /** [color] with its alpha replaced by [alpha] (0..1). */
     fun alpha(color: Int, alpha: Float): Int = (color and 0x00FFFFFF) or ((alpha * 255).roundToInt().coerceIn(0, 255) shl 24)
 
+    /** Tag of the count beside a [rowHeading]. */
+    const val COUNT_TAG = "cinema_count"
+
     // --- Units -------------------------------------------------------------------------------------
     /** Mockup pixels to real pixels (one mockup pixel is half a dp). */
     fun px(context: Context, mock: Number): Int = (mock.toFloat() * context.resources.displayMetrics.density / 2f).roundToInt()
@@ -85,13 +88,29 @@ object Cinema {
         return "'opsz' ${opsz.roundToInt()}, 'wght' $weight"
     }
 
+    private val instances = HashMap<String, Typeface>()
+
+    /**
+     * A typeface with the weight and optical size baked in (API 29+). Setting variations on the TextView instead is
+     * lost when large text is drawn as paths, which made big titles fall back to the font's heaviest look. Optical
+     * sizes are rounded to steps of 4 so only a handful of instances are ever built.
+     */
+    private fun instance(context: Context, serif: Boolean, sizePx: Float, weight: Int): Typeface? {
+        if (Build.VERSION.SDK_INT < 29) return null
+        val v = variation(serif, (sizePx / 4f).roundToInt() * 4f, weight)
+        val key = "$serif|$v"
+        instances[key]?.let { return it }
+        return runCatching {
+            val font = android.graphics.fonts.Font.Builder(context.resources, if (serif) R.font.fraunces else R.font.inter).setFontVariationSettings(v).build()
+            Typeface.CustomFallbackBuilder(android.graphics.fonts.FontFamily.Builder(font).build()).setSystemFallback(if (serif) "serif" else "sans-serif").build()
+        }.getOrNull()?.also { instances[key] = it }
+    }
+
     /** Styles [view] at [sizePx] mockup pixels. Fraunces and Inter are variable fonts; older systems get their default weight. */
     fun style(view: TextView, sizePx: Number, color: Int = CREAM, serif: Boolean = false, weight: Int = 400, tracking: Float = 0f, caps: Boolean = false): TextView = view.apply {
         val size = sizePx.toFloat()
         setTextSize(TypedValue.COMPLEX_UNIT_PX, pxf(context, size))
-        typeface = typeface(context, serif)
-        if (Build.VERSION.SDK_INT >= 26) fontVariationSettings = variation(serif, size, weight)
-        else if (weight >= 600) setTypeface(typeface, Typeface.BOLD)
+        applyWeight(this, size, serif, weight)
         setTextColor(color)
         letterSpacing = tracking
         isAllCaps = caps
@@ -99,8 +118,15 @@ object Cinema {
     }
 
     /** Changes only the weight (for a label that turns semibold on focus). */
-    fun weight(view: TextView, sizePx: Number, serif: Boolean, weight: Int) {
-        if (Build.VERSION.SDK_INT >= 26) view.fontVariationSettings = variation(serif, sizePx.toFloat(), weight)
+    fun weight(view: TextView, sizePx: Number, serif: Boolean, weight: Int) = applyWeight(view, sizePx.toFloat(), serif, weight)
+
+    private fun applyWeight(view: TextView, size: Float, serif: Boolean, weight: Int) {
+        val baked = instance(view.context, serif, size, weight)
+        when {
+            baked != null -> view.typeface = baked
+            Build.VERSION.SDK_INT >= 26 -> { view.typeface = typeface(view.context, serif); view.fontVariationSettings = variation(serif, size, weight) }
+            else -> view.setTypeface(typeface(view.context, serif), if (weight >= 600) Typeface.BOLD else Typeface.NORMAL)
+        }
     }
 
     fun text(context: Context, value: CharSequence, sizePx: Number, color: Int = CREAM, serif: Boolean = false, weight: Int = 400, tracking: Float = 0f, caps: Boolean = false): TextView =
@@ -151,7 +177,7 @@ object Cinema {
         certificate?.takeIf { it.isNotBlank() }?.let { c ->
             row.addView(text(context, c, sizePx.toFloat() * 19f / 23f, CREAM, weight = 600, tracking = 0.03f).apply {
                 setPadding(px(context, 9), px(context, 1), px(context, 9), px(context, 1))
-                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = pxf(context, 6); setStroke(px(context, 1.5f).coerceAtLeast(1), alpha(CREAM, 0.45f)) }
+                background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = pxf(context, 6); setColor(alpha(CREAM, 0.16f)) }
             })
         }
         items.filter { it.isNotBlank() }.forEach { sep(); row.addView(text(context, it, sizePx, MUTED).apply { maxLines = 1 }) }
@@ -165,8 +191,11 @@ object Cinema {
 
     /** "Streaming on HBO Max": a glass pill with a small gradient play disc, the service in saffron. */
     fun provider(context: Context, services: List<String>, sizePx: Number = 22): View? {
-        if (services.isEmpty()) return null
-        val names = services.joinToString(", ").replace(Regex(", ([^,]*)$"), " and $1")
+        // JustWatch lists add-on channels too ("Paramount Plus Apple TV channel", "... Premium"); show the main services.
+        val main = services.filterNot { it.contains("channel", ignoreCase = true) || it.contains("premium", ignoreCase = true) || it.contains("with ads", ignoreCase = true) }
+            .ifEmpty { services }.take(2)
+        if (main.isEmpty()) return null
+        val names = main.joinToString(" and ")
         val pill = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             setPadding(px(context, 10), px(context, 8), px(context, 18), px(context, 8))
@@ -193,7 +222,9 @@ object Cinema {
         row.addView(View(context).apply { background = StripeDrawable(horizontalBands = false, radius = pxf(context, 7)) },
             LinearLayout.LayoutParams(px(context, 14), px(context, 30)).apply { marginEnd = px(context, 18) })
         row.addView(text(context, title, sizePx, CREAM, serif = true, tracking = -0.01f).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
-        count?.let { row.addView(text(context, it, 20, DIM, weight = 500, tracking = 0.04f), LinearLayout.LayoutParams(-2, -2).apply { marginStart = px(context, 18); topMargin = px(context, 8) }) }
+        // The count is always there, hidden until known, so a row can fill it in once its titles arrive.
+        row.addView(text(context, count.orEmpty(), 20, DIM, weight = 500, tracking = 0.04f).apply { tag = COUNT_TAG; visibility = if (count == null) View.GONE else View.VISIBLE; maxLines = 1 },
+            LinearLayout.LayoutParams(-2, -2).apply { marginStart = px(context, 18); topMargin = px(context, 8) })
         if (seeAll) {
             row.addView(View(context), LinearLayout.LayoutParams(0, 1, 1f))
             row.addView(text(context, "SEE ALL", 19, DIM, tracking = 0.06f))
@@ -208,9 +239,12 @@ object Cinema {
         scaleType = ImageView.ScaleType.FIT_CENTER
     }
 
-    /** A glass surface: translucent cream fill with a hairline edge. [radiusPx] in mockup pixels. */
-    fun glass(context: Context, radiusPx: Float, fill: Int = GLASS, line: Int = HAIRLINE): android.graphics.drawable.GradientDrawable =
-        android.graphics.drawable.GradientDrawable().apply { cornerRadius = pxf(context, radiusPx); setColor(fill); setStroke(1, line) }
+    /**
+     * A glass surface: a translucent cream fill. [radiusPx] in mockup pixels. Cinema draws no outlines anywhere, so
+     * surfaces are told apart by fill and focus by cream and glow, never by a stroked edge.
+     */
+    fun glass(context: Context, radiusPx: Float, fill: Int = GLASS): android.graphics.drawable.GradientDrawable =
+        android.graphics.drawable.GradientDrawable().apply { cornerRadius = pxf(context, radiusPx); setColor(fill) }
 
     /** A chip (`.chip`): glass pill with an optional icon. */
     fun chip(context: Context, label: CharSequence, iconRes: Int? = null, heightPx: Int = 56, sizePx: Number = 23): LinearLayout =

@@ -15,7 +15,7 @@ import com.example.tvlauncher.design.Cinema
 
 /**
  * Frosted glass: a blurred copy of whatever lies beneath it ([sources], drawn in this view's parent's coordinates),
- * tinted with [tint] and edged with a hairline, inside a pill of [radiusPx].
+ * tinted with [tint], inside a pill of [radiusPx]. No edge line: the blur alone sets it apart.
  *
  * Android Views have no backdrop blur, so on API 31+ the sources are re-recorded into a [RenderNode] carrying a GPU
  * blur effect. That happens only when [refresh] is called (page scrolls, focus moves, images arrive), never every
@@ -26,7 +26,6 @@ class FrostView(context: Context, private val sources: List<View>, private val r
         setRenderEffect(RenderEffect.createBlurEffect(Cinema.pxf(context, 44), Cinema.pxf(context, 44), Shader.TileMode.CLAMP))
     } else null
     private val fill = Paint()
-    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = Cinema.HAIRLINE }
     private var animateUntil = 0L
 
     /** The tint over the blur. Without blur it is forced close to opaque. */
@@ -67,13 +66,19 @@ class FrostView(context: Context, private val sources: List<View>, private val r
             n!!.setPosition(0, 0, width, height)
             val rec = n.beginRecording()
             rec.translate(-left.toFloat(), -top.toFloat())
-            sources.forEach { if (it.visibility == VISIBLE) it.draw(rec) }
+            sources.forEach { s ->
+                if (s.visibility != VISIBLE) return@forEach
+                // View.draw() leaves out the view's own position and scroll (its parent normally applies them), so a
+                // scrolled page would otherwise be blurred as if it sat at the top, offset from what is really beneath.
+                val save = rec.save()
+                rec.translate((s.left - s.scrollX).toFloat(), (s.top - s.scrollY).toFloat())
+                s.draw(rec)
+                rec.restoreToCount(save)
+            }
             n.endRecording()
             canvas.drawRenderNode(n)
         }
         fill.color = if (blurred) tint else Cinema.alpha(tint, 0.94f)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fill)
-        val r = Cinema.pxf(context, radiusPx)
-        canvas.drawRoundRect(0.5f, 0.5f, width - 0.5f, height - 0.5f, r, r, line)
     }
 }
