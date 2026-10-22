@@ -118,6 +118,16 @@ class JellyfinClient(context: Context) {
     fun findLoaded(imdbId: String?, tmdbId: String?, series: Boolean): JellyfinItem? = JellyfinApi.findByIds(library, imdbId, tmdbId, series)
 
     /** Current server resume state for a single item; call off the main thread. */
+    /** Debug aid: which of the player's extra fields the server's item answer carries at all (no values, no secrets). */
+    fun itemFieldReport(itemId: String): String {
+        val uid = userId ?: return "not signed in"
+        val body = request("GET", JellyfinApi.itemUrl(JellyfinApi.cleanBase(server), uid, itemId)) ?: return "no answer"
+        return try {
+            val o = JSONObject(body)
+            "Chapters=${if (o.has("Chapters")) o.optJSONArray("Chapters")?.length() ?: "null" else "absent"} Trickplay=${if (o.has("Trickplay")) (o.optJSONObject("Trickplay")?.length() ?: "null") else "absent"}"
+        } catch (_: Exception) { "unreadable" }
+    }
+
     fun item(itemId: String): JellyfinItem? {
         val uid = userId ?: return null
         val body = request("GET", JellyfinApi.itemUrl(JellyfinApi.cleanBase(server), uid, itemId)) ?: return null

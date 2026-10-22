@@ -231,6 +231,11 @@ class MoviesPanel(
             worker.execute {
                 val related: List<Entry> = if (name == "detail-library") libraryEntries(jellyfin.library().filter { !it.isSeries })
                     else catalog.shelf(Catalog.filmsPage().first()).titles.map { entry(it) }.filter { it.library == null }
+                // What the player would get for the first few library films (chapters, trickplay), without playing anything.
+                if (name == "detail-library") related.take(5).mapNotNull { it.library }.forEach { lib ->
+                    val full = jellyfin.item(lib.id)
+                    android.util.Log.i("CinemaPlayer", "${lib.name}: ${full?.chapters?.size ?: "fetch failed"} chapters (${full?.chapters?.count { it.imageTag != null } ?: 0} with images), trickplay=${full?.trickplay?.width ?: "none"}; raw ${jellyfin.itemFieldReport(lib.id)}")
+                }
                 activity.runOnUiThread { related.firstOrNull()?.let { openDetail(it, related.map { r -> r.title }) } }
             }
             return
@@ -1594,7 +1599,8 @@ class MoviesPanel(
                         screen.message("Found a copy. Starting the player…")
                         val candidate = StreamCandidate("stream:${e.title.key}", PlayerActivity.STREAM_PROVIDER, result.label ?: e.title.name, url, null, StreamMetadata())
                         PlayerActivity.launch(activity, listOf(RankedStream(candidate, 100, 0L, false, Verdict.RECOMMENDED, null, emptyList())), e.title.name, e.title.imdbId,
-                            artUrl = e.title.backdropUrl ?: e.title.posterUrl)
+                            artUrl = e.title.backdropUrl ?: e.title.posterUrl,
+                            meta = PlayerMeta(e.title.name, e.title.year, e.title.genres, e.title.runtimeMin, e.title.age, e.title.imdbScore, e.title.overview))
                         // The player opens over this same screen; take it down once it is covered.
                         ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 1500)
                     }

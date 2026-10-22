@@ -25,7 +25,12 @@ data class JellyfinItem(
     val seriesName: String? = null,
     val seriesId: String? = null,
     val episodeEnd: Int? = null,
-    val missing: Boolean = false
+    val missing: Boolean = false,
+    /** Filled only by the single-item fetch the player makes: chapters, trickplay tiles, file size and rating. */
+    val chapters: List<com.example.tvlauncher.data.player.Chapter> = emptyList(),
+    val trickplay: com.example.tvlauncher.data.player.Trickplay? = null,
+    val sizeBytes: Long? = null,
+    val communityRating: Double? = null
 ) {
     val isSeries: Boolean get() = type == "Series"
     val isEpisode: Boolean get() = type == "Episode"
@@ -119,7 +124,15 @@ object JellyfinApi {
 
     /** Fetch fresh user data before playing, including from an old Continue watching card. */
     fun itemUrl(base: String, userId: String, itemId: String): String =
-        "$base/Users/${enc(userId)}/Items/${enc(itemId)}?Fields=MediaSources"
+        "$base/Users/${enc(userId)}/Items/${enc(itemId)}?Fields=MediaSources,Chapters,Trickplay,Overview,Genres,OfficialRating,CommunityRating"
+
+    /** A chapter's still (`Images/Chapter/{index}`), when the server has one. */
+    fun chapterImageUrl(base: String, itemId: String, index: Int, tag: String, maxWidth: Int = 480): String =
+        "$base/Items/${enc(itemId)}/Images/Chapter/$index?tag=${enc(tag)}&maxWidth=$maxWidth&quality=85"
+
+    /** One sheet of trickplay thumbnails at [width]. */
+    fun trickplayUrl(base: String, itemId: String, width: Int, sheet: Int, sourceId: String): String =
+        "$base/Videos/${enc(itemId)}/Trickplay/$width/$sheet.jpg?MediaSourceId=${enc(sourceId)}"
 
     /** A server resume position, including zero or a short position, takes precedence over local history. */
     fun resumePosition(serverMs: Long?, localMs: Long): Long =
@@ -268,7 +281,11 @@ object JellyfinApi {
             seriesName = o.optString("SeriesName").ifBlank { null },
             seriesId = o.optString("SeriesId").ifBlank { null },
             episodeEnd = if (o.has("IndexNumberEnd") && !o.isNull("IndexNumberEnd")) o.optInt("IndexNumberEnd") else null,
-            missing = o.optBoolean("IsMissing") || o.optBoolean("IsVirtualItem") || o.optString("LocationType") == "Virtual"
+            missing = o.optBoolean("IsMissing") || o.optBoolean("IsVirtualItem") || o.optString("LocationType") == "Virtual",
+            chapters = com.example.tvlauncher.data.player.PlayerMath.parseChapters(o.optJSONArray("Chapters")),
+            trickplay = com.example.tvlauncher.data.player.PlayerMath.parseTrickplay(o.optJSONObject("Trickplay"), source),
+            sizeBytes = sources?.optJSONObject(0)?.optLong("Size", 0L)?.takeIf { it > 0 },
+            communityRating = o.optDouble("CommunityRating", 0.0).takeIf { it > 0 }
         )
     }
 }
