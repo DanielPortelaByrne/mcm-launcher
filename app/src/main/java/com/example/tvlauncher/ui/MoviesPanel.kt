@@ -1739,8 +1739,8 @@ class MoviesPanel(
             val p = pill("S${s.number}", accent = false).apply { setPadding(dp(20), 0, dp(20), 0); setOnClickListener { showSeason(s) } }
             p.setOnFocusChangeListener { v, focused ->
                 val d = v.background as android.graphics.drawable.TransitionDrawable
-                if (focused) { d.startTransition(120); if (shown !== s) showSeason(s) } else d.reverseTransition(120)
-                (v as TextView).setTextColor(activity.getColor(if (focused) R.color.ink else R.color.ivory))
+                if (focused) { d.startTransition(120); if (shown !== s) showSeason(s); reveal(v) } else d.reverseTransition(120)
+                (v as TextView).setTextColor(if (focused) Cinema.INK else Cinema.CREAM)
             }
             pills[p] = s
             picker.inner.addView(p, LinearLayout.LayoutParams(-2, dp(42)).apply { if (i > 0) marginStart = dp(8) })
