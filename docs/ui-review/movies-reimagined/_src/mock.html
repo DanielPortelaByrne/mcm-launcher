@@ -1,0 +1,426 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Movies reimagined</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--rb:linear-gradient(180deg,#f6bf33 0 20%,#f08a25 20% 40%,#e2562b 40% 60%,#c2281d 60% 80%,#6b1a10 80%);--rbv:linear-gradient(90deg,#f6bf33 0 20%,#f08a25 20% 40%,#e2562b 40% 60%,#c2281d 60% 80%,#6b1a10 80%);--bg:#0b0807;--cream:#f6ecdb;--muted:#b6a896;--dim:#7f7366;--terra:#e27a49;--saff:#edbe56;--teal:#3aa597;
+--glass:rgba(255,242,222,.075);--glass2:rgba(255,242,222,.13);--line:rgba(255,242,222,.14)}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;background:var(--bg);overflow:hidden;font-family:Inter,sans-serif;color:var(--cream);-webkit-font-smoothing:antialiased}
+.screen{display:none;position:relative;width:1920px;height:1080px;overflow:hidden;background:var(--bg)}
+.serif{font-family:Fraunces,Georgia,serif;font-optical-sizing:auto}
+svg.i{display:block;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.abs{position:absolute}
+/* ambient */
+.amb{position:absolute;inset:0;background:
+ radial-gradient(900px 600px at 88% -10%,rgba(226,122,73,.16),transparent 70%),
+ radial-gradient(900px 700px at 0% 110%,rgba(58,165,151,.14),transparent 70%),
+ radial-gradient(700px 500px at 50% 50%,rgba(237,190,86,.04),transparent 70%),var(--bg)}
+.arch{position:absolute;left:50%;top:-140px;width:1500px;height:1500px;margin-left:-750px;border-radius:50%;
+ border:1px solid rgba(237,190,86,.07);box-shadow:0 0 0 60px transparent,inset 0 0 0 80px rgba(237,190,86,.012)}
+.arch.b{width:1100px;height:1100px;margin-left:-550px;top:60px;border-color:rgba(226,122,73,.07)}
+.grain{position:absolute;inset:0;opacity:.07;mix-blend-mode:overlay;pointer-events:none;
+ background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='200' height='200' filter='url(%23n)'/></svg>")}
+/* rail */
+.rail{position:absolute;left:32px;top:32px;bottom:32px;width:92px;border-radius:46px;background:rgba(18,13,10,.62);
+ border:1px solid var(--line);backdrop-filter:blur(30px);display:flex;flex-direction:column;align-items:center;padding:30px 0 26px;gap:12px;z-index:20}
+.rail .logo{margin-bottom:26px}
+.rail .nv{width:64px;height:64px;border-radius:32px;display:flex;align-items:center;justify-content:center;color:#a99b89;position:relative}
+.rail .nv.on{background:var(--glass2);color:var(--saff);box-shadow:inset 0 0 0 1px rgba(237,190,86,.35),0 8px 24px rgba(0,0,0,.4)}
+.rail .nv.on::before{content:"";position:absolute;left:-17px;top:16px;width:8px;height:32px;border-radius:4px;background:var(--rbv)}
+.rail .sp{flex:1}
+/* type */
+.eyebrow{font-size:17px;font-weight:600;letter-spacing:.24em;text-transform:uppercase;color:var(--saff);display:flex;align-items:center;gap:14px}
+.eyebrow i{display:inline-block;width:40px;height:10px;border-radius:5px;background:var(--rb)}
+.eyebrow .dot{width:5px;height:5px;border-radius:3px;background:var(--saff);opacity:.6}
+.title{font-family:Fraunces,Georgia,serif;font-weight:400;letter-spacing:-.02em;line-height:1;color:var(--cream)}
+.meta{display:flex;align-items:center;gap:16px;font-size:23px;color:var(--muted);font-weight:400}
+.meta .dotsep{width:4px;height:4px;border-radius:2px;background:var(--dim)}
+.cert{border:1.5px solid rgba(246,236,219,.45);border-radius:6px;padding:1px 9px;font-size:19px;font-weight:600;color:var(--cream);letter-spacing:.03em}
+.imdb{display:flex;align-items:center;gap:8px;color:var(--cream);font-weight:500}
+.imdb svg{color:var(--saff)}
+.prov{display:inline-flex;align-items:center;gap:12px;font-size:22px;color:var(--cream);background:var(--glass);border:1px solid var(--line);
+ padding:8px 18px 8px 10px;border-radius:30px;backdrop-filter:blur(12px)}
+.prov b{width:28px;height:28px;border-radius:14px;background:linear-gradient(135deg,var(--terra),var(--saff));display:flex;align-items:center;justify-content:center;color:#1a0f08}
+.prov em{font-style:normal;color:var(--saff);font-weight:500}
+.syn{font-size:26px;line-height:1.5;color:#d7cbb9;font-weight:300}
+/* buttons */
+.btn{height:76px;border-radius:38px;padding:0 38px 0 30px;display:inline-flex;align-items:center;gap:14px;font-size:25px;font-weight:600;
+ background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(20px);color:var(--cream)}
+.btn.primary{background:var(--cream);color:#1b120c;border-color:transparent;box-shadow:0 14px 40px rgba(246,236,219,.18),0 0 0 6px rgba(246,236,219,.12)}
+.btn.terra{background:linear-gradient(135deg,#eb8a56,#d4623a);color:#1d0d05;border-color:transparent;box-shadow:0 14px 40px rgba(226,122,73,.35),0 0 0 6px rgba(226,122,73,.18)}
+.btn.danger{color:#f0a48a}
+.btn svg{width:30px;height:30px}
+.btn.sq{padding:0 30px}
+/* rows */
+.rowhead{display:flex;align-items:baseline;gap:18px}
+.rowhead h2{font-family:Fraunces,Georgia,serif;font-weight:400;font-size:38px;letter-spacing:-.01em;display:flex;align-items:center;gap:18px}
+.rowhead h2::before{content:"";width:14px;height:30px;border-radius:7px;background:var(--rbv)}
+.rowhead .ct{font-size:20px;color:var(--dim);font-weight:500;letter-spacing:.04em}
+.rowhead .more{margin-left:auto;font-size:19px;color:var(--dim);display:flex;gap:8px;align-items:center;letter-spacing:.06em}
+.card{position:absolute;display:block}
+.card .p{width:100%;border-radius:16px;overflow:hidden;background:#221a15 center/cover;position:relative;
+ box-shadow:0 18px 40px rgba(0,0,0,.45),inset 0 0 0 1px rgba(255,242,222,.06)}
+.card .p::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 55%,rgba(0,0,0,.25))}
+.card .t{margin-top:16px;font-size:21px;font-weight:500;color:#cdbfad;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card .s{font-size:17px;color:var(--dim);margin-top:4px;opacity:0}
+.card.f{transform:scale(1.1);z-index:5;transform-origin:50% 35%}
+.card.f .p{box-shadow:0 0 0 4px var(--cream),0 0 0 9px rgba(237,190,86,.28),0 34px 70px rgba(0,0,0,.65),0 0 90px rgba(237,190,86,.16)}
+.card.f .t{color:var(--cream);font-weight:600}
+.card.f .s{opacity:1}
+.badge{position:absolute;left:12px;bottom:12px;z-index:3;display:flex;align-items:center;gap:7px;background:rgba(12,8,6,.72);backdrop-filter:blur(14px);
+ border:1px solid rgba(237,190,86,.5);color:var(--saff);font-size:14px;font-weight:700;letter-spacing:.14em;padding:7px 12px 7px 9px;border-radius:20px}
+.badge svg{width:15px;height:15px;stroke-width:2.6}
+.fade-r{position:absolute;top:0;bottom:0;right:0;width:220px;background:linear-gradient(90deg,transparent,var(--bg) 95%);z-index:8;pointer-events:none}
+/* hero */
+.bd{position:absolute;background-size:cover;background-position:center}
+.mk{-webkit-mask-image:linear-gradient(90deg,transparent 0,#000 38%);mask-image:linear-gradient(90deg,transparent 0,#000 38%)}
+.seg{display:flex;gap:8px}
+.seg i{display:block;width:64px;height:10px;border-radius:5px;background:rgba(246,236,219,.22);overflow:hidden;position:relative}
+.seg i.on{background:var(--rb)}
+.top10{position:absolute}
+.top10 .n{position:absolute;left:0;font-family:Fraunces,Georgia,serif;font-weight:600;font-size:210px;line-height:.8;letter-spacing:-.06em;
+ color:transparent;-webkit-text-stroke:2.5px rgba(237,190,86,.6)}
+/* downloads */
+.dl{position:absolute;left:176px;right:96px;height:128px;border-radius:26px;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(16px);display:flex;align-items:center;padding:0 36px 0 20px;gap:28px}
+.dl .th{width:68px;height:96px;border-radius:10px;background:#221a15 center/cover;box-shadow:0 8px 20px rgba(0,0,0,.4)}
+.dl .nm{font-size:27px;font-weight:500}
+.dl .nm span{color:var(--muted);font-weight:300}
+.dl .st{display:flex;align-items:center;gap:10px;font-size:19px;color:var(--muted);margin-top:8px}
+.dl .st b{width:9px;height:9px;border-radius:5px;background:var(--saff)}
+.dl .bar{height:14px;border-radius:7px;background:rgba(246,236,219,.08);margin-top:14px;overflow:hidden;position:relative}
+.dl .bar i{position:absolute;left:0;top:0;bottom:0;border-radius:7px;background:var(--rb)}
+.dl .bar i.ind{left:18%;width:22%;background:var(--rb);-webkit-mask-image:linear-gradient(90deg,transparent,#000 30%,#000 70%,transparent);mask-image:linear-gradient(90deg,transparent,#000 30%,#000 70%,transparent)}
+.dl .pc{font-family:Fraunces,Georgia,serif;font-size:44px;width:120px;text-align:right;color:var(--cream)}
+.dl.f{background:rgba(255,242,222,.14);box-shadow:0 0 0 3px var(--cream),0 0 0 8px rgba(237,190,86,.25),0 20px 50px rgba(0,0,0,.5)}
+.stat{position:absolute;top:262px;height:96px;width:276px;border-radius:22px;background:var(--glass);border:1px solid var(--line);padding:16px 24px}
+.stat .v{font-family:Fraunces,Georgia,serif;font-size:42px;line-height:1}
+.stat .l{font-size:15px;letter-spacing:.12em;white-space:nowrap;text-transform:uppercase;color:var(--dim);margin-top:6px;font-weight:500}
+/* kb */
+.key{position:absolute;width:96px;height:84px;border-radius:18px;background:var(--glass);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:30px;font-weight:400;color:#e6dac8}
+.key.f{background:var(--cream);color:#1b120c;font-weight:600;transform:scale(1.12);z-index:3;box-shadow:0 12px 30px rgba(0,0,0,.5),0 0 0 6px rgba(246,236,219,.16)}
+.key.w{font-size:20px;color:var(--muted);letter-spacing:.05em}
+.chip{display:inline-flex;align-items:center;gap:10px;height:56px;padding:0 26px;border-radius:28px;background:var(--glass);border:1px solid var(--line);font-size:23px;color:#ddd0bd}
+.mic{width:84px;height:84px;border-radius:42px;display:flex;align-items:center;justify-content:center;color:#1d0d05;background:radial-gradient(circle at 50% 40%,#f6bf33,#e2562b);box-shadow:0 0 0 7px rgba(226,86,43,.25),0 0 0 15px rgba(240,138,37,.12)}
+.arches{position:absolute;inset:0;pointer-events:none;-webkit-mask-image:linear-gradient(100deg,transparent 30%,#000 80%);mask-image:linear-gradient(100deg,transparent 30%,#000 80%)}
+.mic{width:84px;height:84px;border-radius:42px;display:flex;align-items:center;justify-content:center;color:#1d0d05;background:radial-gradient(circle at 50% 40%,#f6bf33,#e2562b);box-shadow:0 0 0 7px rgba(226,86,43,.25),0 0 0 15px rgba(240,138,37,.12)}
+.arches{position:absolute;inset:0;width:1920px;height:1080px;pointer-events:none;-webkit-mask-image:linear-gradient(100deg,transparent 30%,#000 80%);mask-image:linear-gradient(100deg,transparent 30%,#000 80%)}
+</style></head>
+<body>
+<div id="root"></div>
+<script>
+const P=(d,o={})=>`<svg class="i" viewBox="0 0 24 24" width="${o.s||32}" height="${o.s||32}" ${o.f?'style="fill:currentColor;stroke:none"':''}>${d}</svg>`;
+const IC={
+search:'<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/>',
+home:'<path d="M3.5 11L12 3.5 20.5 11"/><path d="M5.5 9.8V20h4.5v-5.5h4V20h4.5V9.8"/>',
+film:'<rect x="3.5" y="3.5" width="17" height="17" rx="3"/><path d="M8 3.5v17M16 3.5v17M3.5 8h4.5M3.5 12h4.5M3.5 16h4.5M16 8h4.5M16 12h4.5M16 16h4.5"/>',
+tv:'<rect x="2.8" y="4" width="18.4" height="12.8" rx="2.6"/><path d="M8 21h8M12 16.8V21"/><path d="M10.4 8.2l4 2.2-4 2.2z" fill="currentColor"/>',
+doc:'<path d="M6 3.5h8l4.5 4.5v12.5H6z"/><path d="M14 3.5V8h4.5M9 13h6.5M9 16.5h6.5"/>',
+lib:'<rect x="3.5" y="4" width="4.2" height="16" rx="1.2"/><rect x="9.6" y="4" width="4.2" height="16" rx="1.2"/><path d="M16 5.6l3.6-1 3 14.6-3.6 1z" transform="translate(-1 0)"/>',
+dl:'<path d="M12 3.5v11.5M7.5 10.8L12 15.3l4.5-4.5M4.5 20h15"/>',
+play:'<path d="M7 4.6v14.8L19.6 12z" />',
+info:'<circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 7.8v.1"/>',
+back:'<path d="M19 12H5.5M11 5.8L4.8 12l6.2 6.2"/>',
+trash:'<path d="M4.5 6.8h15M9.5 6.8V4.4h5v2.4M6.4 6.8l.9 12.7h9.4l.9-12.7M10 10.6v5.6M14 10.6v5.6"/>',
+check:'<path d="M5 12.5l4.6 4.6L19 7.6"/>',
+star:'<path d="M12 3.4l2.5 5.4 5.9.7-4.4 4 1.2 5.8L12 16.4 6.8 19.3 8 13.5 3.6 9.5l5.9-.7z" style="fill:currentColor;stroke:none"/>',
+chev:'<path d="M9 5l7 7-7 7"/>',
+cc:'<rect x="3" y="5.5" width="18" height="13" rx="3"/><path d="M10.2 10.4a2.3 2.3 0 100 3.2M16.6 10.4a2.3 2.3 0 100 3.2"/>',
+sliders:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2.2"/><circle cx="9" cy="17" r="2.2"/>',
+prev:'<path d="M6 5v14M19 5.5v13L8.5 12z"/>',
+next:'<path d="M18 5v14M5 5.5v13L15.5 12z"/>',
+pause:'<rect x="6.5" y="4.5" width="3.8" height="15" rx="1.2"/><rect x="13.7" y="4.5" width="3.8" height="15" rx="1.2"/>',
+b10:'<path d="M4.2 12a8 8 0 108-8H9M9 1.6L5.8 4.2 9 6.8"/><text x="12" y="15.6" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="Inter">10</text>',
+f10:'<path d="M19.8 12a8 8 0 11-8-8H15M15 1.6l3.2 2.6L15 6.8"/><text x="12" y="15.6" font-size="7.4" font-weight="700" text-anchor="middle" fill="currentColor" stroke="none" font-family="Inter">10</text>',
+x:'<path d="M5 5l14 14M19 5L5 19"/>',
+bksp:'<path d="M9 5.5h11a1 1 0 011 1v11a1 1 0 01-1 1H9l-6.2-6.5z"/><path d="M12.5 9.6l5 5M17.5 9.6l-5 5"/>',
+vol:'<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4.2 4.2 0 010 6M18 6.6a7.8 7.8 0 010 10.8"/>',
+mic:'<rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11.2a6.5 6.5 0 0013 0M12 17.7V21M8.5 21h7"/>',
+mic:'<rect x="9" y="3" width="6" height="11.5" rx="3"/><path d="M5.5 11.2a6.5 6.5 0 0013 0M12 17.7V21M8.5 21h7"/>',
+trend:'<path d="M3.5 16.5l5.5-5.5 3.8 3.8 7-7.6M15 7.2h5.3v5.3"/>',
+clock:'<circle cx="12" cy="12" r="8.6"/><path d="M12 7.2V12l3.4 2"/>'};
+const ic=(n,s,f)=>P(IC[n],{s,f});
+
+const RC=['#5d1710','#c2281d','#e2562b','#f08a25','#f6bf33'];
+const ribbon=(d,w,o={})=>{const n=RC.length;return `<svg class="abs" style="left:0;top:0;pointer-events:none;${o.style||''}" width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" opacity="${o.op??1}">${RC.map((c,i)=>`<path d="${d}" stroke="${c}" stroke-width="${w*(n-i)/n}" stroke-linejoin="round" stroke-linecap="butt"/>`).join('')}</svg>`};
+const ARCH=`<svg class="arches" viewBox="0 0 1920 1080" opacity=".2"><g>
+<path d="M1170 1100V560a150 150 0 01300 0v540z" fill="#e0a93a"/><path d="M1400 1100V470a130 130 0 01260 0v630z" fill="#c4532a"/>
+<path d="M1640 1100V720a140 140 0 01280 0v380z" fill="#6e2214"/><path d="M1290 1100V820a160 160 0 01320 0v280z" fill="#4d5b2c" opacity=".9"/></g></svg>`;
+const markSvg=(sz)=>`<svg width="${sz}" height="${sz}" viewBox="0 0 56 56"><circle cx="28" cy="28" r="27" fill="#6b1a10"/><circle cx="28" cy="28" r="22" fill="#c2281d"/><circle cx="28" cy="28" r="17" fill="#e2562b"/><circle cx="28" cy="28" r="12" fill="#f08a25"/><circle cx="28" cy="28" r="7.2" fill="#f6bf33"/><path d="M25.2 24.2v7.6a1 1 0 001.5.86l6.3-3.8a1 1 0 000-1.72l-6.3-3.8a1 1 0 00-1.5.86z" fill="#1b0d06"/></svg>`;
+
+const logo=markSvg(56);
+const rail=(on)=>`<div class="rail"><div class="logo">${logo}</div>
+${['search','home','film','tv','doc','lib','dl'].map(n=>`<div class="nv ${n==on?'on':''}">${ic(n,36)}</div>`).join('')}<div class="sp"></div></div>`;
+const img=n=>`img/${n}.jpg`;
+const card=(x,y,w,h,im,t,o={})=>`<div class="card ${o.f?'f':''}" style="left:${x}px;top:${y}px;width:${w}px"><div class="p" style="height:${h}px;background-image:url(${img(im)})">${o.badge?`<div class="badge">${ic('check',15)}IN LIBRARY</div>`:''}</div>${t?`<div class="t">${t}</div><div class="s">${o.sub||''}</div>`:''}</div>`;
+const meta=(a)=>`<div class="meta">${a.map((x,i)=>(i?'<span class="dotsep"></span>':'')+x).join('')}</div>`;
+const imdb=v=>`<span class="imdb">${ic('star',22)}${v}</span>`;
+const bdgrad=(l)=>`<div class="abs" style="inset:0;background:linear-gradient(90deg,rgba(11,8,7,${l}) 0%,rgba(11,8,7,.85) 34%,rgba(11,8,7,.25) 66%,rgba(11,8,7,.1) 100%)"></div><div class="abs" style="inset:0;background:linear-gradient(180deg,rgba(11,8,7,.55) 0%,transparent 22%,transparent 50%,rgba(11,8,7,.96) 100%)"></div>`;
+const S={};
+const key=(k,l)=>`<span style="display:inline-flex;align-items:center;gap:10px"><span style="border:1px solid var(--line);background:var(--glass);border-radius:9px;padding:5px 12px;color:var(--cream);font-weight:600;font-size:17px">${k}</span>${l}</span>`;
+const HINT=`<div class="abs" style="left:96px;bottom:48px;display:flex;gap:36px;font-size:18px;color:var(--dim);letter-spacing:.04em">${key('◀ ▶','Browse')}${key('OK','Open')}${key('▲','Back to details')}</div>`;
+
+/* 01 movies top */
+S['01-movies-top']=()=>`<div class="screen">
+<div class="bd mk" style="top:0;bottom:0;right:0;width:1230px;background-image:url(${img("backrooms-bd")});filter:saturate(1.1)"></div>${bdgrad(.98)}
+${rail('film')}
+<div class="abs" style="left:184px;top:140px;width:1040px">
+ <div class="eyebrow"><i></i>Featured<span class="dot"></span>#1 in films today</div>
+ <div class="title" style="font-size:128px;margin-top:26px">Backrooms</div>
+ <div style="margin-top:30px">${meta(['<span class="cert">15</span>','2026','1h 51m','Horror · Mystery &amp; Thriller · Sci-Fi',imdb('6.7')])}</div>
+ <div class="syn" style="margin-top:26px;width:820px">A strange doorway appears in the basement of a furniture showroom.</div>
+ <div style="margin-top:30px"><span class="prov"><b>${ic('play',14,1)}</b>Streaming on <em>HBO Max</em></span></div>
+ <div style="margin-top:34px;display:flex;gap:20px"><div class="btn primary">${ic('play',30,1)}Stream now</div><div class="btn">${ic('info',30)}More info</div></div>
+</div>
+<div class="abs seg" style="left:184px;top:744px"><i class="on"></i><i></i><i></i></div>
+<div class="abs rowhead" style="left:184px;top:812px;width:1660px"><h2>Top 10 films</h2><span class="more">SEE ALL ${ic('chev',18)}</span></div>
+${[['backrooms',1],['tenzing',2],['love',3],['sleep',4],['weapons',5]].map(([im,n],k)=>{const x=184+k*350;return `<div class="top10" style="left:${x}px;top:906px;width:350px"><div class="n" style="top:70px">${n}</div>${card(118,0,224,336,im,'',{f:k==0})}</div>`}).join('')}
+<div class="grain"></div></div>`;
+
+/* 02 rows */
+S['02-movies-rows-toy-story-history']=()=>`<div class="screen"><div class="amb"></div>${ARCH}${rail('film')}
+<div class="abs rowhead" style="left:184px;top:40px;width:1660px"><h2>Family night</h2><span class="ct">12</span></div>
+${[['toystory','Toy Story 5','2026 · Animation'],['harry','Harry Potter and the Philosopher’s Stone','2001 · Fantasy'],['mando','The Mandalorian &amp; Grogu','2026 · Sci-Fi'],['sheep','The Sheep Detectives','2026 · Comedy'],['spider','Spider-Man: Across the Spider-Verse','2023 · Animation'],['dune','Dune','2021 · Sci-Fi']].map((c,k)=>card(184+k*288,118,260,390,c[0],c[1],{f:k==0,sub:c[2]})).join('')}
+<div class="abs rowhead" style="left:184px;top:640px;width:1660px"><h2>History films</h2><span class="ct">9</span></div>
+${[['tenzing','Tenzing'],['i-swear','I Swear'],['bigshort','The Big Short'],['spr','Saving Private Ryan'],['wuthering','Wuthering Heights'],['schindler','Schindler’s List']].map((c,k)=>card(184+k*288,718,260,390,c[0],'',{badge:k==0})).join('')}
+<div class="fade-r"></div><div class="grain"></div></div>`;
+
+/* 03 history row focus */
+S['03-movies-history-films-row']=()=>`<div class="screen"><div class="amb"></div>${ARCH}${rail('film')}
+<div class="abs rowhead" style="left:184px;top:36px;width:1660px;opacity:.55"><h2>Family night</h2></div>
+${[['toystory','Toy Story 5'],['harry','Harry Potter and the P…'],['mando','The Mandalorian and …'],['sheep','The Sheep Detectives'],['spider','Spider-Man: Across th…'],['dune','Dune']].map((c,k)=>`<div style="opacity:.55">${card(184+k*288,100,260,160,c[0],'')}</div>`).join('')}
+<div class="abs rowhead" style="left:184px;top:340px;width:1660px"><h2>History films</h2><span class="ct">9</span><span class="more">SEE ALL ${ic('chev',18)}</span></div>
+${[['tenzing','Tenzing','2026 · Drama · 2h 5m'],['i-swear','I Swear'],['bigshort','The Big Short'],['spr','Saving Private Ryan'],['wuthering','Wuthering Heights'],['schindler','Schindler’s List']].map((c,k)=>card(184+k*288,420,260,390,c[0],c[1],{f:k==0,badge:k==0,sub:c[2]})).join('')}
+<div class="abs rowhead" style="left:184px;top:972px;width:1660px;opacity:.6"><h2>Mountains &amp; the wild</h2></div>
+<div class="fade-r"></div><div class="grain"></div></div>`;
+
+/* detail common */
+const more=(y,imgs,w,h,gap,focusFirst,badgeFirst,x0=96)=>imgs.map((c,k)=>card(x0+k*(w+gap),y,w,h,c[0],c[1],{f:focusFirst&&k==0,badge:badgeFirst&&k==0,sub:c[2]})).join('');
+const detail=(o)=>`<div class="screen">
+<div class="bd ${o.w?'mk':''}" style="${o.w?`top:0;bottom:0;right:0;width:${o.w}px`:'inset:0'};background-image:url(${img(o.bd)});background-position:${o.pos};filter:saturate(1.05)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(90deg,rgba(11,8,7,.96) 0%,rgba(11,8,7,.8) 38%,rgba(11,8,7,.3) 72%,rgba(11,8,7,.15) 100%)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(180deg,rgba(11,8,7,.35),transparent 25%,transparent 48%,rgba(11,8,7,.96) 86%)"></div>
+${o.body}<div class="grain"></div></div>`;
+const hero=(o)=>`<div class="abs" style="left:96px;top:${o.top}px;width:1180px">
+<div class="eyebrow"><i></i>${o.eb}</div>
+<div class="title" style="font-size:104px;margin-top:20px">${o.title}</div>
+<div style="margin-top:24px">${meta(o.meta)}</div>
+<div style="margin-top:22px"><span class="prov"><b>${ic('play',13,1)}</b>Streaming on <em>${o.prov}</em></span></div>
+<div class="syn" style="margin-top:22px;width:1040px">${o.syn}</div>
+<div style="margin-top:30px;display:flex;gap:20px">${o.btns}</div></div>
+<div class="abs" style="left:1524px;top:${o.top-12}px;width:300px;height:450px;border-radius:22px;background:url(${img(o.poster)}) center/cover;box-shadow:10px 10px 0 #f6bf33,20px 20px 0 #f08a25,30px 30px 0 #e2562b,40px 40px 0 #c2281d,0 50px 90px rgba(0,0,0,.6)"></div>`;
+const moreLike=[['i-swear','I Swear'],['bigshort','The Big Short'],['spr','Saving Private Ryan'],['wuthering','Wuthering Heights'],['schindler','Schindler’s List'],['kingdom','Kingdom of Heaven'],['dunkirk','Dunkirk']];
+const moreLike2=[['tenzing','Tenzing'],['love','Love of Your Life'],['sleep','Doctor Sleep'],['slither','Slither'],['goodluck','Good Luck, Have Fun…'],['weapons','Weapons'],['dune','Dune']];
+
+S['10-detail-tenzing-in-library']=()=>detail({bd:'tenzing-bd-r',w:1060,pos:'right center',body:hero({top:70,eb:'Film<span class="dot"></span>In your library',title:'Tenzing',
+ meta:['<span class="cert">12</span>','2026','2h 5m','Drama · History · Thriller',imdb('7.5')],prov:'Apple TV+',
+ syn:'The untold and inspiring tale of one of the most important mountain climbers in history who, with Edmund Hillary, became the first person to reach the summit of Mount Everest.',
+ btns:`<div class="btn primary">${ic('play',30,1)}Watch now</div><div class="btn danger sq">${ic('trash',28)}Delete</div>`,poster:'tenzing'})
+ +`<div class="abs rowhead" style="left:96px;top:660px"><h2>More like this</h2></div>`+more(740,moreLike,200,300,44,false,false)+`<div class="fade-r"></div>`});
+
+S['11-detail-tenzing-scrolled-more-like-this']=()=>detail({bd:'tenzing-bd-r',w:1060,pos:'right center',body:
+ `<div class="abs" style="left:96px;top:44px;opacity:.55"><div class="eyebrow"><i></i>Tenzing<span class="dot"></span>2026 · 2h 5m</div></div>
+ <div class="abs rowhead" style="left:96px;top:250px"><h2>More like this</h2><span class="ct">Based on genre, era &amp; cast</span></div>`+
+ more(360,moreLike,250,375,38,true,false,110)+HINT+`<div class="fade-r"></div>`});
+
+S['12-detail-backrooms-not-in-library']=()=>detail({bd:'backrooms-bd',w:1230,pos:'right top',body:hero({top:70,eb:'Film',title:'Backrooms',
+ meta:['<span class="cert">15</span>','2026','1h 51m','Horror · Mystery &amp; Thriller · Sci-Fi',imdb('6.7')],prov:'HBO Max',
+ syn:'A strange doorway appears in the basement of a furniture showroom.',
+ btns:`<div class="btn terra">${ic('dl',30)}Queue download</div><div class="btn">${ic('play',28,1)}Stream now</div>`,poster:'backrooms'})
+ +`<div class="abs rowhead" style="left:96px;top:588px"><h2>More like this</h2></div>`+more(668,moreLike2,200,300,44,false,false)+`<div class="fade-r"></div>`});
+
+S['13-detail-backrooms-scrolled']=()=>detail({bd:'backrooms-bd',w:1230,pos:'right top',body:
+ `<div class="abs" style="left:96px;top:44px;opacity:.55"><div class="eyebrow"><i></i>Backrooms<span class="dot"></span>2026 · 1h 51m</div></div>
+ <div class="abs rowhead" style="left:96px;top:250px"><h2>More like this</h2><span class="ct">Based on genre, era &amp; cast</span></div>`+
+ more(360,moreLike2,250,375,38,true,true,110).replace('Tenzing','Tenzing')+HINT+`<div class="fade-r"></div>`});
+
+/* 20 library */
+S['20-my-library-recently-added']=()=>`<div class="screen">
+<div class="bd mk" style="top:0;bottom:0;right:0;width:979px;background-image:url(${img('tenzing-bd-a')});background-size:cover"></div>${bdgrad(.98)}
+${rail('lib')}
+<div class="abs" style="left:184px;top:170px;width:1100px">
+ <div class="eyebrow"><i></i>Featured<span class="dot"></span>Added yesterday</div>
+ <div class="title" style="font-size:116px;margin-top:26px">Tenzing</div>
+ <div style="margin-top:28px">${meta(['<span class="cert">12</span>','2026','2h 5m','Drama · History'])}</div>
+ <div class="syn" style="margin-top:24px;width:900px">A determined man embarks on a high-stakes quest—and defies seemingly impossible odds—to fulfil his dream of being the first to reach the summit of Mount Everest.</div>
+ <div style="margin-top:32px;display:flex;gap:20px"><div class="btn primary">${ic('play',30,1)}Watch now</div><div class="btn">${ic('info',30)}More info</div></div></div>
+<div class="abs seg" style="left:184px;top:748px"><i class="on"></i><i></i><i></i></div>
+<div class="abs rowhead" style="left:184px;top:790px;width:1660px"><h2>Recently added</h2><span class="ct">15</span><span class="more">SEE ALL ${ic('chev',18)}</span></div>
+${['tenzing','sabrina','westworld','fallout','twinpeaks','rick'].map((n,k)=>`<div class="card ${k==0?'f':''}" style="left:${184+k*288}px;top:872px;width:260px"><div class="p" style="height:208px;border-radius:16px 16px 0 0;background-image:url(${img('lib-'+n)})"></div></div>`).join('')}
+<div class="fade-r"></div><div class="grain"></div></div>`;
+
+/* 21 downloads */
+const dls=[['S1 E7','Trompe L’Oeil','Finding torrent details',null],['S1 E6','The Adversary','Waiting for sources',0],['S1 E8','Trace Decay','Waiting for sources',4],['S1 E9','The Well-Tempered Clavier','Waiting for sources',15],['S1 E10','The Bicameral Mind','Waiting for sources',0]];
+S['21-downloads']=()=>`<div class="screen"><div class="amb"></div>${ARCH}${rail('dl')}
+<div style="position:absolute;inset:0;-webkit-mask-image:linear-gradient(90deg,transparent 45%,#000 80%);mask-image:linear-gradient(90deg,transparent 45%,#000 80%)">${ribbon('M1990 82H1640A62 62 0 0 0 1640 206H1990',90,{op:.85})}</div>
+<div class="abs" style="left:176px;top:52px"><div class="eyebrow"><i></i>Request queue</div><div class="title" style="font-size:84px;margin-top:14px">Downloads</div>
+<div style="font-size:24px;color:var(--muted);margin-top:14px;font-weight:300">What you’ve asked for, and how far along it is</div></div>
+${[['0','Downloading'],['0','Queued'],['5','Finding sources'],['0','Awaiting release']].map((s,k)=>`<div class="stat" style="left:${176+k*296}px;top:268px;${k==2?'border-color:rgba(237,190,86,.45);background:rgba(237,190,86,.08)':''}"><div class="v" style="${k==2?'color:var(--saff)':''}">${s[0]}</div><div class="l">${s[1]}</div></div>`).join('')}
+${dls.map((d,k)=>`<div class="dl ${k==0?'f':''}" style="top:${396+k*142}px"><div class="th" style="background-image:url(${img('westworld')})"></div>
+<div style="flex:1"><div class="nm">Westworld <span>·&nbsp; ${d[0]} · ${d[1]}</span></div><div class="st"><b style="${d[3]===null?'':'background:var(--dim)'}"></b>${d[2]}</div>
+<div class="bar">${d[3]===null?'<i class="ind"></i>':`<i style="width:${Math.max(d[3],0)}%"></i>`}</div></div>
+<div class="pc">${d[3]===null?'<span style="color:var(--dim);font-size:30px">—</span>':d[3]+'%'}</div></div>`).join('')}
+<div class="abs" style="left:0;right:0;bottom:0;height:90px;background:linear-gradient(180deg,transparent,var(--bg))"></div>
+<div class="grain"></div></div>`;
+
+/* 22 search */
+const kbRows=['1234567890','qwertyuiop','asdfghjkl','zxcvbnm'];
+const kbd=(focus)=>{let k='';kbRows.forEach((r,ri)=>[...r].forEach((c,ci)=>{k+=`<div class="key ${c==focus?'f':''}" style="left:${176+ci*98+[0,0,49,98][ri]}px;top:${300+ri*98}px;width:90px">${c}</div>`}));
+ const y=300+4*98;
+ k+=`<div class="key w" style="left:176px;top:${y}px;width:190px">${ic('x',24)}&nbsp;Clear</div><div class="key w" style="left:378px;top:${y}px;width:580px">Space</div><div class="key w" style="left:970px;top:${y}px;width:186px">${ic('bksp',26)}&nbsp;Delete</div>`;return k};
+const trending=()=>`<div class="abs" style="left:1232px;top:230px;width:592px"><div class="eyebrow" style="color:var(--dim)">${ic('trend',22)}Trending searches</div>
+ ${[['tenzing','Tenzing','Film · 2026'],['backrooms','Backrooms','Film · 2026'],['westworld','Westworld','Series · 2016']].map(r=>`<div style="display:flex;align-items:center;gap:22px;margin-top:18px;height:104px;border-radius:24px;padding:0 20px;background:var(--glass);border:1px solid var(--line)"><div style="width:58px;height:78px;border-radius:9px;background:url(${img(r[0])}) center/cover"></div><div><div style="font-size:27px;font-weight:500">${r[1]}</div><div style="font-size:18px;color:var(--dim);margin-top:5px">${r[2]}</div></div><span style="margin-left:auto;color:var(--dim)">${ic('chev',26)}</span></div>`).join('')}
+ <div class="eyebrow" style="color:var(--dim);margin-top:40px">Browse by theme</div>
+ <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:18px">${['Mountaineering','Mind-benders','True stories','Heist','Slow burn','Sci-Fi'].map(t=>`<span class="chip" style="height:50px;font-size:21px">${t}</span>`).join('')}</div></div>`;
+S['22-search']=()=>`<div class="screen"><div class="amb"></div>${ARCH}${rail('search')}
+<div class="abs" style="left:176px;top:64px;right:96px;height:112px;border-radius:56px;background:rgba(255,242,222,.09);border:1px solid rgba(237,190,86,.5);box-shadow:0 0 0 6px rgba(237,190,86,.1),0 20px 50px rgba(0,0,0,.4);display:flex;align-items:center;padding:0 14px 0 42px;gap:22px;backdrop-filter:blur(20px)">
+ <span style="color:var(--saff)">${ic('search',40)}</span><span style="width:3px;height:48px;background:var(--saff);border-radius:2px"></span><span style="font-size:36px;color:#8f8272;font-weight:300">Search films, series and documentaries</span>
+ <span style="margin-left:auto;display:flex;align-items:center;gap:20px"><span style="font-size:18px;color:var(--muted);letter-spacing:.04em">Say a title, actor or theme</span><span class="mic">${ic('mic',38)}</span></span></div>
+<div class="abs" style="left:176px;top:222px"><div class="eyebrow" style="color:var(--dim)"><i style="opacity:.5"></i>Type to search</div></div>
+${kbd('q')}${trending()}
+<div class="abs" style="left:176px;bottom:48px;display:flex;gap:36px;font-size:18px;color:var(--dim);letter-spacing:.04em">${key('MIC','Hold on your remote to speak')}${key('OK','Select')}${key('▲','Voice search')}</div>
+<div class="grain"></div></div>`;
+
+/* 23 voice */
+const wave=(n,maxh)=>Array.from({length:n},(_,i)=>{const h=Math.max(14,Math.round(maxh*(0.25+0.75*Math.abs(Math.sin(i*.55)*Math.cos(i*.17+1)))*Math.exp(-Math.pow((i-n/2)/(n/2.6),2)*.5)));const c=RC[4-(i%5)];return `<i style="display:block;width:12px;height:${h}px;border-radius:6px;background:${c}"></i>`}).join('');
+S['23-search-voice-listening']=()=>`<div class="screen"><div class="amb"></div>${ARCH}${rail('search')}
+<div class="abs" style="left:176px;top:64px;right:96px;height:112px;border-radius:56px;background:rgba(255,242,222,.09);border:1px solid rgba(226,86,43,.7);box-shadow:0 0 0 6px rgba(226,86,43,.14),0 20px 50px rgba(0,0,0,.4);display:flex;align-items:center;padding:0 14px 0 42px;gap:22px;backdrop-filter:blur(20px)">
+ <span style="color:var(--terra)">${ic('search',40)}</span><span style="font-size:38px;color:var(--cream)">Tenzing<span style="color:var(--dim)"> mountain</span></span>
+ <span style="margin-left:auto;display:flex;align-items:center;gap:20px"><span style="font-size:18px;color:var(--terra);letter-spacing:.14em;font-weight:600">LISTENING</span><span class="mic">${ic('mic',38)}</span></span></div>
+<div class="abs" style="left:176px;right:96px;top:230px;display:flex;flex-direction:column;align-items:center">
+ <div style="position:relative;width:440px;height:440px;display:flex;align-items:center;justify-content:center">
+  ${[4,3,2,1,0].map(i=>`<div style="position:absolute;border-radius:50%;width:${190+i*62}px;height:${190+i*62}px;background:${RC[i]}"></div>`).join('')}
+  <div style="position:absolute;width:190px;height:190px;border-radius:50%;background:#f6ecdb;display:flex;align-items:center;justify-content:center;color:#1b0d06;box-shadow:0 10px 40px rgba(0,0,0,.5)">${ic('mic',84)}</div></div>
+ <div style="display:flex;align-items:center;gap:8px;height:90px;margin-top:6px">${wave(44,86)}</div>
+ <div class="title" style="font-size:50px;margin-top:14px">“Tenzing… mountain”</div>
+ <div style="font-size:21px;color:var(--muted);margin-top:14px">Release the mic button when you’re done · Back to cancel</div></div>
+<div class="grain"></div></div>`;
+
+/* 30 loading */
+S['30-stream-loading-overlay']=()=>`<div class="screen">
+<div class="bd mk" style="top:0;bottom:0;right:0;width:1060px;background-image:url(${img('tenzing-bd-r')});filter:brightness(.95) saturate(1.05)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(90deg,var(--bg) 0%,var(--bg) 20%,rgba(11,8,7,.7) 42%,rgba(11,8,7,.2) 100%)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(180deg,rgba(11,8,7,.3),transparent 30%,rgba(11,8,7,.9) 100%)"></div>
+<div style="position:absolute;inset:0;-webkit-mask-image:linear-gradient(180deg,#000 22%,transparent 50%);mask-image:linear-gradient(180deg,#000 22%,transparent 50%)">${ribbon('M300 -60V150A80 80 0 0 0 380 230H560A80 80 0 0 1 640 310V560',100,{op:.95})}</div>
+<div class="abs" style="left:112px;bottom:120px;width:900px">
+ <div class="eyebrow"><span style="width:12px;height:12px;border-radius:6px;background:var(--saff);box-shadow:0 0 0 7px rgba(237,190,86,.2)"></span>Now loading</div>
+ <div class="title" style="font-size:132px;margin-top:26px">Tenzing</div>
+ <div style="font-size:28px;color:#d7cbb9;margin-top:28px;font-weight:300">Finding a copy of Tenzing. This can take a minute.</div>
+ <div style="margin-top:40px;width:780px;height:16px;border-radius:8px;background:rgba(246,236,219,.1);position:relative;overflow:hidden"><i style="position:absolute;left:10%;width:34%;top:0;bottom:0;border-radius:8px;background:var(--rb);-webkit-mask-image:linear-gradient(90deg,transparent,#000 25%,#000 75%,transparent);mask-image:linear-gradient(90deg,transparent,#000 25%,#000 75%,transparent)"></i></div>
+ <div style="display:flex;gap:44px;margin-top:34px;font-size:21px">
+  <div style="color:var(--saff);display:flex;gap:12px;align-items:center"><b style="width:10px;height:10px;border-radius:5px;background:var(--saff);display:block"></b>Finding peers</div>
+  <div style="color:var(--dim);display:flex;gap:12px;align-items:center"><b style="width:10px;height:10px;border-radius:5px;background:var(--dim);opacity:.5;display:block"></b>Connecting</div>
+  <div style="color:var(--dim);display:flex;gap:12px;align-items:center"><b style="width:10px;height:10px;border-radius:5px;background:var(--dim);opacity:.5;display:block"></b>Buffering</div></div>
+ <div style="display:flex;gap:16px;margin-top:36px"><span class="chip" style="height:50px;font-size:20px"><span style="color:var(--dim)">Seeds</span>&nbsp;0</span><span class="chip" style="height:50px;font-size:20px"><span style="color:var(--dim)">Peers</span>&nbsp;0</span><span class="chip" style="height:50px;font-size:20px"><span style="color:var(--dim)">Speed</span>&nbsp;—</span></div>
+</div>
+<div class="abs" style="right:96px;bottom:110px;display:flex;align-items:center;gap:14px;color:var(--muted);font-size:20px"><span style="border:1px solid var(--line);border-radius:12px;padding:8px 16px;background:var(--glass)">Back</span>to cancel</div>
+<div class="grain"></div></div>`;
+
+const tl=(t)=>`<span style="font-variant-numeric:tabular-nums">${t}</span>`;
+/* ---------- player (31/32/33) ---------- */
+const CH=[['Kathmandu',0],['The approach',850],['Khumbu Icefall',2020],['Camp IV',3500],['The ridge',4740],['Summit',5910],['Descent',6720]]; // seconds
+const TOTAL=7534; // 2:05:34
+const fmt=s=>{s=Math.round(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(x).padStart(2,'0')};
+const chOf=s=>{let i=0;CH.forEach((c,k)=>{if(s>=c[1])i=k});return i};
+const wy=(x,o)=>o.y+o.amp*Math.sin((x-o.x0)/o.wl*2*Math.PI);
+const wpath=(o,xe)=>{let d=`M${o.x0} ${wy(o.x0,o).toFixed(1)}`;for(let x=o.x0+4;x<=xe;x+=4)d+=` L${x} ${wy(x,o).toFixed(1)}`;return d+` L${xe} ${wy(xe,o).toFixed(1)}`};
+let _sid=0;
+const waveScrub=(o)=>{const id='c'+(++_sid);const px=o.x0+(o.x1-o.x0)*o.p;const full=wpath(o,o.x1);const played=wpath(o,px);
+ const t=o.th;
+ const dots=CH.slice(1).map(c=>{const x=o.x0+(o.x1-o.x0)*c[1]/TOTAL;return `<circle cx="${x}" cy="${wy(x,o).toFixed(1)}" r="6" fill="#0b0807" stroke="#f6ecdb" stroke-width="3" opacity="${x<px?1:.55}"/>`}).join('');
+ const ty=wy(px,o);
+ return `<svg class="abs" style="left:0;top:0;pointer-events:none" width="1920" height="1080" viewBox="0 0 1920 1080" fill="none">
+ <defs><radialGradient id="${id}g"><stop offset="0" stop-color="#f6ecdb" stop-opacity=".55"/><stop offset=".45" stop-color="#f6ecdb" stop-opacity=".18"/><stop offset="1" stop-color="#f6ecdb" stop-opacity="0"/></radialGradient></defs>
+ <path d="${full}" stroke="#4a423b" stroke-width="${t*0.7}" stroke-linejoin="round" stroke-linecap="round"/>
+ <path d="${played}" stroke="#5d1710" stroke-width="${t}" stroke-linejoin="round" stroke-linecap="round"/>
+ <path d="${played}" stroke="#e2562b" stroke-width="${t*0.667}" stroke-linejoin="round" stroke-linecap="round"/>
+ <path d="${played}" stroke="#f6bf33" stroke-width="${t*0.333}" stroke-linejoin="round" stroke-linecap="round"/>
+ ${dots}
+ <circle cx="${px}" cy="${ty}" r="46" fill="url(#${id}g)"/>
+ <circle cx="${px}" cy="${ty}" r="17" fill="#f7efe0"/>
+ </svg>`};
+const TH=i=>`img/th-${i+1}.jpg`;
+const topbar=(extra='')=>`<div class="abs" style="left:96px;top:64px"><div class="eyebrow" style="font-size:15px"><i></i>${extra||'Now playing'}</div><div class="title" style="font-size:60px;margin-top:14px">Tenzing</div><div style="font-size:21px;color:var(--muted);margin-top:12px">2026 · Drama, History · 2h 5m</div></div>
+<div class="abs" style="right:96px;top:80px;font-size:22px;color:var(--muted);font-weight:500">9:41</div>`;
+const still=(dim)=>`<div class="bd" style="inset:0;background-image:url(${img('tenzing-bd')});background-position:center"></div>
+<div class="abs" style="inset:0;background:linear-gradient(180deg,rgba(8,6,5,.85) 0%,rgba(8,6,5,${dim}) 26%,rgba(8,6,5,${dim}) 52%,rgba(8,6,5,.95) 100%)"></div>`;
+const times=(cur,y)=>`<div class="abs" style="left:96px;right:96px;top:${y}px;display:flex;justify-content:space-between;font-size:23px;color:var(--cream);font-weight:500">${tl(fmt(cur))}<span style="color:var(--muted)">${tl(fmt(TOTAL-cur))}&nbsp;left</span></div>`;
+
+/* 31 – playing, controls up */
+S['31-player-controls']=()=>`<div class="screen">${still(.12)}${topbar()}
+<div class="abs" style="left:0;right:0;top:640px;display:flex;justify-content:center;align-items:center;gap:100px;color:var(--cream)">
+ <span style="opacity:.9">${ic('prev',44,1)}</span><span style="opacity:.9">${ic('b10',64)}</span>
+ <span style="width:112px;height:112px;border-radius:56px;background:var(--cream);color:#1b120c;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 9px #f6bf33,0 0 0 18px #f08a25,0 0 0 27px #e2562b,0 0 0 36px #c2281d,0 0 0 45px #5d1710,0 24px 70px rgba(0,0,0,.55)">${ic('pause',50,1)}</span>
+ <span style="opacity:.9">${ic('f10',64)}</span><span style="opacity:.3">${ic('next',44,1)}</span></div>
+${waveScrub({x0:96,x1:1824,y:900,amp:13,wl:150,p:2477/TOTAL,th:30})}
+<div class="abs" style="left:0;right:0;top:952px;text-align:center;font-size:17px;color:var(--saff);letter-spacing:.14em;font-weight:600">CH 3 · KHUMBU ICEFALL</div>
+${times(2477,948)}
+<div class="abs" style="left:96px;bottom:40px;display:flex;gap:16px"><span class="chip" style="height:54px;font-size:20px">${ic('cc',28)}Subtitles · Off</span><span class="chip" style="height:54px;font-size:20px">${ic('vol',26)}English · 5.1</span><span class="chip" style="height:54px;font-size:20px">${ic('film',26)}4K HDR</span></div>
+<div class="abs" style="right:96px;bottom:40px"><span class="chip" style="height:54px;width:54px;padding:0;justify-content:center">${ic('sliders',28)}</span></div>
+<div class="grain"></div></div>`;
+
+/* 32 – scrubbing with frame preview */
+S['32-player-scrubbing']=()=>{const t=4780,p=t/TOTAL,x0=96,x1=1824,px=x0+(x1-x0)*p;const ci=chOf(t);const cw=420,ch=236;let cx=Math.min(Math.max(px-cw/2,96),1824-cw);
+ const ghost=(dx,i,op)=>`<div class="abs" style="left:${cx+dx}px;top:${500+(ch-150)/2}px;width:266px;height:150px;border-radius:14px;background:url(${TH(i)}) center/cover;opacity:${op};box-shadow:0 10px 30px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,242,222,.15)"></div>`;
+ return `<div class="screen"><div class="bd" style="inset:0;background-image:url(${img('tenzing-bd')});background-position:center;filter:brightness(.8)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(180deg,rgba(8,6,5,.85) 0%,rgba(8,6,5,.15) 24%,rgba(8,6,5,.3) 48%,rgba(8,6,5,.95) 100%)"></div>
+${topbar('Scrubbing')}
+<div class="abs" style="left:96px;right:96px;top:196px;height:20px"></div>
+${ghost(-300,3,.55)}${ghost(cw+34,5,.55)}
+<div class="abs" style="left:${cx}px;top:500px;width:${cw}px;height:${ch}px;border-radius:20px;background:url(${TH(4)}) center/cover;box-shadow:0 0 0 4px var(--cream),10px 10px 0 4px #f6bf33,20px 20px 0 4px #f08a25,0 40px 80px rgba(0,0,0,.65)">
+ <div class="abs" style="left:0;right:0;bottom:0;height:90px;border-radius:0 0 20px 20px;background:linear-gradient(180deg,transparent,rgba(8,6,5,.85))"></div>
+ <div class="abs serif" style="left:20px;bottom:14px;font-size:44px;color:var(--cream);letter-spacing:-.01em">${fmt(t)}</div></div>
+<div class="abs" style="left:${cx-40}px;top:${500+ch+40}px;width:${cw+80}px;text-align:center"><div style="font-size:15px;letter-spacing:.2em;color:var(--saff);font-weight:600">CHAPTER ${ci+1} OF ${CH.length}</div><div class="serif" style="font-size:30px;margin-top:6px">${CH[ci][0]}</div></div>
+${waveScrub({x0,x1,y:910,amp:13,wl:150,p,th:30})}
+<div class="abs" style="left:${x0+(x1-x0)*2477/TOTAL-70}px;top:958px;width:260px;margin-left:-60px;text-align:center;white-space:nowrap;font-size:15px;letter-spacing:.12em;color:var(--muted)">RESUME POINT · 41:17</div>
+<div class="abs" style="left:96px;right:96px;top:1000px;display:flex;justify-content:space-between;font-size:18px;color:var(--dim)">${tl('0:00')}<span style="display:flex;gap:28px">${key('◀ ▶','Scrub')}${key('OK','Play from here')}${key('Back','Cancel')}</span>${tl(fmt(TOTAL))}</div>
+<div class="grain"></div></div>`};
+
+/* 33 – paused, rich info */
+const spec=(l,v,sub)=>`<div><div style="font-size:14px;letter-spacing:.16em;color:var(--dim);font-weight:600">${l}</div><div style="font-size:25px;margin-top:6px;font-weight:500">${v}</div>${sub?`<div style="font-size:17px;color:var(--muted);margin-top:3px">${sub}</div>`:''}</div>`;
+const bitrate=(w,h)=>{const pts=Array.from({length:61},(_,i)=>{const x=i*w/60;const y=h*(.5+.28*Math.sin(i*.35)+.14*Math.sin(i*1.1+1)+.06*Math.sin(i*2.7));return [x,y]});const d=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+ return `<svg width="${w}" height="${h+10}" viewBox="0 -5 ${w} ${h+10}" fill="none">${RC.map((c,i)=>`<path d="${d}" stroke="${c}" stroke-width="${10*(5-i)/5+1}" stroke-linejoin="round" stroke-linecap="round"/>`).join('')}</svg>`};
+S['33-player-paused']=()=>{const cur=2477;const ci=chOf(cur);
+ return `<div class="screen"><div class="bd" style="inset:0;background-image:url(${img('tenzing-bd')});background-position:center;filter:blur(5px) brightness(.85) saturate(1);transform:scale(1.04)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(90deg,rgba(8,6,5,.92) 0%,rgba(8,6,5,.7) 45%,rgba(8,6,5,.4) 100%)"></div>
+<div class="abs" style="inset:0;background:linear-gradient(180deg,rgba(8,6,5,.5),transparent 22%,transparent 50%,rgba(8,6,5,.96) 100%)"></div>
+${ARCH}<div class="abs" style="left:96px;top:70px;width:900px">
+ <div class="eyebrow"><span style="display:inline-flex;width:30px;height:30px;border-radius:15px;background:var(--rb);align-items:center;justify-content:center;color:#1b0d06">${ic('pause',16,1)}</span>Paused</div>
+ <div class="title" style="font-size:104px;margin-top:22px">Tenzing</div>
+ <div style="margin-top:22px">${meta(['<span class="cert">12</span>','2026','2h 5m','Drama · History · Thriller',imdb('7.5')])}</div>
+ <div class="syn" style="margin-top:20px;width:800px;font-size:24px">The untold and inspiring tale of one of the most important mountain climbers in history who, with Edmund Hillary, became the first person to reach the summit of Mount Everest.</div>
+ <div style="margin-top:28px;display:flex;gap:18px;align-items:center"><div class="btn primary">${ic('play',30,1)}Resume</div><div class="btn">${ic('back',28)}Start over</div><span style="font-size:20px;color:var(--muted);margin-left:14px">Ends at <b style="color:var(--cream);font-weight:600">11:34 PM</b></span></div>
+</div>
+<!-- stream card -->
+<div class="abs" style="left:1130px;top:70px;width:694px;border-radius:30px;background:rgba(20,14,11,.62);border:1px solid var(--line);backdrop-filter:blur(26px);padding:30px 36px 28px;box-shadow:0 30px 80px rgba(0,0,0,.5)">
+ <div style="display:flex;align-items:center;justify-content:space-between"><div class="eyebrow" style="font-size:15px"><i></i>Stream</div><span style="display:flex;align-items:center;gap:10px;font-size:18px;color:#8fd6a8;font-weight:500"><b style="width:10px;height:10px;border-radius:5px;background:#5fd08a;display:block;box-shadow:0 0 0 5px rgba(95,208,138,.2)"></b>Healthy</span></div>
+ <div style="display:grid;grid-template-columns:1fr 1fr;gap:26px 30px;margin-top:26px">
+  ${spec('RESOLUTION','2160p · 4K','HDR10 · 23.976 fps')}${spec('VIDEO','HEVC 10-bit','18.4 Mbps')}
+  ${spec('AUDIO','English · Atmos 7.1','E-AC-3 · 768 kbps')}${spec('SUBTITLES','Off','12 languages available')}
+  ${spec('SIZE','14.8 GB','Buffered 3m 20s ahead')}${spec('NETWORK','142 peers · 96 seeds','24.6 MB/s down')}</div>
+ <div style="margin-top:28px;padding-top:22px;border-top:1px solid var(--line)"><div style="display:flex;justify-content:space-between;font-size:14px;letter-spacing:.16em;color:var(--dim);font-weight:600;margin-bottom:12px"><span>BITRATE · LAST 60 S</span><span style="color:var(--saff)">PEAK 31 MBPS</span></div>${bitrate(620,52)}</div>
+</div>
+<!-- chapters -->
+<div class="abs rowhead" style="left:96px;top:600px;width:1728px"><h2>Chapters</h2><span class="ct">${CH.length}</span></div>
+${CH.slice(0,6).map((c,k)=>{const x=96+k*292;const on=k==ci;return `<div class="abs" style="left:${x}px;top:672px;width:268px;${on?'transform:scale(1.06);transform-origin:50% 30%;z-index:3':''}"><div style="width:268px;height:151px;border-radius:16px;background:url(${TH(k)}) center/cover;box-shadow:${on?'0 0 0 4px var(--cream),0 0 0 9px rgba(237,190,86,.28),0 24px 50px rgba(0,0,0,.6)':'0 12px 30px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,242,222,.08)'};position:relative;${on?'':'opacity:.8'}">
+  <span style="position:absolute;left:10px;top:10px;background:rgba(11,8,7,.7);backdrop-filter:blur(8px);border-radius:9px;padding:4px 10px;font-size:15px;font-weight:700;color:var(--cream)">${k+1}</span>
+  ${on?`<span style="position:absolute;right:10px;top:10px;background:var(--rb);border-radius:9px;padding:4px 10px;font-size:13px;font-weight:700;letter-spacing:.14em;color:#1b0d06">NOW</span><i style="position:absolute;left:0;bottom:0;height:5px;width:${((cur-c[1])/(CH[k+1][1]-c[1])*100).toFixed(0)}%;background:var(--rb)"></i>`:''}</div>
+  <div style="margin-top:14px;font-size:21px;font-weight:${on?600:500};color:${on?'var(--cream)':'#c4b6a3'};white-space:nowrap">${c[0]}</div><div style="font-size:16px;color:var(--dim);margin-top:3px">${fmt(c[1])}</div></div>`}).join('')}
+${waveScrub({x0:96,x1:1824,y:948,amp:11,wl:150,p:cur/TOTAL,th:26})}
+<div class="abs" style="left:96px;right:96px;top:984px;display:flex;justify-content:space-between;font-size:21px;color:var(--cream);font-weight:500">${tl(fmt(cur))}<span style="color:var(--muted)">${tl(fmt(TOTAL-cur))}&nbsp;left</span></div>
+<div class="grain"></div></div>`};
+
+
+/* 00 logo */
+const lock=(sz,fg)=>`<div style="display:flex;align-items:center;gap:${sz*.3}px">${markSvg(sz)}<div><div class="serif" style="font-size:${sz*.62}px;letter-spacing:-.02em;font-weight:500;color:${fg};line-height:.95">Cinema</div><div style="font-size:${sz*.16}px;letter-spacing:.34em;color:${fg};opacity:.6;font-weight:600;margin-top:${sz*.1}px">NOW SHOWING</div></div></div>`;
+const sizes=(bg)=>`<div style="display:flex;gap:44px;align-items:center">${markSvg(120)}<div style="width:120px;height:120px;border-radius:30px;background:${bg};display:flex;align-items:center;justify-content:center;box-shadow:inset 0 0 0 1px rgba(128,128,128,.25)">${markSvg(84)}</div>${markSvg(56)}${markSvg(36)}</div>`;
+S['00-logo']=()=>`<div class="screen">
+<div class="amb"></div>
+<div class="abs" style="left:0;top:0;width:960px;height:1080px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:90px">${lock(190,'#f6ecdb')}${sizes('#1a1310')}</div>
+<div class="abs" style="left:960px;top:0;width:960px;height:1080px;background:#ecd9b8;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:90px">${lock(190,'#2a140c')}${sizes('#2a140c')}</div>
+</div>`;
+
+const id=location.hash.slice(1)||'01-movies-top';
+document.getElementById('root').innerHTML=S[id]();
+document.querySelector('.screen').style.display='block';
+</script></body></html>

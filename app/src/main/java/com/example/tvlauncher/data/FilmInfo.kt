@@ -73,6 +73,16 @@ class FilmInfo(context: Context) {
 
     fun close() { worker.shutdownNow(); prefetcher.shutdownNow(); lookups.shutdownNow() }
 
+    /** Exact request id. Older cached pages are refreshed on demand, off the UI thread. */
+    fun movieId(film: Film): Long? {
+        val known = detailsFor(film)
+        known?.page?.tmdbId?.let { return it }
+        val fresh = fetchPage(film).third ?: return null
+        val id = fresh.tmdbId ?: return null
+        store(film.path, (known ?: FilmDetails(null, emptyList(), emptyList())).copy(page = fresh))
+        return id
+    }
+
     private fun detailsFor(film: Film): FilmDetails? = cached(film.path) ?: fetchAll(film)?.also { store(film.path, it) }
 
     /** Memory, then disk, then the network (saved to disk for next time). */

@@ -16,12 +16,12 @@ class QueueTest {
         assertTrue(items[1].isWaiting); assertNull(items[1].progress())   // size not known until it starts
     }
 
-    @Test fun numbers_the_waiting_in_the_order_they_were_added() {
-        val items = QueueApi.withPositions(QueueApi.parse(queue(
+    @Test fun uses_the_real_priority_even_when_a_newer_download_is_moved_first() {
+        val items = QueueApi.parse(queue(
             record(10, "queued", "2026-10-20T12:30:00Z"), record(11, "downloading", "2026-10-20T12:00:00Z", 100, 50),
-            record(12, "queued", "2026-10-20T12:10:00Z"), record(13, "completed", "2026-10-20T11:00:00Z")), QueueSource.SONARR))
-        assertEquals(mapOf(10 to 2, 11 to 0, 12 to 1, 13 to 0), items.associate { it.id to it.position })
-        assertEquals(listOf(11, 12, 10, 13), QueueApi.ordered(items).map { it.id })   // downloading, then in line, then the rest
+            record(12, "queued", "2026-10-20T12:10:00Z"), record(13, "completed", "2026-10-20T11:00:00Z")), QueueSource.SONARR)
+            .map { if (it.isWaiting) it.copy(position = if (it.id == 10) 1 else 2) else it }
+        assertEquals(listOf(11, 10, 12, 13), QueueApi.ordered(items).map { it.id })
     }
 
     @Test fun movies_come_from_radarrs_shape() {
@@ -37,5 +37,30 @@ class QueueTest {
     @Test fun cancelling_also_clears_the_download_client_but_never_blocks_the_release() {
         assertEquals("/api/v3/queue/42?removeFromClient=true&blocklist=false", QueueApi.cancelPath(42))
         assertTrue(QueueApi.parse("junk", QueueSource.SONARR).isEmpty())
+    }
+
+    @Test fun season_pack_is_one_download_and_keeps_every_episode_for_cancellation() {
+        val hash = "a".repeat(40)
+        val rows = (1..22).map { n -> """{"id":$n,"episodeId":$n,"seriesId":10,"downloadId":"$hash","status":"downloading","size":1000,"sizeleft":500,"series":{"title":"Sabrina","tmdbId":605},"episode":{"id":$n,"seasonNumber":5,"episodeNumber":$n}}""" }
+        val item = QueueApi.parse(queue(*rows.toTypedArray()), QueueSource.SONARR).single()
+        assertEquals("Season 5 · 22 episodes", item.detail)
+        assertEquals((1..22).toList(), item.episodeIds)
+        assertEquals(1000L, item.sizeBytes) // pack size is not multiplied by episode count
+        assertEquals(0.5f, item.progress()!!, 0.001f)
+    }
+
+    @Test fun metadata_and_stalled_torrents_do_not_count_as_bytes_downloading() {
+        val item = QueueApi.parse(queue(record(1, "queued", "2026-10-20T12:00:00Z")), QueueSource.SONARR).single()
+        assertFalse(item.copy(status = "metadata").isDownloading)
+        assertFalse(item.copy(status = "stalled").isDownloading)
+        assertTrue(item.copy(status = "metadata").isActive)
+    }
+
+    @Test fun cancellation_keeps_completed_files_even_when_status_has_not_caught_up() {
+        val item = QueueApi.parse(queue(record(1, "downloading", "2026-10-20T12:00:00Z", 1000, 0)), QueueSource.SONARR).single()
+        assertFalse(item.canCancel)
+        assertFalse(item.copy(status = "completed").canCancel)
+        assertTrue(item.copy(sizeLeftBytes = 500).canCancel)
+        assertTrue(item.copy(status = "metadata", sizeBytes = 0).canCancel)
     }
 }

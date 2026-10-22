@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Velvet curtains and a warm pool of light: the house curtain of a small mid-century cinema. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="1920dp" android:height="1080dp"
+    android:viewportWidth="1920" android:viewportHeight="1080">
+    <path android:pathData="M0,0h1920v1080h-1920z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="0" android:endX="0" android:endY="1080">
+                <item android:color="#FF1A140E" android:offset="0"/>
+                <item android:color="#FF2B1D12" android:offset="0.6"/>
+                <item android:color="#FF120C07" android:offset="1"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- the warm pool of light on the stage -->
+    <path android:pathData="M960,640 m-720,0 a720,300 0 1,0 1440,0 a720,300 0 1,0 -1440,0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="960" android:centerY="640" android:gradientRadius="720">
+                <item android:color="#66DDBB57" android:offset="0"/>
+                <item android:color="#00DDBB57" android:offset="1"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- left curtain, with its folds -->
+    <path android:fillColor="#FF6E2A1E" android:pathData="M0,0 L520,0 C470,260 560,520 470,780 C430,900 500,1000 470,1080 L0,1080 Z"/>
+    <path android:fillColor="#40000000" android:pathData="M120,0 C150,260 200,520 170,780 C160,900 170,1000 150,1080 L110,1080 C130,1000 120,900 130,780 C160,520 110,260 120,0 Z"/>
+    <path android:fillColor="#26000000" android:pathData="M300,0 C330,260 380,520 350,780 C340,900 350,1000 330,1080 L300,1080 C320,1000 310,900 320,780 C350,520 300,260 300,0 Z"/>
+    <!-- right curtain, mirrored -->
+    <path android:fillColor="#FF6E2A1E" android:pathData="M1920,0 L1400,0 C1450,260 1360,520 1450,780 C1490,900 1420,1000 1450,1080 L1920,1080 Z"/>
+    <path android:fillColor="#40000000" android:pathData="M1800,0 C1770,260 1720,520 1750,780 C1760,900 1750,1000 1770,1080 L1810,1080 C1790,1000 1800,900 1790,780 C1760,520 1810,260 1800,0 Z"/>
+    <path android:fillColor="#26000000" android:pathData="M1620,0 C1590,260 1540,520 1570,780 C1580,900 1570,1000 1590,1080 L1620,1080 C1600,1000 1610,900 1600,780 C1570,520 1620,260 1620,0 Z"/>
+    <!-- the valance with its scallops -->
+    <path android:fillColor="#FF8A3A29" android:pathData="M0,0 L1920,0 L1920,170 C1830,230 1740,120 1650,190 C1560,250 1470,130 1380,200 C1290,260 1200,140 1110,200 C1020,260 930,140 840,200 C750,260 660,140 570,200 C480,260 390,130 300,190 C210,250 120,120 0,170 Z"/>
+    <path android:fillColor="#33DDBB57" android:pathData="M0,170 C120,120 210,250 300,190 C390,130 480,260 570,200 C660,140 750,260 840,200 C930,140 1020,260 1110,200 C1200,140 1290,260 1380,200 C1470,130 1560,250 1650,190 C1740,120 1830,230 1920,170 L1920,186 C1830,246 1740,136 1650,206 C1560,266 1470,146 1380,216 C1290,276 1200,156 1110,216 C1020,276 930,156 840,216 C750,276 660,156 570,216 C480,276 390,146 300,206 C210,266 120,136 0,186 Z"/>
+    <!-- the stage floor -->
+    <path android:pathData="M0,930 L1920,930 L1920,1080 L0,1080 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="0" android:startY="930" android:endX="0" android:endY="1080">
+                <item android:color="#00000000" android:offset="0"/>
+                <item android:color="#CC0E0905" android:offset="1"/>
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

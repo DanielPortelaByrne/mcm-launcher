@@ -1,0 +1,157 @@
+package com.example.tvlauncher.data.player
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class WaveGeometryTest {
+    @Test fun sineStartsAtTheBaselineAndPeaksAQuarterWaveIn() {
+        assertEquals(900f, PlayerMath.waveY(96f, 96f, 900f, 13f, 150f), 0.001f)
+        assertEquals(913f, PlayerMath.waveY(96f + 37.5f, 96f, 900f, 13f, 150f), 0.001f)
+        assertEquals(887f, PlayerMath.waveY(96f + 112.5f, 96f, 900f, 13f, 150f), 0.001f)
+    }
+
+    @Test fun samplesEveryStepAndEndExactly() {
+        val xs = PlayerMath.waveSamples(0f, 10f, 4f)
+        assertEquals(listOf(0f, 4f, 8f, 10f), xs)
+        assertEquals(listOf(5f), PlayerMath.waveSamples(5f, 5f, 4f))
+    }
+
+    @Test fun playheadIsClamped() {
+        assertEquals(96f, PlayerMath.playheadX(-1f, 96f, 1824f), 0f)
+        assertEquals(1824f, PlayerMath.playheadX(2f, 96f, 1824f), 0f)
+        assertEquals(960f, PlayerMath.playheadX(0.5f, 96f, 1824f), 0f)
+    }
+}
+
+class ChaptersTest {
+    private val json = JSONArray("""[
+        {"StartPositionTicks": 0, "Name": "Kathmandu", "ImageTag": "a"},
+        {"StartPositionTicks": 8500000000, "Name": "The approach"},
+        {"StartPositionTicks": 20200000000, "Name": ""}
+    ]""")
+
+    @Test fun parsesTicksNamesAndTags() {
+        val c = PlayerMath.parseChapters(json)
+        assertEquals(3, c.size)
+        assertEquals(Chapter(1, "The approach", 850_000, null), c[1])
+        assertEquals("Chapter 3", c[2].name)
+        assertEquals("a", c[0].imageTag)
+    }
+
+    @Test fun findsTheChapterPlayingAndLabelsIt() {
+        val c = PlayerMath.parseChapters(json)
+        assertEquals("The approach", PlayerMath.chapterAt(c, 1_000_000)!!.name)
+        assertEquals("Kathmandu", PlayerMath.chapterAt(c, 0)!!.name)
+        assertEquals("Chapter 3 of 3", PlayerMath.chapterLabel(PlayerMath.chapterAt(c, 9_000_000)!!, c.size))
+        assertEquals(0.5f, PlayerMath.chapterProgress(c, c[0], 425_000, 7_534_000), 0.001f)
+    }
+
+    @Test fun noChaptersMeansNothingToShow() {
+        assertTrue(PlayerMath.parseChapters(null).isEmpty())
+        assertNull(PlayerMath.chapterAt(emptyList(), 1000))
+    }
+}
+
+class TrickplayTest {
+    private val info = JSONObject("""{"src1": {"320": {"Width": 320, "Height": 180, "TileWidth": 10, "TileHeight": 10, "ThumbnailCount": 450, "Interval": 10000},
+                                                "640": {"Width": 640, "Height": 360, "TileWidth": 10, "TileHeight": 10, "ThumbnailCount": 450, "Interval": 10000}}}""")
+
+    @Test fun picksTheWidestUnderTheLimit() {
+        assertEquals(320, PlayerMath.parseTrickplay(info, "src1", maxWidth = 480)!!.width)
+        assertEquals(640, PlayerMath.parseTrickplay(info, "other", maxWidth = 1000)!!.width)
+        assertNull(PlayerMath.parseTrickplay(null, "src1"))
+    }
+
+    @Test fun locatesATileInItsSheet() {
+        val t = PlayerMath.parseTrickplay(info, "src1")!!
+        assertEquals(Triple(0, 0, 0), t.tile(0))
+        assertEquals(Triple(0, 320 * 3, 180 * 1), t.tile(130_000))        // thumbnail 13: row 1, column 3
+        assertEquals(Triple(1, 320 * 5, 0), t.tile(1_050_000))            // thumbnail 105: second sheet
+        assertEquals(t.tile(449 * 10_000L), t.tile(99_999_999))          // clamped to the last one
+    }
+}
+
+class EndsAtTest {
+    @Test fun nowPlusWhatRemains() {
+        assertEquals(1_000_000L + 84 * 60_000L, PlayerMath.endsAt(1_000_000L, 41 * 60_000L, 125 * 60_000L))
+        assertEquals(1_000_000L + 42 * 60_000L, PlayerMath.endsAt(1_000_000L, 41 * 60_000L, 125 * 60_000L, speed = 2f))
+        assertNull(PlayerMath.endsAt(0, 0, 0))
+    }
+
+    @Test fun clockFormatting() {
+        assertEquals("41:17", PlayerMath.clock(2_477_000))
+        assertEquals("1:24:17", PlayerMath.clock(5_057_000))
+        assertEquals("0:00", PlayerMath.clock(-5))
+    }
+}
+
+class StreamStatsTest {
+    @Test fun formatsWhatIsKnownAndHidesTheRest() {
+        assertEquals("2160p · 4K", PlayerMath.resolution(3840, 2160))
+        assertEquals("1080p · HD", PlayerMath.resolution(1920, 804))   // a scope film is still 1080p
+        assertEquals("2160p · 4K", PlayerMath.resolution(3840, 1600))
+        assertNull(PlayerMath.resolution(0, 0))
+        assertEquals("4K HDR", PlayerMath.qualityChip(3840, 2160, true))
+        assertEquals("1080p", PlayerMath.qualityChip(1920, 1080, false))
+        assertEquals("720p", PlayerMath.qualityChip(1280, 536, false))
+        assertEquals("HEVC", PlayerMath.videoCodec("video/hevc"))
+        assertEquals("E-AC-3", PlayerMath.audioCodec("audio/eac3-joc"))
+        assertEquals("Atmos 7.1", PlayerMath.channels(8, "audio/eac3-joc"))
+        assertEquals("5.1", PlayerMath.channels(6, "audio/ac3"))
+        assertEquals("18.4 Mbps", PlayerMath.bitrate(18_400_000))
+        assertEquals("768 kbps", PlayerMath.bitrate(768_000))
+        assertNull(PlayerMath.bitrate(-1))
+        assertEquals("14.8 GB", PlayerMath.size(14_800_000_000))
+    }
+
+    @Test fun bitrateHistoryKeepsSixtyAndThePeak() {
+        val h = BitrateHistory()
+        (1..70).forEach { h.add(it * 1_000_000L) }
+        assertEquals(60, h.values().size)
+        assertEquals(70_000_000L, h.peak)
+        h.add(0)
+        assertEquals(60, h.values().size)
+    }
+}
+
+class PlayerUiStateTest {
+    @Test fun okShowsControlsAndBackHidesThenLeaves() {
+        assertEquals(PlayerUi.Controls, PlayerUi.Hidden.onKey(PlayerUi.Key.OK, 0, 0, 1000, true, false).state)
+        assertEquals(PlayerUi.Hidden, PlayerUi.Controls.onKey(PlayerUi.Key.BACK, 0, 0, 1000, true, false).state)
+        assertEquals(false, PlayerUi.Hidden.onKey(PlayerUi.Key.BACK, 0, 0, 1000, true, false).consumed)
+    }
+
+    @Test fun leftRightScrubAndAccelerateWhenHeld() {
+        val s = PlayerUi.Hidden.onKey(PlayerUi.Key.RIGHT, 0, 60_000, 7_534_000, true, false).state as PlayerUi.Scrubbing
+        assertEquals(70_000, s.targetMs)
+        val held = s.onKey(PlayerUi.Key.RIGHT, 20, 60_000, 7_534_000, true, false).state as PlayerUi.Scrubbing
+        assertEquals(130_000, held.targetMs)
+        val clamped = PlayerUi.Hidden.onKey(PlayerUi.Key.LEFT, 0, 3_000, 7_534_000, true, false).state as PlayerUi.Scrubbing
+        assertEquals(0, clamped.targetMs)
+    }
+
+    @Test fun okCommitsTheSeekAndBackCancelsWithout() {
+        val s = PlayerUi.Scrubbing(4_780_000, PlayerUi.Controls)
+        assertEquals(PlayerUi.Step(PlayerUi.Controls, PlayerUi.Action.Seek(4_780_000)), s.onKey(PlayerUi.Key.OK, 0, 2_477_000, 7_534_000, true, true))
+        assertEquals(PlayerUi.Step(PlayerUi.Controls, PlayerUi.Action.None), s.onKey(PlayerUi.Key.BACK, 0, 2_477_000, 7_534_000, true, true))
+    }
+
+    @Test fun inControlsLeftRightOnlyScrubFromTheScrubber() {
+        assertEquals(false, PlayerUi.Controls.onKey(PlayerUi.Key.LEFT, 0, 0, 1000, true, onScrubber = false).consumed)
+        assertTrue(PlayerUi.Controls.onKey(PlayerUi.Key.LEFT, 0, 500, 1000, true, onScrubber = true).state is PlayerUi.Scrubbing)
+    }
+
+    @Test fun playPausePausesIntoTheInfoScreenAndResumesOut() {
+        assertEquals(PlayerUi.Step(PlayerUi.Paused, PlayerUi.Action.Pause), PlayerUi.Hidden.onKey(PlayerUi.Key.PLAY_PAUSE, 0, 0, 1000, true, false))
+        assertEquals(PlayerUi.Step(PlayerUi.Hidden, PlayerUi.Action.Play), PlayerUi.Paused.onKey(PlayerUi.Key.PLAY_PAUSE, 0, 0, 1000, false, false))
+        assertEquals(PlayerUi.Controls, PlayerUi.Paused.onKey(PlayerUi.Key.BACK, 0, 0, 1000, false, false).state)
+    }
+
+    @Test fun liveStreamsWithNoLengthNeverScrub() {
+        assertEquals(PlayerUi.Controls, PlayerUi.Hidden.onKey(PlayerUi.Key.LEFT, 0, 0, 0, true, false).state)
+    }
+}

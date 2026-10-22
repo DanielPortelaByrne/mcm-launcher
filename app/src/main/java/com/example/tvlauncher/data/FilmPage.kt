@@ -19,7 +19,8 @@ data class FilmPage(
     val countries: List<String> = emptyList(),
     val languages: List<String> = emptyList(),
     val genres: List<String> = emptyList(),
-    val themes: List<String> = emptyList()
+    val themes: List<String> = emptyList(),
+    val tmdbId: Long? = null
 ) {
     /** "1952 · 95 min · Directed by George Cukor", only what is known. */
     /** Runtime and director; the year is left out where the title already carries it. */
@@ -32,7 +33,7 @@ data class FilmPage(
         .put("cast", JSONArray().also { a -> cast.forEach { a.put(JSONObject().put("n", it.name).put("r", it.role ?: "")) } })
         .put("crew", JSONArray().also { a -> crew.forEach { a.put(JSONObject().put("r", it.role).put("n", JSONArray(it.names))) } })
         .put("studios", JSONArray(studios)).put("countries", JSONArray(countries)).put("languages", JSONArray(languages))
-        .put("genres", JSONArray(genres)).put("themes", JSONArray(themes))
+            .put("genres", JSONArray(genres)).put("themes", JSONArray(themes)).put("tmdb", tmdbId ?: 0L)
 
     companion object {
         private fun strings(a: JSONArray?) = if (a == null) emptyList() else (0 until a.length()).map { a.getString(it) }
@@ -43,7 +44,7 @@ data class FilmPage(
             o.optJSONArray("cast")?.let { a -> (0 until a.length()).map { CastMember(a.getJSONObject(it).getString("n"), a.getJSONObject(it).optString("r").ifBlank { null }) } }.orEmpty(),
             o.optJSONArray("crew")?.let { a -> (0 until a.length()).map { CrewGroup(a.getJSONObject(it).getString("r"), strings(a.getJSONObject(it).optJSONArray("n"))) } }.orEmpty(),
             strings(o.optJSONArray("studios")), strings(o.optJSONArray("countries")), strings(o.optJSONArray("languages")),
-            strings(o.optJSONArray("genres")), strings(o.optJSONArray("themes"))
+            strings(o.optJSONArray("genres")), strings(o.optJSONArray("themes")), o.optLong("tmdb", 0).takeIf { it > 0 }
         )
     }
 }
@@ -79,8 +80,16 @@ object LetterboxdParser {
         return FilmPage(
             tagline, synopsis, year, runtime, director, cast, crew,
             studios = section(details, "Studios?"), countries = section(details, "Countr(?:y|ies)"), languages = section(details, "(?:Primary |Spoken )?Languages?"),
-            genres = section(genres, "Genres?"), themes = section(genres, "Themes?").take(6)
+            genres = section(genres, "Genres?"), themes = section(genres, "Themes?").take(6), tmdbId = movieId(html)
         )
+    }
+
+    /** Only the film's own More at footer, never a review/related title or a TMDB TV id. */
+    fun movieId(html: String): Long? {
+        val footer = Regex("""<p\b[^>]*class=["'][^"']*\btext-footer\b[^"']*["'][^>]*>(.*?)</p>""", opts)
+            .find(html)?.groupValues?.get(1) ?: return null
+        return Regex("""href=["'](?:https?:)?//(?:www\.)?themoviedb\.org/movie/([1-9][0-9]*)(?:[/?#\-"'])""", RegexOption.IGNORE_CASE)
+            .find(footer)?.groupValues?.get(1)?.toLongOrNull()
     }
 
     private fun panel(html: String, name: String): String? =

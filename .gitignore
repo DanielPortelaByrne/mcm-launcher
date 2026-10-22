@@ -32,3 +32,6 @@ local.properties
 
 # Logs
 *.log
+
+# Personal Claude Code settings
+.claude/settings.local.json

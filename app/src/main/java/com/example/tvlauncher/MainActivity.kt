@@ -431,6 +431,12 @@ class MainActivity : AppCompatActivity() {
         collection.homeReturned()
         findViewById<TextView>(R.id.navHome).requestFocus()
         com.example.tvlauncher.design.Motion.scrollVerticalTo(findViewById(R.id.homeScroll), 0)
+        // Debug builds only: `am start ... --ez debug_cinema true` opens Movies directly, so screenshots for the UI
+        // review never have to press their way across the home screen.
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 && intent.getBooleanExtra("debug_cinema", false)) {
+            onNavTabSelected(NavTab.MOVIES)
+            intent.getStringExtra("debug_cinema_dest")?.let { moviesPanel.debugGo(it) }
+        }
     }
 
     /**
@@ -447,9 +453,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun isInside(view: android.view.View, parent: android.view.View): Boolean {
+        var node: android.view.ViewParent? = view.parent
+        while (node != null) { if (node === parent) return true; node = node.parent }
+        return false
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // While an app is held for rearranging, the remote belongs to the drag no matter where focus is.
         if (organiseIndex != null && onOrganiseKey(event.keyCode, event)) return true
+        // The remote's voice key, if the TV hands it to apps at all: in Cinema it opens Search and listens while held.
+        if (event.keyCode == KeyEvent.KEYCODE_SEARCH || event.keyCode == KeyEvent.KEYCODE_VOICE_ASSIST || event.keyCode == KeyEvent.KEYCODE_ASSIST) {
+            android.util.Log.i("CinemaVoice", "voice key ${event.keyCode} action=${event.action} repeat=${event.repeatCount}")
+            if (::moviesPanel.isInitialized && moviesPanel.voiceKey(event.action == KeyEvent.ACTION_DOWN, event.repeatCount)) return true
+        }
         val direction = when(event.keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> android.view.View.FOCUS_UP
             KeyEvent.KEYCODE_DPAD_DOWN -> android.view.View.FOCUS_DOWN
@@ -479,6 +496,12 @@ class MainActivity : AppCompatActivity() {
                     if (focused == null || focused === overlay || overlay.findFocus() == null) {
                         // Focus strayed behind the overlay, or the overlay itself took it (slow devices): hand it to a child.
                         (android.view.FocusFinder.getInstance().findNextFocus(overlay, null, direction) ?: overlay).requestFocus()
+                    } else if (overlayId == R.id.moviesOverlay && moviesPanel.navigate(focused, direction)) {
+                        // The rail and the loading screen move focus themselves.
+                    } else if (overlayId == R.id.moviesOverlay) {
+                        // Cinema has its own focus rules (Left from a row goes to the page's rail item, rows never
+                        // leak into each other), so ask the views themselves, still staying inside the overlay.
+                        focused.focusSearch(direction)?.takeIf { it !== focused && isInside(it, overlay) }?.requestFocus(direction)
                     } else {
                         // Only ever move to something inside the overlay; at its edges the key is simply absorbed.
                         android.view.FocusFinder.getInstance().findNextFocus(overlay, focused, direction)?.requestFocus(direction)
@@ -857,6 +880,7 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         refreshAccountIcon()
+        if (::moviesPanel.isInitialized) moviesPanel.onPermissionResult(requestCode, grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED)
     }
 
     private fun refreshAccountIcon() {

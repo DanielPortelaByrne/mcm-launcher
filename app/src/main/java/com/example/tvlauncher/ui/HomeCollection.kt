@@ -16,6 +16,10 @@ import com.example.tvlauncher.data.Film
 import com.example.tvlauncher.data.FilmDetails
 import com.example.tvlauncher.data.FilmInfo
 import com.example.tvlauncher.data.Watchlist
+import com.example.tvlauncher.data.movies.Availability
+import com.example.tvlauncher.data.movies.Kind
+import com.example.tvlauncher.data.movies.RequestOutcome
+import com.example.tvlauncher.data.movies.SeerrClient
 
 class HomeCollection(private val activity: Activity, private val sheet: com.example.tvlauncher.ui.room.InfoSheet, private val art: ArtModeOverlay, private val onArt: () -> Unit, private val onSettings: () -> Unit, private val onEdit: () -> Unit, private val onIconStyle: () -> Unit) {
     private val watchlist = Watchlist(activity)
@@ -26,6 +30,17 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
     private val info = FilmInfo(activity)
     private val availability = com.example.tvlauncher.design.Type.text(activity, "", com.example.tvlauncher.design.Type.Style.CAPTION)
     private val badge = LetterboxdBadge(activity)
+    private val download = ImageButton(activity).apply {
+        id = View.generateViewId()
+        setImageResource(R.drawable.ic_cinema_downloads)
+        setPadding(dp(7), dp(7), dp(7), dp(7))
+        isFocusable = true; isClickable = true; isEnabled = false
+        contentDescription = "Download Eva's pick"
+    }
+    private val requests = SeerrClient(activity)
+    private val requestSheet = com.example.tvlauncher.ui.room.SeerrSignInSheet(activity, sheet)
+    private val requestWorker = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private val requesting = HashSet<String>()
     private val poster = ImageView(activity).apply {
         scaleType = ImageView.ScaleType.CENTER_CROP
         clipToOutline = true
@@ -78,8 +93,10 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         card.addView(poster, LinearLayout.LayoutParams(dp(101), dp(152)).apply { marginEnd = px(R.dimen.space_4); gravity = Gravity.CENTER_VERTICAL })
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
         card.addView(column, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
-        // Letterboxd's dots and the rating sit in the top-right corner of the card.
-        column.addView(badge.view, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.END; bottomMargin = px(R.dimen.space_1) })
+        val top = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        top.addView(badge.view, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(download, LinearLayout.LayoutParams(dp(36), dp(32)).apply { marginStart = dp(8) })
+        column.addView(top, LinearLayout.LayoutParams(-1, dp(32)).apply { bottomMargin = px(R.dimen.space_1) })
         column.addView(com.example.tvlauncher.design.Type.text(activity, "Eva's pick for tonight", com.example.tvlauncher.design.Type.Style.EYEBROW))
         com.example.tvlauncher.design.Type.apply(title, com.example.tvlauncher.design.Type.Style.HEADING)
         title.maxLines = 2; title.ellipsize = android.text.TextUtils.TruncateAt.END
@@ -92,6 +109,15 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         status.maxLines = 1; status.ellipsize = android.text.TextUtils.TruncateAt.END
         column.addView(status)
         panel(card, 20)
+        card.id = View.generateViewId()
+        card.nextFocusRightId = download.id
+        download.nextFocusLeftId = card.id
+        LauncherTheme.bindPanelFocus(download, LauncherTheme.surface(activity, R.color.surface_raised, R.dimen.radius_small),
+            LauncherTheme.surface(activity, R.color.focus, R.dimen.radius_small), scale = 1f) { focused ->
+            download.imageTintList = android.content.res.ColorStateList.valueOf(activity.getColor(if (focused) R.color.on_focus else R.color.text))
+        }
+        download.imageTintList = android.content.res.ColorStateList.valueOf(activity.getColor(R.color.text))
+        download.setOnClickListener { film?.let { requestDownload(it) } }
         card.setOnClickListener { showFilm() }
         com.example.tvlauncher.design.SectionTheme.tag(card, com.example.tvlauncher.design.SectionTheme.Mood.FILM)
         activity.findViewById<FrameLayout>(R.id.homeHero).addView(card, FrameLayout.LayoutParams(dp(408), dp(184), Gravity.END or Gravity.CENTER_VERTICAL))
@@ -167,7 +193,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
             if (!disposed) { status.text=message; if (film == null) { film=nextFilm(); render() } else status.visibility = View.GONE }
         } }
     }
-    fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); jellyfinWorker.shutdownNow(); thumbDecoder.shutdownNow() }
+    fun close() { disposed=true; watchlist.close(); info.close(); smartWorker.shutdownNow(); jellyfinWorker.shutdownNow(); thumbDecoder.shutdownNow(); requestWorker.shutdownNow() }
     private fun render() {
         com.example.tvlauncher.design.Motion.swapText(title, film?.title ?: "Your next film awaits")
         showDetails()
@@ -178,6 +204,7 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
         val current = film ?: return
         if (current.path == shownPath) return
         shownPath = current.path
+        setDownload(current, if (current.path in requesting) "Checking download" else "Download", current.path !in requesting)
         details = null
         posterBitmap = null
         // The old poster steps back and waits, dimmed, for the new one (or the empty frame if there is none).
@@ -250,8 +277,63 @@ class HomeCollection(private val activity: Activity, private val sheet: com.exam
                 if (disposed || jellyfinFor != imdb) return@runOnUiThread
                 jellyfinItem = found
                 if (film?.path == current.path) {
+                    if (found != null) setDownload(current, "In your library", false, done = true)
                     if (found != null) com.example.tvlauncher.design.Motion.swapText(availability, "In your library")
                     if (sheet.isVisible) applySmart()
+                }
+            }
+        }
+    }
+
+    private fun setDownload(current: Film, label: String, enabled: Boolean, done: Boolean = false) {
+        if (disposed || film?.path != current.path) return
+        download.contentDescription = "$label: ${current.title}"
+        download.isEnabled = enabled
+        download.alpha = if (enabled) 1f else 0.55f
+        download.setImageResource(if (done) R.drawable.ic_check else R.drawable.ic_cinema_downloads)
+    }
+
+    /** Uses the same Seerr request/session as Movies, so its Downloads section sees this request too. */
+    private fun requestDownload(current: Film) {
+        if (disposed || current.path in requesting) return
+        if (!requests.isSignedIn) {
+            requestSheet.show(requests, jellyfin) { requestDownload(current) }
+            return
+        }
+        requesting += current.path
+        setDownload(current, "Checking download", false)
+        requestWorker.execute {
+            val id = info.movieId(current)
+            val owned = id?.let { jellyfin.find(null, it.toString(), series = false) }
+            val state = if (id != null && owned == null) requests.availability(Kind.MOVIE, id) else Availability.NONE
+            val existing = state in setOf(Availability.REQUESTED, Availability.PROCESSING, Availability.DOWNLOADING, Availability.PARTIAL)
+            val available = owned != null || state == Availability.AVAILABLE
+            val outcome = when {
+                id == null -> RequestOutcome.FAILED
+                available || existing -> RequestOutcome.ALREADY
+                else -> requests.request(Kind.MOVIE, id)
+            }
+            activity.runOnUiThread {
+                requesting -= current.path
+                if (disposed) return@runOnUiThread
+                when (outcome) {
+                    RequestOutcome.QUEUED, RequestOutcome.ALREADY -> {
+                        setDownload(current, if (available) "In your library" else "Requested", false, done = true)
+                        val message = when {
+                            available -> "${current.title} is already downloaded"
+                            outcome == RequestOutcome.ALREADY -> "${current.title} is already in Movies downloads"
+                            else -> "Added ${current.title} to Movies downloads"
+                        }
+                        Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
+                    }
+                    RequestOutcome.NEEDS_SIGN_IN -> {
+                        setDownload(current, "Download", true)
+                        if (film?.path == current.path && card.isShown) requestSheet.show(requests, jellyfin) { requestDownload(current) }
+                    }
+                    RequestOutcome.FAILED -> {
+                        setDownload(current, "Download", true)
+                        Toast.makeText(activity, if (id == null) "Couldn't identify this movie for download. Try again shortly." else "Couldn't queue this movie. Try again shortly.", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
         }

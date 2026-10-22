@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+state.json
+state.tmp
+sabrina-releases-*.json

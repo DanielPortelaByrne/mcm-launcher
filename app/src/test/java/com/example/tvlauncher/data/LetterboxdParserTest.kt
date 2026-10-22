@@ -4,6 +4,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LetterboxdParserTest {
+    @Test fun movie_request_id_comes_only_from_the_films_own_footer() {
+        val page = """<a href="https://www.themoviedb.org/movie/999">Review link</a>
+            <p class="text-link text-footer">More at <a href="https://www.themoviedb.org/movie/496243-parasite/">TMDB</a></p>"""
+        assertEquals(496243L, LetterboxdParser.parse(page).tmdbId)
+        assertNull(LetterboxdParser.movieId("""<a href="https://www.themoviedb.org/movie/999">Related movie</a>"""))
+        assertNull(LetterboxdParser.movieId("""<p class="text-footer"><a href="https://www.themoviedb.org/tv/496243/">TMDB</a></p>"""))
+    }
+
+    @Test fun exact_movie_request_id_survives_cached_page_round_trip() {
+        val page = FilmPage(tmdbId = 496243L)
+        assertEquals(496243L, FilmPage.fromJson(page.toJson()).tmdbId)
+        assertNull(FilmPage.fromJson(org.json.JSONObject()).tmdbId)
+    }
+
     // A trimmed copy of the real markup of a Letterboxd film page.
     private val html = """
         <meta property="og:title" content="Pat and Mike (1952)">
