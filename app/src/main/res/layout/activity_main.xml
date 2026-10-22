@@ -481,7 +481,6 @@
                 android:id="@+id/moviesPage"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:layout_marginStart="80dp"
                 android:clipChildren="false"
                 android:clipToPadding="false"
                 android:scrollbars="none">

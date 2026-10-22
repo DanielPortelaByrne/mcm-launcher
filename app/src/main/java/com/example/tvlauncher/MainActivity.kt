@@ -431,6 +431,11 @@ class MainActivity : AppCompatActivity() {
         collection.homeReturned()
         findViewById<TextView>(R.id.navHome).requestFocus()
         com.example.tvlauncher.design.Motion.scrollVerticalTo(findViewById(R.id.homeScroll), 0)
+        // Debug builds only: `am start ... --ez debug_cinema true` opens Movies directly, so screenshots for the UI
+        // review never have to press their way across the home screen.
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 && intent.getBooleanExtra("debug_cinema", false)) {
+            onNavTabSelected(NavTab.MOVIES)
+        }
     }
 
     /**

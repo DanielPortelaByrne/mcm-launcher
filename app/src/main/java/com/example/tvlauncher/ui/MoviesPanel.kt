@@ -66,8 +66,12 @@ import com.example.tvlauncher.data.movies.SeerrClient
 import com.example.tvlauncher.data.movies.Service
 import com.example.tvlauncher.data.movies.ShelfSpec
 import com.example.tvlauncher.data.movies.Title
+import com.example.tvlauncher.design.Cinema
 import com.example.tvlauncher.design.LauncherTheme
 import com.example.tvlauncher.design.SectionHeader
+import com.example.tvlauncher.design.cinema.AmbientBackground
+import com.example.tvlauncher.design.cinema.FrostView
+import com.example.tvlauncher.design.cinema.StripeDrawable
 import com.example.tvlauncher.design.Type
 import com.example.tvlauncher.ui.room.JellyfinConnectSheet
 import com.example.tvlauncher.ui.room.SeerrSignInSheet
@@ -144,31 +148,24 @@ class MoviesPanel(
     val isVisible: Boolean get() = overlay.visibility == View.VISIBLE
     private val detailOpen: Boolean get() = detail.visibility == View.VISIBLE
 
-    /** The cinema backgrounds, one per opening of the page, so the room changes a little each time it is visited. */
-    private val cinemaBackdrops = intArrayOf(R.drawable.cinema_curtain, R.drawable.cinema_proscenium, R.drawable.cinema_beam)
-    private var cinemaBackdropView: ImageView? = null
-    private var cinemaBackdropIndex = 0
+    /** The Cinema ground behind every page: espresso with warm and teal glows and the faint arch columns. Painted once. */
+    private var ambientView: AmbientBackground? = null
+    private var frost: FrostView? = null
 
-    private fun showCinemaBackdrop() {
-        val host = overlay as? ViewGroup
-        var bg = cinemaBackdropView
-        if (bg == null && host != null) {
-            val created = ImageView(activity)
-            created.scaleType = ImageView.ScaleType.CENTER_CROP
-            created.isFocusable = false
-            created.isClickable = false
-            created.alpha = 0.7f
-            host.addView(created, 0, FrameLayout.LayoutParams(-1, -1))
-            cinemaBackdropView = created
-            bg = created
-        }
-        cinemaBackdropIndex = (cinemaBackdropIndex + 1) % cinemaBackdrops.size
-        bg?.setImageResource(cinemaBackdrops[cinemaBackdropIndex])
+    private fun showAmbient() {
+        if (ambientView != null) return
+        val host = overlay as? ViewGroup ?: return
+        overlay.setBackgroundColor(Cinema.BG)
+        ambientView = AmbientBackground(activity).also { host.addView(it, 0, FrameLayout.LayoutParams(-1, -1)) }
     }
+
+    /** Where page content starts: clear of the floating rail (184 mockup px), and its right edge (96). */
+    private val pageStart: Int get() = Cinema.px(activity, 184)
+    private val pageEnd: Int get() = Cinema.px(activity, 96)
 
     fun show() {
         overlay.visibility = View.VISIBLE
-        showCinemaBackdrop()
+        showAmbient()
         com.example.tvlauncher.design.Motion.enter(overlay, null, 0f)
         if (!topBuilt) { buildTop(); topBuilt = true }
         trail.clear(); current = Dest.Home
@@ -197,59 +194,87 @@ class MoviesPanel(
 
     // --- Left navigation ---------------------------------------------------------------------------
 
+    private lateinit var wordmark: TextView
+
     private fun buildTop() {
+        // A floating glass pill (`.rail`): 92 mockup px wide, inset 32 from the screen edges, over the page.
         top.orientation = LinearLayout.VERTICAL
         top.gravity = Gravity.TOP
-        top.setPadding(dp(12), dp(18), dp(12), dp(18))
-        top.background = android.graphics.drawable.ColorDrawable(0xFF1A140E.toInt())
-        top.elevation = dp(12).toFloat()
-        page.setOnScrollChangeListener { _, _, _, _, _ -> fillNear() }
+        top.setPadding(0, Cinema.px(activity, 31), 0, Cinema.px(activity, 26))
+        top.background = null
+        top.elevation = 0f
+        (top.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            lp.width = Cinema.px(activity, RAIL_WIDTH); lp.height = -1
+            lp.setMargins(Cinema.px(activity, 32), Cinema.px(activity, 32), 0, Cinema.px(activity, 32))
+            top.layoutParams = lp
+        }
+        // Frosted glass behind the rail: a blur of the page and ground beneath, in a sibling so the rail's stripe bar
+        // can still draw past the pill's edge.
+        frost = FrostView(activity, listOfNotNull(ambientView, page), 46f).also { f ->
+            body.addView(f, body.indexOfChild(top), FrameLayout.LayoutParams(Cinema.px(activity, RAIL_WIDTH), -1).apply {
+                setMargins(Cinema.px(activity, 32), Cinema.px(activity, 32), 0, Cinema.px(activity, 32))
+            })
+        }
+        // The active item's stripe bar sits just outside the pill's left edge.
+        body.clipChildren = false; body.clipToPadding = false
+        (page.layoutParams as? ViewGroup.MarginLayoutParams)?.let { it.marginStart = 0; page.layoutParams = it }
+        page.setOnScrollChangeListener { _, _, _, _, _ -> fillNear(); frost?.refresh() }
         (page as? CinemaContentScrollView)?.navigationTarget = { activeNavigationItem() }
-        top.addView(BrandMark(activity).apply { contentDescription = "MCM Cinema" },
-            LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(8); bottomMargin = dp(16) })
+        val brand = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(Cinema.px(activity, 18), 0, 0, 0); contentDescription = "Cinema"
+        }
+        brand.addView(ImageView(activity).apply { setImageResource(R.drawable.cinema_mark) }, LinearLayout.LayoutParams(Cinema.px(activity, 56), Cinema.px(activity, 56)))
+        wordmark = Cinema.text(activity, "Cinema", 36, Cinema.CREAM, serif = true, weight = 500, tracking = -0.02f).apply { visibility = View.GONE; maxLines = 1 }
+        brand.addView(wordmark, LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 18) })
+        top.addView(brand, LinearLayout.LayoutParams(-1, Cinema.px(activity, 56)).apply { bottomMargin = Cinema.px(activity, 26) })
 
         val destinations = listOf(
-            Triple("Search", R.drawable.ic_search, Dest.Search),
-            Triple("Home", R.drawable.ic_cinema_home, Dest.Home),
-            Triple("Films", R.drawable.ic_cinema_films, Dest.Films),
-            Triple("Series", R.drawable.ic_live_tv, Dest.Series),
-            Triple("Documentaries", R.drawable.ic_cinema_documentaries, Dest.Docs),
-            Triple("My library", R.drawable.ic_cinema_library, Dest.Library),
-            Triple("Downloads", R.drawable.ic_cinema_downloads, Dest.Downloads)
+            Triple("Search", R.drawable.ic_cin_search, Dest.Search),
+            Triple("Home", R.drawable.ic_cin_home, Dest.Home),
+            Triple("Films", R.drawable.ic_cin_film, Dest.Films),
+            Triple("Series", R.drawable.ic_cin_tv, Dest.Series),
+            Triple("Documentaries", R.drawable.ic_cin_doc, Dest.Docs),
+            Triple("My library", R.drawable.ic_cin_lib, Dest.Library),
+            Triple("Downloads", R.drawable.ic_cin_dl, Dest.Downloads)
         )
         destinations.forEach { (label, icon, dest) ->
-            top.addView(navigationItem(label, icon, dest), LinearLayout.LayoutParams(-1, dp(44)).apply { bottomMargin = dp(4) })
+            top.addView(navigationItem(label, icon, dest), LinearLayout.LayoutParams(-1, Cinema.px(activity, 64)).apply { topMargin = Cinema.px(activity, 12) })
         }
         top.addView(View(activity), LinearLayout.LayoutParams(1, 0, 1f))
-        storageView = TextView(activity).apply {
-            textSize = 11f; maxLines = 2; setLineSpacing(0f, 1.05f)
-            setTextColor(activity.getColor(R.color.text_faint)); visibility = View.GONE
-            setPadding(dp(16), dp(8), 0, 0)
+        storageView = Cinema.text(activity, "", 18, Cinema.DIM).apply {
+            maxLines = 2; setLineSpacing(0f, 1.1f); visibility = View.GONE
+            setPadding(Cinema.px(activity, 30), Cinema.px(activity, 8), Cinema.px(activity, 20), 0)
         }
         top.addView(storageView, LinearLayout.LayoutParams(-1, -2))
         navigationFocusListener = android.view.ViewTreeObserver.OnGlobalFocusChangeListener { _, focused ->
             if (isWithin(focused, page)) lastContentFocus = focused
             setNavigationExpanded(isWithin(focused, top))
             styleTabs()
+            frost?.refresh(450)   // a card scaling or a row gliding beneath the rail
         }.also { top.viewTreeObserver.addOnGlobalFocusChangeListener(it) }
         setNavigationExpanded(false)
         styleTabs()
     }
 
     private fun navigationItem(label: String, icon: Int, dest: Dest): LinearLayout {
-        val row = LinearLayout(activity).apply {
+        val row = RailItem(activity).apply {
             id = View.generateViewId()
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
             isFocusable = true; isClickable = true; contentDescription = label
-            setPadding(dp(16), 0, dp(12), 0)
+            setPadding(Cinema.px(activity, 14), 0, Cinema.px(activity, 14), 0)
         }
-        val image = ImageView(activity).apply { setImageResource(icon); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
-        val name = Type.text(activity, label, Type.Style.BODY).apply {
-            textSize = 14f; maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+        // The icon sits in a 64px circle, which lights glass when this is the page you are on.
+        val circle = FrameLayout(activity)
+        val image = Cinema.icon(activity, icon, Cinema.RAIL_ICON)
+        circle.addView(image, FrameLayout.LayoutParams(Cinema.px(activity, 36), Cinema.px(activity, 36), Gravity.CENTER))
+        val name = Cinema.text(activity, label, 24, Cinema.RAIL_ICON, weight = 500).apply {
+            maxLines = 1; ellipsize = TextUtils.TruncateAt.END
             visibility = View.GONE; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
-        row.addView(image, LinearLayout.LayoutParams(dp(24), dp(24)))
-        row.addView(name, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(16) })
+        row.circle = circle
+        row.addView(circle, LinearLayout.LayoutParams(Cinema.px(activity, 64), Cinema.px(activity, 64)))
+        row.addView(name, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = Cinema.px(activity, 14) })
         tabs[row] = dest
         navigationLabels[row] = image to name
         row.setOnFocusChangeListener { _, _ -> styleTabs() }
@@ -293,23 +318,54 @@ class MoviesPanel(
     private fun setNavigationExpanded(expanded: Boolean) {
         if (navigationExpanded == expanded) return
         navigationExpanded = expanded
-        top.layoutParams = top.layoutParams.apply { width = dp(if (expanded) 224 else 80) }
+        top.layoutParams = top.layoutParams.apply { width = Cinema.px(activity, if (expanded) RAIL_WIDTH_OPEN else RAIL_WIDTH) }
+        frost?.let { f ->
+            f.layoutParams = f.layoutParams.apply { width = Cinema.px(activity, if (expanded) RAIL_WIDTH_OPEN else RAIL_WIDTH) }
+            // Open, the pill lies over the page's text, so the frost is tinted a little deeper to keep the labels clear.
+            f.tint = if (expanded) 0xB8120D0A.toInt() else Cinema.RAIL_FILL
+        }
         navigationLabels.values.forEach { (_, name) -> name.visibility = if (expanded) View.VISIBLE else View.GONE }
+        wordmark.visibility = if (expanded) View.VISIBLE else View.GONE
         storageView.visibility = if (expanded && storageView.text.isNotBlank()) View.VISIBLE else View.GONE
     }
 
+    /**
+     * The rail's three looks: the focused item is a cream pill with dark icon and label; the page you are on has a
+     * glass circle, a saffron icon and the stripe bar at the pill's edge; the rest are quiet.
+     */
     private fun styleTabs() = tabs.forEach { (view, dest) ->
         val selected = dest === current || (dest === Dest.Home && (current is Dest.OnService || current is Dest.InGenre))
         view.isSelected = selected
         val focused = view.hasFocus()
-        val radius = dp(12).toFloat()
-        view.background = when {
-            focused -> LauncherTheme.tileBackgroundFocused(activity, radius)
-            selected -> LauncherTheme.selectedPill(activity, radius)
-            else -> null
+        val item = view as RailItem
+        item.marked = selected
+        view.background = if (focused) android.graphics.drawable.GradientDrawable().apply { cornerRadius = Cinema.pxf(activity, 32); setColor(Cinema.CREAM) } else null
+        item.circle?.background = if (selected && !focused) android.graphics.drawable.GradientDrawable().apply {
+            shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Cinema.GLASS_STRONG); setStroke(1, Cinema.alpha(Cinema.SAFFRON, 0.35f))
+        } else null
+        val colour = when { focused -> Cinema.INK; selected -> Cinema.SAFFRON; else -> Cinema.RAIL_ICON }
+        navigationLabels[view]?.let { (image, name) ->
+            image.setColorFilter(colour); name.setTextColor(colour)
+            Cinema.weight(name, 24, serif = false, weight = if (focused) 600 else 500)
         }
-        val colour = activity.getColor(if (focused) R.color.ink else if (selected) R.color.ivory else R.color.ivory_text_dim)
-        navigationLabels[view]?.let { (image, name) -> image.setColorFilter(colour); name.setTextColor(colour) }
+    }
+
+    /** A rail item that can draw the stripe-set bar just outside the rail's left edge (`.nv.on::before`). */
+    private class RailItem(context: Context) : LinearLayout(context) {
+        var circle: FrameLayout? = null
+        var marked = false
+            set(value) { if (field != value) { field = value; invalidate() } }
+        private val bar = StripeDrawable(horizontalBands = false, radius = Cinema.pxf(context, 4))
+        init { setWillNotDraw(false); clipChildren = false }
+        override fun draw(canvas: Canvas) {
+            if (marked) {
+                val left = paddingLeft - Cinema.px(context, 17)
+                val top = (height - Cinema.px(context, 32)) / 2
+                bar.setBounds(left, top, left + Cinema.px(context, 8), top + Cinema.px(context, 32))
+                bar.draw(canvas)
+            }
+            super.draw(canvas)
+        }
     }
 
     // --- Building a page ---------------------------------------------------------------------------
@@ -318,8 +374,11 @@ class MoviesPanel(
         val gen = ++generation
         searchPending?.let { ui.removeCallbacks(it) }
         content.removeAllViews(); page.scrollTo(0, 0); heroSet = false; pending.clear(); lastContentFocus = null
-        // The rail sits beside the page, so no space is reserved for a top bar.
-        content.setPadding(0, dp(24), 0, dp(48))
+        // The rail floats over the page, so nothing is reserved for a top bar. A page that opens on a featured title
+        // starts at the very top, so its picture runs up to the screen edge; the others start a little way down.
+        val opensOnHero = current === Dest.Home || current === Dest.Films || current === Dest.Series || current === Dest.Docs || current === Dest.Library
+        content.setPadding(0, if (opensOnHero) 0 else Cinema.px(activity, 52), 0, dp(48))
+        frost?.post { frost?.refresh(500) }
         jellyfin.takeIf { it.isConnected }?.let { j -> worker.execute { j.library() } }   // so poster badges are ready without waiting
         when (val d = current) {
             Dest.Home -> { buildHero(); libraryRow(gen, "My library", 18); serviceTiles(); genreTiles(); shelves(Catalog.homePage(), gen) }
@@ -335,7 +394,7 @@ class MoviesPanel(
     }
 
     private fun pageTitle(text: String) {
-        content.addView(Type.text(activity, text, Type.Style.TITLE).apply { textSize = 30f; setPadding(px(R.dimen.page_margin), dp(4), 0, dp(6)) })
+        content.addView(Type.text(activity, text, Type.Style.TITLE).apply { textSize = 30f; setPadding(pageStart, dp(4), 0, dp(6)) })
     }
 
     /** A row whose posters are fetched and drawn only when it nears the screen. */
@@ -421,7 +480,7 @@ class MoviesPanel(
     // --- My library --------------------------------------------------------------------------------
 
     private fun buildLibrary(gen: Int) {
-        val margin = px(R.dimen.page_margin)
+        val margin = pageStart
         if (!jellyfin.isConnected) {
             pageTitle("My library")
             content.addView(actionCard("Connect Jellyfin", "Sign in to see your own films and series") { jellyfinSheet.show(jellyfin) { if (isVisible) build() } }, LinearLayout.LayoutParams(dp(380), dp(64)).apply { marginStart = margin; topMargin = dp(10) })
@@ -465,7 +524,7 @@ class MoviesPanel(
     private val pendingStages = setOf(Stage.WAITING_APPROVAL, Stage.SEARCHING, Stage.DOWNLOADING)
 
     private fun buildDownloads(gen: Int) {
-        val margin = px(R.dimen.page_margin)
+        val margin = pageStart
         pageTitle("Downloads")
         content.addView(Type.text(activity, "What you have asked for, and how far along it is", Type.Style.CAPTION).apply { setPadding(margin, 0, 0, dp(6)) })
         if (!seerr.isSignedIn) {
@@ -815,7 +874,7 @@ class MoviesPanel(
     // --- Search ------------------------------------------------------------------------------------
 
     private fun buildSearch() {
-        val margin = px(R.dimen.page_margin)
+        val margin = pageStart
         val input = EditText(activity).apply {
             hint = "Search films, series and documentaries"; Type.apply(this, Type.Style.BODY); setHintTextColor(activity.getColor(R.color.text_faint))
             inputType = InputType.TYPE_CLASS_TEXT; maxLines = 1; isSingleLine = true; imeOptions = EditorInfo.IME_ACTION_SEARCH
@@ -880,8 +939,8 @@ class MoviesPanel(
             background = ScrimDrawable(intArrayOf(0xF21A140E.toInt(), 0xB31A140E.toInt(), 0x001A140E), intArrayOf(0x001A140E, 0xFF1A140E.toInt()))
         }, FrameLayout.LayoutParams(-1, -1))
         // Three painted stripes on the hero's lower edge: the room's own mid-century signature.
-        hero.addView(Stripes(activity), FrameLayout.LayoutParams(dp(90), dp(8), Gravity.BOTTOM or Gravity.START).apply { leftMargin = px(R.dimen.page_margin); bottomMargin = dp(4) })
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(px(R.dimen.page_margin), dp(32), 0, dp(30)) }
+        hero.addView(Stripes(activity), FrameLayout.LayoutParams(dp(90), dp(8), Gravity.BOTTOM or Gravity.START).apply { leftMargin = pageStart; bottomMargin = dp(4) })
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.BOTTOM; setPadding(pageStart, Cinema.px(activity, 140), 0, dp(30)) }
         column.addView(Type.text(activity, "FEATURED", Type.Style.EYEBROW))
         heroTitle = Type.text(activity, "", Type.Style.TITLE).apply { textSize = 34f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END }
         heroMeta = Type.text(activity, "", Type.Style.CAPTION).apply { maxLines = 1 }
@@ -907,7 +966,7 @@ class MoviesPanel(
         e.library?.let { lib -> heroButtons.addView(pill("Watch now", accent = true).apply { setOnClickListener { watch(lib, e.title) } }, LinearLayout.LayoutParams(dp(170), dp(44)).apply { marginEnd = dp(10) }) }
         heroButtons.addView(pill("More info", accent = false).apply { setOnClickListener { openDetail(e, related) } }, LinearLayout.LayoutParams(dp(150), dp(44)))
         heroButtons.visibility = View.VISIBLE
-        e.title.backdropUrl?.let { u -> images.load(u, maxWidth = 1280) { b -> heroImage.setImageBitmap(b); heroImage.animate().alpha(1f).setDuration(350).start() } }
+        e.title.backdropUrl?.let { u -> images.load(u, maxWidth = 1280) { b -> heroImage.setImageBitmap(b); heroImage.animate().alpha(1f).setDuration(350).start(); frost?.refresh(400) } }
         if (overlay.findFocus() == null && current != Dest.Search) requestFocusRobust(overlay as ViewGroup, heroButtons.getChildAt(0))
     }
 
@@ -928,7 +987,7 @@ class MoviesPanel(
             images.load(u, maxWidth = 1280) { b -> backdrop.setImageBitmap(b); backdrop.animate().alpha(1f).setDuration(300).start() }
         }
 
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false; setPadding(px(R.dimen.page_margin), dp(30), px(R.dimen.page_margin), dp(8)) }
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false; setPadding(Cinema.px(activity, 96), dp(30), Cinema.px(activity, 96), dp(8)) }
         val topRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
         val text = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         text.addView(Type.text(activity, (if (t.kind == Kind.SHOW) "SERIES" else "FILM") + if (e.library != null) "  ·  IN YOUR LIBRARY" else "", Type.Style.EYEBROW))
@@ -1316,10 +1375,11 @@ class MoviesPanel(
 
     /** A heading and an empty scrolling row beneath it. */
     private fun row(heading: String?, caption: String?, into: LinearLayout = content, inset: Boolean = true): Row {
-        val margin = if (inset) px(R.dimen.page_margin) else 0
+        val margin = if (inset) pageStart else 0
+        val end = if (inset) pageEnd else 0
         val head = heading?.let { h ->
             LinearLayout(activity).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(margin, dp(30), margin, dp(10))
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(margin, dp(30), end, dp(10))
                 addView(View(activity).apply { setBackgroundColor(activity.getColor(R.color.terracotta)) }, LinearLayout.LayoutParams(dp(4), dp(22)).apply { marginEnd = dp(10) })
                 addView(Type.text(activity, h, Type.Style.HEADING))
                 if (caption != null) addView(Type.text(activity, caption, Type.Style.CAPTION), LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(12) })
@@ -1329,8 +1389,9 @@ class MoviesPanel(
         val inner = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false; setPadding(0, dp(8), 0, dp(12)) }
         val scroller = CalmHorizontalScrollView(activity).apply {
             isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false
-            setPadding(margin, 0, margin, 0)
+            setPadding(margin, 0, end, 0)
             isHorizontalFadingEdgeEnabled = false
+            setOnScrollChangeListener { _, _, _, _, _ -> frost?.refresh() }   // posters slide beneath the frosted rail
             addView(inner)
         }
         into.addView(scroller, LinearLayout.LayoutParams(-1, -2))
@@ -1352,7 +1413,7 @@ class MoviesPanel(
             text = "IN LIBRARY"; textSize = 9f; letterSpacing = 0.08f; setTextColor(0xFFF3E9CF.toInt()); typeface = Typeface.create("sans-serif-medium", Typeface.BOLD)
             setPadding(dp(6), dp(2), dp(6), dp(2)); background = GradientDrawable().apply { cornerRadius = dp(6).toFloat(); setColor(activity.getColor(R.color.terracotta)) }
         }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(5), 0, 0, dp(5)) })
-        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> image.setImageDrawable(androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, b).apply { cornerRadius = dp(8).toFloat() }) } }
+        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> image.setImageDrawable(androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, b).apply { cornerRadius = dp(8).toFloat() }); frost?.refresh() } }
         return frame
     }
 
@@ -1421,7 +1482,7 @@ class MoviesPanel(
     private val surfaces16 by lazy { FastFocus.Surfaces(activity, dp(16).toFloat()) }
 
     /** Glides the page and the row to the focused card, the same way for every card. */
-    private fun reveal(view: View) = FastFocus.reveal(view, if (detailOpen) null else page, dp(24), dp(56), dp(44))
+    private fun reveal(view: View) = FastFocus.reveal(view, if (detailOpen) null else page, dp(24), dp(56), if (detailOpen) Cinema.px(activity, 96) else pageStart)
 
     private fun dp(v: Int) = Math.round(v * activity.resources.displayMetrics.density)
     private fun px(res: Int) = activity.resources.getDimensionPixelSize(res)
@@ -1429,20 +1490,11 @@ class MoviesPanel(
     private companion object {
         const val ROW_HEIGHT = 262   // dp reserved for a poster row that has not loaded yet, so the page does not jump
         const val SHELF_LIMIT = 16
+        const val RAIL_WIDTH = 92        // mockup px, collapsed
+        const val RAIL_WIDTH_OPEN = 420  // mockup px, with labels while the rail has focus
     }
 
     // --- The page's own marks ----------------------------------------------------------------------
-
-    /** The wordmark's emblem: a low sun over two painted stripes, after the room's paintings. */
-    private class BrandMark(context: Context) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        override fun onDraw(canvas: Canvas) {
-            val s = minOf(width, height).toFloat()
-            paint.color = context.getColor(R.color.butter); canvas.drawCircle(s * 0.5f, s * 0.38f, s * 0.27f, paint)
-            paint.color = context.getColor(R.color.terracotta); canvas.drawRoundRect(RectF(s * 0.06f, s * 0.70f, s * 0.94f, s * 0.82f), s * 0.06f, s * 0.06f, paint)
-            paint.color = context.getColor(R.color.deep_teal); canvas.drawRoundRect(RectF(s * 0.06f, s * 0.86f, s * 0.94f, s * 0.98f), s * 0.06f, s * 0.06f, paint)
-        }
-    }
 
     /**
      * Two fades of the page's ground colour (one across, one down) painted in a single pass, so a picture needs one
