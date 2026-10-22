@@ -246,6 +246,22 @@ object Cinema {
     fun glass(context: Context, radiusPx: Float, fill: Int = GLASS): android.graphics.drawable.GradientDrawable =
         android.graphics.drawable.GradientDrawable().apply { cornerRadius = pxf(context, radiusPx); setColor(fill) }
 
+    /**
+     * A row of remote hints (`key()` in the mockups): each a small glass key cap ("OK", "◀ ▶") and what it does.
+     * [pairs] are (key, label).
+     */
+    fun keyHints(context: Context, pairs: List<Pair<String, String>>, sizePx: Number = 18): LinearLayout =
+        LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            pairs.forEachIndexed { i, (key, label) ->
+                addView(text(context, key, 17, CREAM, weight = 600).apply {
+                    setPadding(px(context, 12), px(context, 5), px(context, 12), px(context, 5))
+                    background = glass(context, 9f, GLASS_STRONG)
+                }, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = px(context, 36) })
+                addView(text(context, label, sizePx, DIM, tracking = 0.04f), LinearLayout.LayoutParams(-2, -2).apply { marginStart = px(context, 10) })
+            }
+        }
+
     /** A chip (`.chip`): glass pill with an optional icon. */
     fun chip(context: Context, label: CharSequence, iconRes: Int? = null, heightPx: Int = 56, sizePx: Number = 23): LinearLayout =
         LinearLayout(context).apply {
