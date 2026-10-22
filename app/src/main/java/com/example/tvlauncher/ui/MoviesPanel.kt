@@ -1449,6 +1449,9 @@ class MoviesPanel(
         }
         val scroll = android.widget.ScrollView(activity).apply { isVerticalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(column, FrameLayout.LayoutParams(-1, -2)) }
         detail.addView(scroll, FrameLayout.LayoutParams(-1, -1))
+        // The title's own buttons sit at the top of the page: focusing one scrolls all the way up, so the title and
+        // eyebrow come back, instead of stopping at the point where the button just becomes visible.
+        (0 until buttons.childCount).forEach { i -> buttons.getChildAt(i).setOnFocusChangeListener { _, f -> if (f) scroll.post { scroll.smoothScrollTo(0, 0) } } }
         moreRow?.let { r ->
             // Room below the row, so the page can slide it up near the top of the screen.
             column.setPadding(column.paddingLeft, column.paddingTop, column.paddingRight, Cinema.px(activity, 520))
@@ -1791,26 +1794,42 @@ class MoviesPanel(
                 else -> "Not downloaded"
             }
         }
-        state.text = episodeGlyph(label())
-        row.addView(badge, LinearLayout.LayoutParams(dp(34), dp(34)))
-        row.addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
-        // Not in the library: its own Stream button, beside the row's Request. Right from the row reaches it.
-        if (mine == null && tmdb != null) {
-            val stream = Cinema.text(activity, "Stream", 20, Cinema.CREAM, weight = 600).apply {
-                gravity = Gravity.CENTER; isFocusable = true; isClickable = true; maxLines = 1
-                setPadding(dp(16), 0, dp(16), 0)
-                background = Cinema.glass(activity, 19f, Cinema.GLASS_STRONG)
+        // An episode not in the library offers two actions in its right-hand slot: play (stream it now) and download
+        // (request it). Each is a D-pad stop, so Left and Right switch between them; both darken with the row.
+        val downloadable = mine == null && tmdb != null
+        fun glyph(): String = if (downloadable && label() == "Request") "↓" else episodeGlyph(label())
+        state.text = glyph()
+        val play = if (downloadable) Cinema.text(activity, "▶", 18, Cinema.CREAM).apply {
+            gravity = Gravity.CENTER; isFocusable = true; isClickable = true
+            setOnFocusChangeListener { v, f ->
+                v.background = if (f) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Cinema.CREAM) } else null
+                (v as TextView).setTextColor(if (f) Cinema.INK else Cinema.CREAM)
+                if (f) reveal(v)
+            }
+            setOnClickListener { v -> streamNow(e, v, s.number to number, "${e.title.name} · S${s.number} E$number") }
+        } else null
+        state.apply {
+            if (downloadable) {
+                isFocusable = true; isClickable = true
                 setOnFocusChangeListener { v, f ->
-                    v.background = if (f) GradientDrawable().apply { cornerRadius = dp(19).toFloat(); setColor(Cinema.CREAM) } else Cinema.glass(activity, 19f, Cinema.GLASS_STRONG)
+                    v.background = if (f) GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Cinema.CREAM) } else null
                     (v as TextView).setTextColor(if (f) Cinema.INK else Cinema.CREAM)
                     if (f) reveal(v)
                 }
-                setOnClickListener { v -> streamNow(e, v, s.number to number, "${e.title.name} · S${s.number} E$number") }
+                setOnClickListener { row.performClick() }
             }
-            row.addView(stream, LinearLayout.LayoutParams(-2, dp(38)).apply { marginStart = dp(12) })
         }
-        row.addView(state, LinearLayout.LayoutParams(dp(40), -2))
-        FastFocus.bind(row, surfaces12, listOf(badge, title, state), rest = Cinema.glass(activity, 24f))
+        row.addView(badge, LinearLayout.LayoutParams(dp(34), dp(34)))
+        row.addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
+        if (play != null) {
+            val actions = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+            actions.addView(play, LinearLayout.LayoutParams(dp(40), dp(40)))
+            actions.addView(state, LinearLayout.LayoutParams(dp(40), dp(40)).apply { marginStart = dp(6) })
+            row.addView(actions, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        } else {
+            row.addView(state, LinearLayout.LayoutParams(dp(40), -2))
+        }
+        FastFocus.bind(row, surfaces12, listOfNotNull(badge, title, state, play), rest = Cinema.glass(activity, 24f))
         row.setOnClickListener {
             val label = label()
             when {
@@ -1829,7 +1848,7 @@ class MoviesPanel(
                                 EpisodeOutcome.NOT_FOUND -> Toast.makeText(activity, "Sonarr couldn't find that episode yet. Try again in a moment", Toast.LENGTH_LONG).show()
                                 EpisodeOutcome.FAILED -> Toast.makeText(activity, "Couldn't queue that episode right now", Toast.LENGTH_LONG).show()
                             }
-                            state.text = episodeGlyph(label())
+                            state.text = glyph()
                         }
                     }
                 }
