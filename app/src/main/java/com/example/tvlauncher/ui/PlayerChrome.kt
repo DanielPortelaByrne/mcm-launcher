@@ -159,12 +159,16 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
         val gap = p(100)
         transport.addView(roundButton(R.drawable.ic_cin_prev, 72, 44) { onPrevious(); nudge() })
         transport.addView(seekButton(R.drawable.ic_cin_b10, -10_000), LinearLayout.LayoutParams(p(96), p(96)).apply { marginStart = gap - p(28) })
+        // The disc is 112 px, but its five rings and focus glow reach well past it, so its view is sized to hold them
+        // (otherwise the controls layer clips the rings); the extra is taken back out of the gaps either side.
+        val ringRoom = p((PauseDisc.BOX - 112) / 2)
         transport.addView(pauseButton.apply { setOnClickListener { if (isPlaying()) { onPause(); setState(PlayerUi.Paused) } else { onPlay(); nudge() } } },
-            LinearLayout.LayoutParams(p(112), p(112)).apply { marginStart = gap - p(16) })
-        transport.addView(seekButton(R.drawable.ic_cin_f10, 10_000), LinearLayout.LayoutParams(p(96), p(96)).apply { marginStart = gap - p(16) })
+            LinearLayout.LayoutParams(p(PauseDisc.BOX), p(PauseDisc.BOX)).apply { marginStart = gap - p(16) - ringRoom })
+        transport.addView(seekButton(R.drawable.ic_cin_f10, 10_000), LinearLayout.LayoutParams(p(96), p(96)).apply { marginStart = gap - p(16) - ringRoom })
         nextButton = roundButton(R.drawable.ic_cin_next, 72, 44) { onNext?.invoke(); nudge() }
         transport.addView(nextButton, LinearLayout.LayoutParams(p(72), p(72)).apply { marginStart = gap - p(28) })
-        controls.addView(transport, LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL).apply { topMargin = p(640) })
+        // Centred on y = 696 as in the mockup; the row is as tall as the pause disc's ringed box.
+        controls.addView(transport, LayoutParams(-2, -2, Gravity.CENTER_HORIZONTAL).apply { topMargin = p(696 - PauseDisc.BOX / 2) })
 
         place(controls, scrubber, 50, 854, p(1820), p(92))
         controls.addView(chapterLabel, LayoutParams(-1, -2).apply { topMargin = p(952) })
@@ -559,17 +563,22 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
         private val pause = context.getDrawable(R.drawable.ic_cin_pause)!!.mutate().apply { setTint(0xFF1B120C.toInt()) }
         private val play = context.getDrawable(R.drawable.ic_cin_play)!!.mutate().apply { setTint(0xFF1B120C.toInt()) }
         init { isFocusable = true; isClickable = true; contentDescription = "Play or pause" }
+        companion object {
+            /** Mockup px the view needs: the 112 px disc, 5 rings of 9 px each side, and room for the soft focus glow. */
+            const val BOX = 112 + 2 * 45 + 2 * 50
+        }
         override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
             super.onFocusChanged(gainFocus, direction, previouslyFocusedRect); invalidate()
             animate().scaleX(if (gainFocus) 1.06f else 1f).scaleY(if (gainFocus) 1.06f else 1f).setDuration(160).start()
         }
         override fun onDraw(canvas: Canvas) {
             val c = width / 2f
+            val r = Cinema.pxf(context, 56)   // the cream disc itself; the view is larger to hold the rings and glow
             val step = Cinema.pxf(context, 9)
-            if (isFocused && android.os.Build.VERSION.SDK_INT >= 28) canvas.drawCircle(c, c, c + step * 6, glow)
+            if (isFocused && android.os.Build.VERSION.SDK_INT >= 28) canvas.drawCircle(c, c, r + step * 6, glow)
             // Outermost first: maroon, red, terracotta, orange, saffron, then the cream disc.
-            for (i in 5 downTo 1) { paint.color = Cinema.RINGS[5 - i]; canvas.drawCircle(c, c, c + step * i, paint) }
-            paint.color = Cinema.CREAM; canvas.drawCircle(c, c, c, paint)
+            for (i in 5 downTo 1) { paint.color = Cinema.RINGS[5 - i]; canvas.drawCircle(c, c, r + step * i, paint) }
+            paint.color = Cinema.CREAM; canvas.drawCircle(c, c, r, paint)
             val icon = if (playing) pause else play
             val s = Cinema.px(context, 25)
             icon.setBounds((c - s).toInt(), (c - s).toInt(), (c + s).toInt(), (c + s).toInt()); icon.draw(canvas)
