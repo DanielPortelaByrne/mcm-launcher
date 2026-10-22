@@ -172,6 +172,26 @@ class FakeServers:
                 self.pieces_done = i + 1
 
 
+class StatusFields(unittest.TestCase):
+    """The player's loading screen and Stream card read speed and size from /status."""
+
+    def setUp(self):
+        self.streams = svc.Streams(Path(tempfile.mkdtemp()), host_media=Path(tempfile.mkdtemp()))
+        self.streams.torrent = lambda h: {'num_seeds': 7, 'num_leechs': 3, 'progress': 0.25, 'dlspeed': 2_400_000}
+
+    def test_connecting_reports_speed(self):
+        self.streams.pending[HASH] = {'label': 'Heat 1995', 'error': None}
+        status = self.streams.status(HASH)
+        self.assertEqual((status['phase'], status['seeds'], status['peers'], status['speed']), ('connecting', 7, 3, 2_400_000))
+
+    def test_buffering_reports_speed_and_film_size(self):
+        self.streams.known[HASH] = {'label': 'Heat 1995', 'size': 900}
+        self.streams.downloaded_until = lambda entry, start: 0
+        status = self.streams.status(HASH)
+        self.assertEqual(status['phase'], 'buffering')
+        self.assertEqual((status['speed'], status['size'], status['progress']), (2_400_000, 900, 0.25))
+
+
 class EndToEnd(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())

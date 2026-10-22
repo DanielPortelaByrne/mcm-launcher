@@ -7,7 +7,11 @@ import android.view.FocusFinder
 import android.view.View
 import android.widget.ScrollView
 
-/** Left at the edge of a shelf returns to the active menu item, rather than the nearest unrelated icon. */
+/**
+ * The Cinema page's focus rules. Left at the edge of a row returns to the active rail item, rather than the nearest
+ * unrelated one; Up and Down stay on the page (they never jump sideways into the rail), and at the page's ends the
+ * key is simply absorbed.
+ */
 class CinemaContentScrollView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -25,6 +29,9 @@ class CinemaContentScrollView @JvmOverloads constructor(
                 if (from.top < to.bottom && to.top < from.bottom) return inside
             }
             navigationTarget?.invoke()?.takeIf { it.isShown && it.isFocusable }?.let { return it }
+        }
+        if (direction == View.FOCUS_UP || direction == View.FOCUS_DOWN) {
+            return FocusFinder.getInstance().findNextFocus(this, focused, direction) ?: focused
         }
         return super.focusSearch(focused, direction)
     }

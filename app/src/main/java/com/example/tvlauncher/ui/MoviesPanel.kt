@@ -76,6 +76,10 @@ import com.example.tvlauncher.design.cinema.HeroBackdrop
 import com.example.tvlauncher.design.cinema.PosterCard
 import com.example.tvlauncher.design.cinema.Scrim
 import com.example.tvlauncher.design.cinema.StripePoster
+import com.example.tvlauncher.design.cinema.StreamLoadingView
+import com.example.tvlauncher.design.cinema.CinemaBar
+import com.example.tvlauncher.design.cinema.GlowCard
+import com.example.tvlauncher.design.cinema.RibbonView
 import com.example.tvlauncher.design.cinema.StripeDrawable
 import com.example.tvlauncher.design.Type
 import com.example.tvlauncher.ui.room.JellyfinConnectSheet
@@ -185,7 +189,7 @@ class MoviesPanel(
         styleTabs(); build(); loadStorage()
     }
 
-    fun hide() { closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++; ui.removeCallbacks(heroTick) }
+    fun hide() { closeStreamLoading(); closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++; ui.removeCallbacks(heroTick) }
     fun close() {
         navigationFocusListener?.let { if (top.viewTreeObserver.isAlive) top.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
         worker.shutdownNow(); images.close()
@@ -193,6 +197,7 @@ class MoviesPanel(
 
     /** Back closes a title's page, then steps back through where the viewer has been, then lets the panel close. */
     fun back(): Boolean {
+        if (streamLoading != null) { closeStreamLoading(); return true }
         if (detailOpen) { closeDetail(restoreFocus = true); return true }
         if (trail.isNotEmpty()) { current = trail.removeLast(); styleTabs(); build(); return true }
         if (!top.hasFocus()) { activeNavigationItem()?.requestFocus(); return true }
@@ -202,6 +207,19 @@ class MoviesPanel(
 
     /** Debug builds only (see MainActivity): opens a destination by name for UI-review screenshots. */
     fun debugGo(name: String) {
+        // "loading": the stream loading screen as it first appears, without asking the server for anything.
+        if (name == "loading") {
+            go(Dest.Films)
+            worker.execute {
+                val e = catalog.shelf(Catalog.filmsPage().first()).titles.firstOrNull()?.let { entry(it) } ?: return@execute
+                activity.runOnUiThread {
+                    val screen = StreamLoadingView(activity, e.title.name)
+                    (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1)); streamLoading = screen
+                    e.title.backdropUrl?.let { u -> images.load(u, maxWidth = 1280) { b -> screen.backdrop(b) } }
+                }
+            }
+            return
+        }
         // "detail-library" / "detail-film": a title page for a library film, or a film not in the library.
         if (name.startsWith("detail-")) {
             go(Dest.Films)
@@ -336,6 +354,24 @@ class MoviesPanel(
         return row
     }
 
+    /**
+     * D-pad moves the Cinema page handles itself, ahead of ordinary focus search (MainActivity asks first). The
+     * loading screen swallows them; in the rail, Up and Down step through the items (stopping at the ends), Right
+     * returns to where you were on the page, and Left goes nowhere. Returns false to let the views decide.
+     */
+    fun navigate(focused: View, direction: Int): Boolean {
+        if (streamLoading != null) return true
+        if (!isWithin(focused, top)) return false
+        val items = tabs.keys.toList()
+        val at = items.indexOfFirst { isWithin(focused, it) }
+        when (direction) {
+            View.FOCUS_RIGHT -> focusContent()
+            View.FOCUS_UP -> items.getOrNull(at - 1)?.requestFocus()
+            View.FOCUS_DOWN -> items.getOrNull(at + 1)?.requestFocus()
+        }
+        return true
+    }
+
     private fun focusContent() {
         val previous = lastContentFocus?.takeIf { it.isAttachedToWindow && it.isShown && it.isEnabled && it.isFocusable }
         if (previous?.requestFocus() == true) return
@@ -356,7 +392,6 @@ class MoviesPanel(
         }
         return false
     }
-
     private fun setNavigationExpanded(expanded: Boolean) {
         if (navigationExpanded == expanded) return
         navigationExpanded = expanded
@@ -574,17 +609,56 @@ class MoviesPanel(
     /** Requests still on their way to a finished file: waiting to be approved, looking for a release, or downloading. */
     private val pendingStages = setOf(Stage.WAITING_APPROVAL, Stage.SEARCHING, Stage.DOWNLOADING)
 
+    /** The four counts at the top of Downloads; the busiest one is lit saffron. */
+    private class StatTiles(val row: LinearLayout, val values: List<TextView>, val tiles: List<View>)
+
+    private fun statTiles(): StatTiles {
+        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        val values = ArrayList<TextView>(); val tiles = ArrayList<View>()
+        listOf("Downloading", "Queued", "Finding sources", "Awaiting release").forEachIndexed { i, label ->
+            val tile = LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(Cinema.px(activity, 24), 0, Cinema.px(activity, 16), 0)
+                background = Cinema.glass(activity, 22f)
+            }
+            val value = Cinema.text(activity, "–", 42, Cinema.CREAM, serif = true)
+            tile.addView(value)
+            tile.addView(Cinema.text(activity, label, 15, Cinema.DIM, weight = 500, tracking = 0.12f, caps = true).apply { maxLines = 1 }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 6) })
+            row.addView(tile, LinearLayout.LayoutParams(Cinema.px(activity, 276), Cinema.px(activity, 96)).apply { if (i > 0) marginStart = Cinema.px(activity, 20) })
+            values += value; tiles += tile
+        }
+        return StatTiles(row, values, tiles)
+    }
+
+    private fun updateStats(stats: StatTiles, counts: List<Int>) {
+        val busiest = counts.withIndex().filter { it.value > 0 }.maxByOrNull { it.value }?.index
+        counts.forEachIndexed { i, n ->
+            stats.values[i].text = "$n"
+            stats.values[i].setTextColor(if (i == busiest) Cinema.SAFFRON else Cinema.CREAM)
+            stats.tiles[i].background = Cinema.glass(activity, 22f, if (i == busiest) Cinema.alpha(Cinema.SAFFRON, 0.1f) else Cinema.GLASS)
+        }
+    }
+
     private fun buildDownloads(gen: Int) {
         val margin = pageStart
-        pageTitle("Downloads")
-        content.addView(Type.text(activity, "What you have asked for, and how far along it is", Type.Style.CAPTION).apply { setPadding(margin, 0, 0, dp(6)) })
+        // Header (`21-downloads`): the ribbon looping in from the top right, eyebrow, big title and a line beneath.
+        val header = FrameLayout(activity).apply { clipChildren = false }
+        header.addView(RibbonView.downloads(activity), FrameLayout.LayoutParams(-1, Cinema.px(activity, 330)).apply { topMargin = -Cinema.px(activity, 52) })
+        val heading = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(margin, 0, pageEnd, 0) }
+        heading.addView(Cinema.eyebrow(activity, listOf("Request queue")))
+        heading.addView(Cinema.title(activity, "Downloads", 84, maxLines = 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 14) })
+        heading.addView(Cinema.text(activity, "What you’ve asked for, and how far along it is", 24, Cinema.MUTED, weight = 300), LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 14) })
+        header.addView(heading, FrameLayout.LayoutParams(-1, -2))
+        content.addView(header, LinearLayout.LayoutParams(-1, -2))
         if (!seerr.isSignedIn) {
             content.addView(actionCard("Sign in to see your downloads", "Use your Jellyfin account") { seerrSheet.show(seerr, jellyfin) { if (isVisible) build() } },
-                LinearLayout.LayoutParams(dp(380), dp(64)).apply { marginStart = margin; topMargin = dp(10) })
+                LinearLayout.LayoutParams(Cinema.px(activity, 720), Cinema.px(activity, 128)).apply { marginStart = margin; topMargin = Cinema.px(activity, 56) })
             return
         }
+        val stats = statTiles()
+        content.addView(stats.row, LinearLayout.LayoutParams(-2, -2).apply { marginStart = margin; topMargin = Cinema.px(activity, 56) })
         val holder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
-        content.addView(holder, LinearLayout.LayoutParams(-1, -2))
+        content.addView(holder, LinearLayout.LayoutParams(-1, -2).apply { topMargin = Cinema.px(activity, 14) })
         holder.addView(note("Loading…").apply { setPadding(margin, dp(10), 0, 0) })
         var firstLoad = true
         var loading = false
@@ -619,17 +693,19 @@ class MoviesPanel(
                     val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) { refresh() } } +
                         wanted.map { (tmdb, eps) -> wantedRow(tmdb, eps) { refresh() } }
                     if (rows.isEmpty()) holder.addView(note(if (queue == null) "Couldn't reach the download queue just now." else "Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
-                    queue?.let { q -> holder.addView(Type.text(activity, "${q.count { it.isDownloading }} downloading  ·  ${q.count { it.isWaiting }} queued  ·  ${q.count { it.status in setOf("metadata", "stalled") }} finding sources  ·  ${requests.count { it.stage == Stage.SEARCHING && diagnostics[it.id]?.stopped != true }} awaiting a release", Type.Style.CAPTION).apply { setPadding(margin, dp(4), 0, 0) }) }
-                    rows.forEachIndexed { i, r -> holder.addView(r, LinearLayout.LayoutParams(-1, dp(104)).apply { setMargins(margin, if (i > 0) dp(14) else dp(10), margin, 0) }) }
+                    val q = queue.orEmpty()
+                    updateStats(stats, listOf(q.count { it.isDownloading }, q.count { it.isWaiting }, q.count { it.status in setOf("metadata", "stalled") },
+                        requests.count { it.stage == Stage.SEARCHING && diagnostics[it.id]?.stopped != true }))
+                    rows.forEachIndexed { i, r -> holder.addView(r, LinearLayout.LayoutParams(-1, Cinema.px(activity, 128)).apply { setMargins(margin, Cinema.px(activity, if (i > 0) 14 else 28), pageEnd, 0) }) }
                     // Everything not yet finished, including requests no release has been found for. Kept last so first focus stays on the top row.
                     val pendingQueue = queue.orEmpty().filter { it.canCancel && (it.isActive || it.isWaiting) }
                     val pendingRequests = requests.filter { it.stage in pendingStages && diagnostics[it.id]?.stopped != true }
                     if (pendingQueue.isNotEmpty() || pendingRequests.isNotEmpty() || wantedEpisodes.isNotEmpty()) {
                         val total = pendingQueue.size + pendingRequests.size + wantedEpisodes.size
                         holder.addView(pill("Cancel all pending ($total)", accent = false).apply { setOnClickListener { cancelAllPending(pendingQueue, pendingRequests, wantedEpisodes) { refresh() } } },
-                            LinearLayout.LayoutParams(dp(380), dp(56)).apply { setMargins(margin, dp(18), 0, 0) })
+                            LinearLayout.LayoutParams(-2, Cinema.px(activity, 76)).apply { setMargins(margin, Cinema.px(activity, 36), 0, 0) })
                     }
-                    if (firstLoad) { firstLoad = false; holder.getChildAt(if (holder.getChildAt(0) is TextView) 1 else 0)?.let { requestFocusRobust(overlay as ViewGroup, it) } }
+                    if (firstLoad) { firstLoad = false; (0 until holder.childCount).map { holder.getChildAt(it) }.firstOrNull { it.isFocusable }?.let { requestFocusRobust(overlay as ViewGroup, it) } }
                     else focused?.let { holder.getChildAt(it)?.requestFocus() }
                     loadStorage()
                     // Progress moves, so look again every little while for as long as this page is the one on screen.
@@ -694,31 +770,51 @@ class MoviesPanel(
         ))
     }
 
+    /**
+     * One request on the Downloads page (`.dl`): a glass card with the poster, "Title · S1 E7 · Name", a status dot and
+     * line, a striped progress bar (sweeping while sources are being found) and the percentage in Fraunces ("—" when
+     * nothing is known).
+     */
+    private fun requestCard(posterUrl: String?, name: String, detail: String?, status: String, active: Boolean, progress: Float?, sweeping: Boolean, failed: Boolean = false): GlowCard {
+        val card = GlowCard(activity, 26f).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(Cinema.px(activity, 20), 0, Cinema.px(activity, 36), 0); contentDescription = name }
+        val thumb = FrameLayout(activity).apply {
+            setBackgroundColor(Cinema.PLACEHOLDER); clipToOutline = true; elevation = Cinema.pxf(activity, 8)
+            outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, Cinema.pxf(activity, 10)) } }
+        }
+        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        thumb.addView(image, FrameLayout.LayoutParams(-1, -1))
+        posterUrl?.let { u -> images.load(u) { b -> image.setImageBitmap(b) } }
+        card.addView(thumb, LinearLayout.LayoutParams(Cinema.px(activity, 68), Cinema.px(activity, 96)))
+
+        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
+        val line = android.text.SpannableStringBuilder(name).apply {
+            detail?.takeIf { it.isNotBlank() }?.let { d ->
+                val start = length; append(" ·  $d")
+                setSpan(android.text.style.ForegroundColorSpan(Cinema.MUTED), start, length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        }
+        column.addView(Cinema.text(activity, line, 27, Cinema.CREAM, weight = 500).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        val statusRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        statusRow.addView(Cinema.dot(activity, when { failed -> Cinema.TERRA; active -> Cinema.SAFFRON; else -> Cinema.DIM }, 9), LinearLayout.LayoutParams(Cinema.px(activity, 9), Cinema.px(activity, 9)).apply { marginEnd = Cinema.px(activity, 10) })
+        statusRow.addView(Cinema.text(activity, status, 19, Cinema.MUTED).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        column.addView(statusRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = Cinema.px(activity, 8) })
+        column.addView(CinemaBar(activity).apply { this.progress = progress; indeterminate = progress == null && sweeping },
+            LinearLayout.LayoutParams(-1, Cinema.px(activity, 14)).apply { topMargin = Cinema.px(activity, 14) })
+        card.addView(column, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = Cinema.px(activity, 28) })
+        val percent = if (progress != null) Cinema.text(activity, "${Math.round(progress * 100)}%", 44, Cinema.CREAM, serif = true)
+                      else Cinema.text(activity, "—", 30, Cinema.DIM)
+        card.addView(percent.apply { gravity = Gravity.END }, LinearLayout.LayoutParams(Cinema.px(activity, 120), -2).apply { marginStart = Cinema.px(activity, 28) })
+        card.onFocus = { lit -> if (lit) reveal(card) }
+        return card
+    }
+
     /** A queued torrent: open its controls to change priority, force it to start, or cancel it. */
     private fun queueRow(item: QueueItem, refresh: () -> Unit): View {
         val kind = if (item.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE
         val info = knownTitles[item.tmdbId * 2 + if (kind == Kind.SHOW) 1 else 0]
-        val radius = dp(14).toFloat()
-        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(12), dp(8), dp(16), dp(8)) }
-        val posterBox = FrameLayout(activity).apply { background = GradientDrawable().apply { cornerRadius = dp(6).toFloat(); setColor(0xFF3A2C1E.toInt()) } }
-        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        posterBox.addView(image, FrameLayout.LayoutParams(-1, -1))
-        info?.second?.let { u -> images.load(u) { b -> image.setImageDrawable(androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, b).apply { cornerRadius = dp(6).toFloat() }) } }
-        row.addView(posterBox, LinearLayout.LayoutParams(dp(56), dp(84)))
-
         val status = queueStatus(item)
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        val title = Type.text(activity, listOfNotNull(item.title, item.detail).joinToString("  ·  "), Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
-        val line = Type.text(activity, status, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }
-        column.addView(title); column.addView(line, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
-        column.addView(ProgressBar(activity, item.progress(), activity.getColor(R.color.terracotta)), LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
-        row.addView(column, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
-        val labels = mutableListOf<TextView>(title, line)
-        item.progress()?.let { p ->
-            val percent = TextView(activity).apply { text = "${Math.round(p * 100)}%"; textSize = 24f; typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(R.color.ivory)); gravity = Gravity.END }
-            labels += percent; row.addView(percent, LinearLayout.LayoutParams(dp(76), -2))
-        }
-        FastFocus.bind(row, surfaces16, labels, rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
+        val row = requestCard(info?.second, item.title, item.detail, status, active = item.isDownloading || item.status == "metadata",
+            progress = item.progress(), sweeping = item.status == "metadata" || (item.status == "queued" && !item.clientVerified), failed = item.status == "failed")
         row.setOnClickListener {
             val actions = mutableListOf<SheetAction>()
             if (item.canPrioritize) {
@@ -765,21 +861,7 @@ class MoviesPanel(
         val sorted = episodes.sortedWith(compareBy({ it.season }, { it.number }))
         val listed = sorted.take(3).joinToString(", ") { "S${it.season} E${it.number}" } + if (sorted.size > 3) " +${sorted.size - 3}" else ""
         val status = "Waiting for a release · $listed"
-        val radius = dp(14).toFloat()
-        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(12), dp(8), dp(16), dp(8)) }
-        val posterBox = FrameLayout(activity).apply { background = GradientDrawable().apply { cornerRadius = dp(6).toFloat(); setColor(0xFF3A2C1E.toInt()) } }
-        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        posterBox.addView(image, FrameLayout.LayoutParams(-1, -1))
-        info?.second?.let { u -> images.load(u) { b -> image.setImageDrawable(androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(activity.resources, b).apply { cornerRadius = dp(6).toFloat() }) } }
-        row.addView(posterBox, LinearLayout.LayoutParams(dp(56), dp(84)))
-
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        val titleView = Type.text(activity, title, Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
-        val line = Type.text(activity, status, Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }
-        column.addView(titleView); column.addView(line, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
-        column.addView(ProgressBar(activity, null, activity.getColor(R.color.terracotta)), LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
-        row.addView(column, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
-        FastFocus.bind(row, surfaces16, listOf(titleView, line), rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
+        val row = requestCard(info?.second, title, listed, "Waiting for a release", active = false, progress = null, sweeping = false)
         row.setOnClickListener {
             infoSheet.show("WANTED", title, null, listOf(status, "Cancelling stops looking for these episodes. Anything already downloaded is kept."), null, listOf(
                 SheetAction("Cancel", "Stop looking for them", primary = true) {
@@ -825,31 +907,8 @@ class MoviesPanel(
     /** One request: poster, title, what is happening, and a bar for how far it has got. */
     private fun downloadRow(r: SeerrRequest, refresh: () -> Unit): View {
         val info = knownTitles[titleKey(r)]
-        val radius = dp(14).toFloat()
-        val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; setPadding(dp(12), dp(8), dp(16), dp(8)) }
-        val posterBox = FrameLayout(activity).apply {
-            clipToOutline = true; setBackgroundColor(0xFF3A2C1E.toInt())
-            outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(6).toFloat()) } }
-        }
-        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-        posterBox.addView(image, FrameLayout.LayoutParams(-1, -1))
-        info?.second?.let { u -> images.load(u) { b -> image.setImageBitmap(b) } }
-        row.addView(posterBox, LinearLayout.LayoutParams(dp(56), dp(84)))
-
-        val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        val title = Type.text(activity, info?.first ?: "Title ${r.tmdbId}", Type.Style.BODY).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
-        val status = Type.text(activity, statusLine(r), Type.Style.CAPTION).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END; textSize = 13f }
-        column.addView(title); column.addView(status, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(3) })
-        val colour = activity.getColor(when (r.stage) { Stage.READY -> R.color.deep_teal; Stage.DECLINED, Stage.FAILED -> R.color.walnut; else -> R.color.terracotta })
-        column.addView(ProgressBar(activity, r.progress(), colour), LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
-        row.addView(column, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = dp(14) })
-        val labels = mutableListOf<TextView>(title, status)
-        r.progress()?.let { p ->
-            val percent = TextView(activity).apply { text = "${Math.round(p * 100)}%"; textSize = 24f; typeface = Typeface.create("serif", Typeface.BOLD); setTextColor(activity.getColor(R.color.ivory)); gravity = Gravity.END }
-            labels += percent
-            row.addView(percent, LinearLayout.LayoutParams(dp(76), -2))
-        }
-        FastFocus.bind(row, surfaces16, labels, rest = LauncherTheme.tileBackground(activity, radius)) { lit -> if (lit) reveal(row) }
+        val row = requestCard(info?.second, info?.first ?: "Title ${r.tmdbId}", null, statusLine(r), active = r.stage == Stage.DOWNLOADING || r.stage == Stage.SEARCHING,
+            progress = r.progress(), sweeping = r.stage == Stage.SEARCHING && requestDiagnostics[r.id]?.stopped != true, failed = r.stage == Stage.FAILED || r.stage == Stage.DECLINED)
         if (r.canCancel) row.setOnClickListener {
             val name = info?.first ?: "Title ${r.tmdbId}"
             val actions = mutableListOf<SheetAction>()
@@ -896,17 +955,6 @@ class MoviesPanel(
         Stage.READY -> "Ready to watch in your library"
         Stage.DECLINED -> "Declined"
         Stage.FAILED -> "Failed · the download could not be completed"
-        }
-    }
-
-    /** A thin track with a fill; with no progress to show it is just the track, never a made-up figure. */
-    private class ProgressBar(context: Context, private val progress: Float?, private val colour: Int) : View(context) {
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        override fun onDraw(canvas: Canvas) {
-            val r = height / 2f
-            paint.color = Color.argb(110, 121, 86, 56); canvas.drawRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), r, r, paint)   // walnut: shows on dark and on the lit row
-            val p = progress ?: return
-            if (p > 0f) { paint.color = colour; canvas.drawRoundRect(RectF(0f, 0f, maxOf(height.toFloat(), width * p), height.toFloat()), r, r, paint) }
         }
     }
 
@@ -1067,7 +1115,12 @@ class MoviesPanel(
         val focusedAt = (0 until heroButtons.childCount).firstOrNull { heroButtons.getChildAt(it).isFocused } ?: -1
         heroButtons.removeAllViews()
         val gap = Cinema.px(activity, 20)
-        fun add(b: CinemaButton) = heroButtons.addView(b, LinearLayout.LayoutParams(-2, Cinema.px(activity, 76)).apply { if (heroButtons.childCount > 0) marginStart = gap })
+        fun add(b: CinemaButton) {
+            // Coming back up to the featured title shows all of it: the page returns to the very top, not just far
+            // enough to reveal the button.
+            b.setOnFocusChangeListener { _, f -> if (f && !detailOpen) page.post { page.smoothScrollTo(0, 0) } }
+            heroButtons.addView(b, LinearLayout.LayoutParams(-2, Cinema.px(activity, 76)).apply { if (heroButtons.childCount > 0) marginStart = gap })
+        }
         e.library?.let { lib -> add(CinemaButton(activity, CinemaButton.Kind.PRIMARY, "Watch now", R.drawable.ic_cin_play).apply { setOnClickListener { watch(lib, t) } }) }
             ?: if (t.kind == Kind.MOVIE) add(CinemaButton(activity, CinemaButton.Kind.PRIMARY, "Stream now", R.drawable.ic_cin_play).apply { setOnClickListener { streamNow(e, this) } }) else Unit
         add(CinemaButton(activity, CinemaButton.Kind.GLASS, "More info", R.drawable.ic_cin_info).apply { setOnClickListener { openDetail(e, heroRelated) } })
@@ -1295,31 +1348,61 @@ class MoviesPanel(
     }
 
     /** Streams a seeded copy from the home stream service into the player, without waiting for a download. */
+    private var streamLoading: StreamLoadingView? = null
+    private var streamToken = 0
+    private var streamReturnFocus: View? = null
+
+    /**
+     * Streams a seeded copy from the home stream service into the player, without waiting for a download. The loading
+     * screen goes up at once (the search can take a minute) and the player takes over the same screen when a copy is
+     * found. Back cancels while it searches.
+     */
     private fun streamNow(e: Entry, button: View) {
         if (!seerr.isSignedIn) { seerrSheet.show(seerr, jellyfin) { streamNow(e, button) }; return }
-        fun label(text: String) { when (button) { is CinemaButton -> button.setText(text); is TextView -> button.text = text } }
-        // The search can take a minute, so the button itself says so until the answer arrives.
-        label("Finding a stream…"); button.isEnabled = false; button.alpha = 0.6f
-        Toast.makeText(activity, "Finding a copy of ${e.title.name}. This can take a minute.", Toast.LENGTH_LONG).show()
+        val token = ++streamToken
+        streamReturnFocus = button
+        val screen = StreamLoadingView(activity, e.title.name).apply {
+            isFocusable = true; isFocusableInTouchMode = true
+            // Nothing on the screen is selectable: keep the D-pad from wandering to the page underneath.
+            setOnKeyListener { _, code, _ -> code != android.view.KeyEvent.KEYCODE_BACK }
+        }
+        (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1))
+        streamLoading = screen
+        screen.requestFocus()
+        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u -> images.load(u, maxWidth = 1280) { b -> screen.backdrop(b) } }
+        fun failed(message: String) {
+            screen.message(message); screen.stats(null, null, null, null)
+            ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 3500)
+        }
         worker.execute {
             val result = seerr.startStream(e.title.name, e.title.year)
             activity.runOnUiThread {
-                label("Stream now"); button.isEnabled = true; button.alpha = 1f
+                if (token != streamToken) return@runOnUiThread   // cancelled with Back
                 android.util.Log.i("StreamNow", "status=${result.status} for ${e.title.name}")
                 when (result.status) {
                     StreamStatus.READY -> {
-                        val url = result.url ?: return@runOnUiThread
+                        val url = result.url ?: return@runOnUiThread failed("The stream service didn't send a link. Try again in a minute.")
+                        screen.message("Found a copy. Starting the player…")
                         val candidate = StreamCandidate("stream:${e.title.key}", PlayerActivity.STREAM_PROVIDER, result.label ?: e.title.name, url, null, StreamMetadata())
                         PlayerActivity.launch(activity, listOf(RankedStream(candidate, 100, 0L, false, Verdict.RECOMMENDED, null, emptyList())), e.title.name, e.title.imdbId,
                             artUrl = e.title.backdropUrl ?: e.title.posterUrl)
+                        // The player opens over this same screen; take it down once it is covered.
+                        ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 1500)
                     }
-                    StreamStatus.NOT_SIGNED_IN -> seerrSheet.show(seerr, jellyfin) { streamNow(e, button) }
-                    StreamStatus.NOT_FOUND -> Toast.makeText(activity, "No seeded copy of ${e.title.name} was found on your indexers.", Toast.LENGTH_LONG).show()
-                    StreamStatus.CONNECTING -> Toast.makeText(activity, "Still connecting to the sources. Try again in a minute.", Toast.LENGTH_LONG).show()
-                    StreamStatus.UNAVAILABLE -> Toast.makeText(activity, "The stream service isn't reachable.", Toast.LENGTH_LONG).show()
+                    StreamStatus.NOT_SIGNED_IN -> { closeStreamLoading(); seerrSheet.show(seerr, jellyfin) { streamNow(e, button) } }
+                    StreamStatus.NOT_FOUND -> failed("No seeded copy of ${e.title.name} was found on your indexers.")
+                    StreamStatus.CONNECTING -> failed("Still connecting to the sources. Try again in a minute.")
+                    StreamStatus.UNAVAILABLE -> failed("The stream service isn't reachable.")
                 }
             }
         }
+    }
+
+    private fun closeStreamLoading() {
+        val screen = streamLoading ?: return
+        streamLoading = null; streamToken++
+        (overlay as ViewGroup).removeView(screen)
+        streamReturnFocus?.takeIf { it.isAttachedToWindow }?.requestFocus()
     }
 
     private fun watch(item: JellyfinItem, title: Title) {
@@ -1564,6 +1647,7 @@ class MoviesPanel(
             setPadding(margin, 0, end, 0)
             isHorizontalFadingEdgeEnabled = false
             setOnScrollChangeListener { _, _, _, _, _ -> frost?.refresh() }   // posters slide beneath the frosted rail
+            leftLeavesToRail = inset   // a page row hands Left at its start to the rail (title pages have no rail)
             addView(inner)
         }
         into.addView(scroller, LinearLayout.LayoutParams(-1, -2))

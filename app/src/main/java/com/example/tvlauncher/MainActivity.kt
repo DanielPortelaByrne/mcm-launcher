@@ -453,6 +453,12 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun isInside(view: android.view.View, parent: android.view.View): Boolean {
+        var node: android.view.ViewParent? = view.parent
+        while (node != null) { if (node === parent) return true; node = node.parent }
+        return false
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // While an app is held for rearranging, the remote belongs to the drag no matter where focus is.
         if (organiseIndex != null && onOrganiseKey(event.keyCode, event)) return true
@@ -485,6 +491,12 @@ class MainActivity : AppCompatActivity() {
                     if (focused == null || focused === overlay || overlay.findFocus() == null) {
                         // Focus strayed behind the overlay, or the overlay itself took it (slow devices): hand it to a child.
                         (android.view.FocusFinder.getInstance().findNextFocus(overlay, null, direction) ?: overlay).requestFocus()
+                    } else if (overlayId == R.id.moviesOverlay && moviesPanel.navigate(focused, direction)) {
+                        // The rail and the loading screen move focus themselves.
+                    } else if (overlayId == R.id.moviesOverlay) {
+                        // Cinema has its own focus rules (Left from a row goes to the page's rail item, rows never
+                        // leak into each other), so ask the views themselves, still staying inside the overlay.
+                        focused.focusSearch(direction)?.takeIf { it !== focused && isInside(it, overlay) }?.requestFocus(direction)
                     } else {
                         // Only ever move to something inside the overlay; at its edges the key is simply absorbed.
                         android.view.FocusFinder.getInstance().findNextFocus(overlay, focused, direction)?.requestFocus(direction)

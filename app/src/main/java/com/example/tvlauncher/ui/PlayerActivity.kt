@@ -57,7 +57,6 @@ import android.graphics.drawable.GradientDrawable
 import android.text.TextUtils
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ProgressBar
 
 private const val TAG = "SmartStream"
 
@@ -79,7 +78,6 @@ class PlayerActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     /** Loading screen for a stream: artwork, title and live status, until the first frame. */
     private var loadingView: View? = null
-    private var loadingStatus: TextView? = null
     private var titleLabel: TextView? = null
     private var art: String? = null
     private lateinit var player: ExoPlayer
@@ -335,7 +333,9 @@ class PlayerActivity : AppCompatActivity() {
         record(failed = true)
         player.stop()
         if (index + 1 < items.size) {
-            Toast.makeText(this, "Trying another version…", Toast.LENGTH_SHORT).show()
+            // While the loading screen is up it says so itself; mid-film a short note is all there is room for.
+            loadingScreen?.takeIf { loadingView?.visibility == View.VISIBLE }?.message("Trying another version…")
+                ?: Toast.makeText(this, "Trying another version…", Toast.LENGTH_SHORT).show()
             startAttempt(index + 1)
             if (position > 60_000) player.seekTo(position)
         } else fallBackToStremio("no version could be played")
@@ -459,26 +459,14 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun dp(v: Int) = Math.round(v * resources.displayMetrics.density)
 
-    /** The film's artwork dimmed under its title, with what the home server is doing right now. */
-    private fun buildLoading(): View {
-        val box = FrameLayout(this).apply { setBackgroundColor(0xFF0E0A07.toInt()) }
-        val artView = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0.45f }
-        box.addView(artView, FrameLayout.LayoutParams(-1, -1))
-        art?.let { url -> com.example.tvlauncher.ui.RemoteImages(this).load(url, maxWidth = 1280) { artView.setImageBitmap(it) } }
-        box.addView(View(this).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xFF0E0A07.toInt(), 0x330E0A07))
-        }, FrameLayout.LayoutParams(-1, -1))
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(64), 0, dp(64), dp(80)) }
-        column.addView(Type.text(this, "NOW LOADING", Type.Style.EYEBROW).apply { setTextColor(getColor(com.example.tvlauncher.R.color.butter)) })
-        column.addView(Type.text(this, title, Type.Style.TITLE).apply { textSize = 52f; maxLines = 2; ellipsize = TextUtils.TruncateAt.END },
-            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
-        loadingStatus = Type.text(this, "Finding a copy…", Type.Style.CAPTION).apply { textSize = 18f; setTextColor(0xD9F3E9CF.toInt()) }
-        column.addView(loadingStatus, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
-        column.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { isIndeterminate = true },
-            LinearLayout.LayoutParams(dp(360), dp(4)).apply { topMargin = dp(16) })
-        box.addView(column, FrameLayout.LayoutParams(-1, -1, Gravity.BOTTOM))
-        return box
+    /** The Cinema loading screen (the same one the Movies page shows while finding a copy), until the first frame. */
+    private fun buildLoading(): View = com.example.tvlauncher.design.cinema.StreamLoadingView(this, title).also { v ->
+        loadingScreen = v
+        v.message("Connecting to the sources…")
+        art?.let { url -> com.example.tvlauncher.ui.RemoteImages(this).load(url, maxWidth = 1280) { v.backdrop(it) } }
     }
+
+    private var loadingScreen: com.example.tvlauncher.design.cinema.StreamLoadingView? = null
 
     /** Asks the home server where the film is, once a second, until the first frame is on screen. */
     private fun pollStatus() {
@@ -496,16 +484,26 @@ class PlayerActivity : AppCompatActivity() {
 
     private fun applyStatus(info: JSONObject?) {
         if (started || isFinishing) return
-        when (info?.optString("phase")) {
-            "connecting" -> loadingStatus?.text = "Finding peers · ${info.optInt("seeds")} seeds"
-            "buffering" -> loadingStatus?.text = "Buffering · ${info.optInt("peers")} peers · ${(info.optDouble("progress") * 100).toInt()}% of the film so far"
-            "ready" -> loadingStatus?.text = "Starting…"
-            "failed" -> {
-                Toast.makeText(this, "Couldn't start this film. Try again in a minute.", Toast.LENGTH_LONG).show()
-                finish(); return
-            }
-            else -> loadingStatus?.text = "Connecting to the sources…"
+        val screen = loadingScreen
+        val phase = info?.optString("phase")
+        val seeds = info?.takeIf { it.has("seeds") }?.optInt("seeds")
+        val peers = info?.takeIf { it.has("peers") }?.optInt("peers")
+        // `speed` and `size` come from newer stream services only; without them the chips show a dash.
+        val speed = info?.takeIf { it.has("speed") }?.optLong("speed")
+        val progress = info?.takeIf { it.has("progress") }?.optDouble("progress")?.toFloat()
+        if (phase == "failed") {
+            screen?.message("Couldn't start this film. Try again in a minute.")
+            handler.postDelayed({ if (!isFinishing) finish() }, 3500)
+            return
         }
+        screen?.step(com.example.tvlauncher.data.stream.LoadingStep.from(phase, seeds ?: 0, peers ?: 0))
+        screen?.stats(seeds, peers, speed, progress)
+        screen?.message(when (phase) {
+            "connecting" -> if ((seeds ?: 0) + (peers ?: 0) > 0) "Connecting to ${(seeds ?: 0) + (peers ?: 0)} sources." else "Looking for people sharing $title."
+            "buffering" -> "Buffering the opening minutes."
+            "ready" -> "Starting…"
+            else -> "Connecting to the sources…"
+        })
         handler.postDelayed({ pollStatus() }, 1000)
     }
 

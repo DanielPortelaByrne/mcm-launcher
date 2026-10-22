@@ -377,12 +377,15 @@ class Streams:
                 return {'phase': 'failed', 'label': pending['label']}
             row = self.torrent(hash_) or {}
             return {'phase': 'connecting', 'label': pending['label'],
-                    'seeds': row.get('num_seeds', 0), 'peers': row.get('num_leechs', 0)}
+                    'seeds': row.get('num_seeds', 0), 'peers': row.get('num_leechs', 0),
+                    'speed': row.get('dlspeed', 0)}
         row = self.torrent(hash_) or {}
         ready = self.downloaded_until(entry, 0) >= min(READY_BYTES, entry['size'])
+        # speed (bytes/s) and size (bytes of the film file) feed the player's loading screen and Stream card.
         return {'phase': 'ready' if ready else 'buffering', 'label': entry['label'],
                 'seeds': row.get('num_seeds', 0), 'peers': row.get('num_leechs', 0),
-                'progress': round(row.get('progress', 0.0), 4)}
+                'progress': round(row.get('progress', 0.0), 4),
+                'speed': row.get('dlspeed', 0), 'size': entry['size']}
 
     def await_film(self, hash_):
         """Waits for metadata, then selects only the film file, so the download follows its pieces in order."""
