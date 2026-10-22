@@ -462,6 +462,11 @@ class MainActivity : AppCompatActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // While an app is held for rearranging, the remote belongs to the drag no matter where focus is.
         if (organiseIndex != null && onOrganiseKey(event.keyCode, event)) return true
+        // The remote's voice key, if the TV hands it to apps at all: in Cinema it opens Search and listens while held.
+        if (event.keyCode == KeyEvent.KEYCODE_SEARCH || event.keyCode == KeyEvent.KEYCODE_VOICE_ASSIST || event.keyCode == KeyEvent.KEYCODE_ASSIST) {
+            android.util.Log.i("CinemaVoice", "voice key ${event.keyCode} action=${event.action} repeat=${event.repeatCount}")
+            if (::moviesPanel.isInitialized && moviesPanel.voiceKey(event.action == KeyEvent.ACTION_DOWN, event.repeatCount)) return true
+        }
         val direction = when(event.keyCode) {
             KeyEvent.KEYCODE_DPAD_UP -> android.view.View.FOCUS_UP
             KeyEvent.KEYCODE_DPAD_DOWN -> android.view.View.FOCUS_DOWN
@@ -875,6 +880,7 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         refreshAccountIcon()
+        if (::moviesPanel.isInitialized) moviesPanel.onPermissionResult(requestCode, grantResults.firstOrNull() == android.content.pm.PackageManager.PERMISSION_GRANTED)
     }
 
     private fun refreshAccountIcon() {

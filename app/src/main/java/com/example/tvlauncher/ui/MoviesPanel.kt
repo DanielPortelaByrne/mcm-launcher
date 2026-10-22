@@ -79,6 +79,10 @@ import com.example.tvlauncher.design.cinema.StripePoster
 import com.example.tvlauncher.design.cinema.StreamLoadingView
 import com.example.tvlauncher.design.cinema.CinemaBar
 import com.example.tvlauncher.design.cinema.GlowCard
+import com.example.tvlauncher.design.cinema.QwertyKeyboard
+import com.example.tvlauncher.design.cinema.VoiceListeningView
+import com.example.tvlauncher.data.search.Qwerty
+import com.example.tvlauncher.data.search.VoiceState
 import com.example.tvlauncher.design.cinema.RibbonView
 import com.example.tvlauncher.design.cinema.StripeDrawable
 import com.example.tvlauncher.design.Type
@@ -189,7 +193,7 @@ class MoviesPanel(
         styleTabs(); build(); loadStorage()
     }
 
-    fun hide() { closeStreamLoading(); closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++; ui.removeCallbacks(heroTick) }
+    fun hide() { if (voiceActive) voice?.cancel(); closeStreamLoading(); closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++; ui.removeCallbacks(heroTick) }
     fun close() {
         navigationFocusListener?.let { if (top.viewTreeObserver.isAlive) top.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
         worker.shutdownNow(); images.close()
@@ -197,6 +201,7 @@ class MoviesPanel(
 
     /** Back closes a title's page, then steps back through where the viewer has been, then lets the panel close. */
     fun back(): Boolean {
+        if (voiceActive) { voice?.cancel(); return true }
         if (streamLoading != null) { closeStreamLoading(); return true }
         if (detailOpen) { closeDetail(restoreFocus = true); return true }
         if (trail.isNotEmpty()) { current = trail.removeLast(); styleTabs(); build(); return true }
@@ -360,7 +365,7 @@ class MoviesPanel(
      * returns to where you were on the page, and Left goes nowhere. Returns false to let the views decide.
      */
     fun navigate(focused: View, direction: Int): Boolean {
-        if (streamLoading != null) return true
+        if (streamLoading != null || voiceActive) return true
         if (!isWithin(focused, top)) return false
         val items = tabs.keys.toList()
         val at = items.indexOfFirst { isWithin(focused, it) }
@@ -456,7 +461,9 @@ class MoviesPanel(
         // The rail floats over the page, so nothing is reserved for a top bar. A page that opens on a featured title
         // starts at the very top, so its picture runs up to the screen edge; the others start a little way down.
         val opensOnHero = current === Dest.Home || current === Dest.Films || current === Dest.Series || current === Dest.Docs || current === Dest.Library
-        content.setPadding(0, if (opensOnHero) 0 else Cinema.px(activity, 52), 0, dp(48))
+        // Search lays itself out in screen coordinates, straight from the mockup.
+        content.setPadding(0, if (opensOnHero || current === Dest.Search) 0 else Cinema.px(activity, 52), 0, dp(48))
+        if (current !== Dest.Search) { if (voiceActive) voice?.cancel(); searchUi = null }
         frost?.post { frost?.refresh(500); updateEdgeFade() }
         jellyfin.takeIf { it.isConnected }?.let { j -> worker.execute { j.library() } }   // so poster badges are ready without waiting
         when (val d = current) {
@@ -972,58 +979,260 @@ class MoviesPanel(
 
     // --- Search ------------------------------------------------------------------------------------
 
+    /** The search page's live parts, so voice and typing can update them. */
+    private class SearchUi(
+        val field: LinearLayout, val icon: ImageView, val caret: View, val query: TextView, val hint: TextView,
+        val mic: View, val keyboardArea: List<View>, val voiceView: VoiceListeningView, val side: LinearLayout, val results: LinearLayout
+    )
+    private var searchUi: SearchUi? = null
+    private var searchText = ""
+    private var voice: VoiceSearch? = null
+    private var voiceHeld = false
+    private var voiceKeyDownAt = 0L
+
+    /**
+     * Search (`22-search`): a field with a microphone, the in-app QWERTY keyboard on the left (no system keyboard),
+     * trending titles and genres on the right, and the remote's hints at the bottom. Results arrive live as you type,
+     * as list cards on the right and poster rows below. Voice (`23`) replaces the keyboard while it listens.
+     */
     private fun buildSearch() {
-        val margin = pageStart
-        val input = EditText(activity).apply {
-            hint = "Search films, series and documentaries"; Type.apply(this, Type.Style.BODY); setHintTextColor(activity.getColor(R.color.text_faint))
-            inputType = InputType.TYPE_CLASS_TEXT; maxLines = 1; isSingleLine = true; imeOptions = EditorInfo.IME_ACTION_SEARCH
-            setPadding(dp(22), 0, dp(22), 0)
-            background = LauncherTheme.surface(activity, R.color.surface_raised, R.dimen.radius_pill)
-            setOnFocusChangeListener { v, f -> v.background = LauncherTheme.surface(activity, if (f) R.color.surface_selected else R.color.surface_raised, R.dimen.radius_pill) }
+        val left = Cinema.px(activity, 176)
+        val stage = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
+        content.addView(stage, LinearLayout.LayoutParams(-1, Cinema.px(activity, 1080)))
+        fun place(v: View, x: Int, y: Int, w: Int = -2, h: Int = -2) = stage.addView(v, FrameLayout.LayoutParams(w, h).apply { leftMargin = x; topMargin = y })
+
+        // The field: search icon, caret, the query (or its hint), "Say a title, actor or theme" and the mic button.
+        val field = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false
+            setPadding(Cinema.px(activity, 42), 0, Cinema.px(activity, 14), 0)
+            background = Cinema.glass(activity, 56f, 0x17FFF2DE)
         }
-        content.addView(input, LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(margin, dp(10), margin, dp(8)) })
+        val icon = Cinema.icon(activity, R.drawable.ic_cin_search, Cinema.SAFFRON)
+        field.addView(icon, LinearLayout.LayoutParams(Cinema.px(activity, 40), Cinema.px(activity, 40)))
+        val caret = View(activity).apply { setBackgroundColor(Cinema.SAFFRON) }
+        field.addView(caret, LinearLayout.LayoutParams(Cinema.px(activity, 3), Cinema.px(activity, 48)).apply { marginStart = Cinema.px(activity, 22) })
+        val query = Cinema.text(activity, "", 36, Cinema.CREAM, weight = 300).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.START }
+        field.addView(query, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = Cinema.px(activity, 22) })
+        val hint = Cinema.text(activity, "Say a title, actor or theme", 18, Cinema.MUTED, tracking = 0.04f)
+        field.addView(hint, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = Cinema.px(activity, 20) })
+        val mic = MicButton(activity).apply { contentDescription = "Voice search"; setOnClickListener { startVoice(held = false) } }
+        field.addView(mic, LinearLayout.LayoutParams(Cinema.px(activity, 84), Cinema.px(activity, 84)))
+        place(field, left, Cinema.px(activity, 64), activity.resources.displayMetrics.widthPixels - left - pageEnd, Cinema.px(activity, 112))
+        caret.animate().alpha(0f).setDuration(530).withEndAction(object : Runnable {
+            override fun run() { if (caret.isAttachedToWindow) caret.animate().alpha(if (caret.alpha < 0.5f) 1f else 0f).setDuration(530).withEndAction(this).start() }
+        }).start()
+
+        // Keyboard side.
+        val eyebrow = Cinema.eyebrow(activity, listOf("Type to search"), color = Cinema.DIM, markAlpha = 0.5f)
+        place(eyebrow, left, Cinema.px(activity, 222))
+        val keyboard = QwertyKeyboard(activity) { key -> typeKey(key) }
+        place(keyboard, left, Cinema.px(activity, 300), Cinema.px(activity, 980), Cinema.px(activity, 476))
+        val hints = Cinema.keyHints(activity, listOf("MIC" to "Hold on your remote to speak", "OK" to "Select", "▲" to "Voice search"))
+        stage.addView(hints, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { leftMargin = left; bottomMargin = Cinema.px(activity, 48) })
+
+        // Right side: trending titles and genres, or the results once there is a query.
+        val side = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        place(side, Cinema.px(activity, 1232), Cinema.px(activity, 230), Cinema.px(activity, 592))
         val results = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         content.addView(results, LinearLayout.LayoutParams(-1, -2))
-        fun prompt(text: String) { results.removeAllViews(); results.addView(note(text).apply { setPadding(margin, dp(10), 0, 0) }) }
-        prompt("Type a title, an actor or a theme")
 
-        fun run(query: String) {
-            val g = ++generation
-            if (query.length < 2) { prompt("Type a title, an actor or a theme"); return }
-            prompt("Searching…")
-            worker.execute {
-                val mine = if (jellyfin.isConnected) jellyfin.library().filter { it.name.contains(query, ignoreCase = true) } else emptyList()
-                val found = Catalog.searchSpecs(query).map { catalog.shelf(it) }
-                activity.runOnUiThread {
-                    if (g != generation) return@runOnUiThread
-                    results.removeAllViews()
-                    var any = false
-                    fun add(heading: String, entries: List<Entry>) {
-                        if (entries.isEmpty()) return
-                        any = true
-                        val r = row(heading, "${entries.size}", into = results)
-                        val related = entries.map { it.title }
-                        entries.forEachIndexed { i, e -> r.inner.addView(card(e, related), cardParams(i)) }
-                    }
-                    add("In your library", libraryEntries(mine))
-                    found.forEach { s -> add(s.heading, s.titles.map { entry(it) }) }
-                    if (!any) prompt("Nothing found for “$query”")
+        // Voice, listening: takes the place of the keyboard and the right side.
+        val voiceView = VoiceListeningView(activity).apply { visibility = View.GONE }
+        stage.addView(voiceView, FrameLayout.LayoutParams(-1, -2).apply { leftMargin = left; rightMargin = pageEnd; topMargin = Cinema.px(activity, 230) })
+
+        val ui = SearchUi(field, icon, caret, query, hint, mic, listOf(eyebrow, keyboard, hints, side), voiceView, side, results)
+        searchUi = ui
+        searchText = ""
+        showQuery()
+        showTrending(ui)
+        keyboard.keys.firstOrNull { it.contentDescription == "q" }?.let { requestFocusRobust(overlay as ViewGroup, it) }
+    }
+
+    /** A key from the on-screen keyboard: edit the query, show it, and search once typing pauses. */
+    private fun typeKey(key: Qwerty.Key) {
+        searchText = Qwerty.type(searchText, key)
+        showQuery()
+        searchPending?.let { ui.removeCallbacks(it) }
+        val q = searchText.trim()
+        searchPending = Runnable { runSearch(q) }.also { ui.postDelayed(it, 500) }
+    }
+
+    private fun showQuery(partial: String? = null) {
+        val s = searchUi ?: return
+        val listening = partial != null
+        s.query.text = when {
+            listening && partial!!.isNotEmpty() -> android.text.SpannableStringBuilder(partial).apply {
+                // The word still being recognised is shown dimmer than the settled ones.
+                val cut = partial.lastIndexOf(' ')
+                if (cut > 0) setSpan(android.text.style.ForegroundColorSpan(Cinema.DIM), cut, partial.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            listening -> ""
+            searchText.isEmpty() -> "Search films, series and documentaries"
+            else -> searchText
+        }
+        s.query.setTextColor(if (!listening && searchText.isEmpty()) 0xFF8F8272.toInt() else Cinema.CREAM)
+        Cinema.weight(s.query, 36, serif = false, weight = if (!listening && searchText.isEmpty()) 300 else 400)
+        s.caret.visibility = if (listening) View.GONE else View.VISIBLE
+        s.icon.setColorFilter(if (listening) Cinema.TERRA else Cinema.SAFFRON)
+        s.hint.text = if (listening) "LISTENING" else "Say a title, actor or theme"
+        Cinema.style(s.hint, 18, if (listening) Cinema.TERRA else Cinema.MUTED, weight = if (listening) 600 else 400, tracking = if (listening) 0.14f else 0.04f)
+        s.field.background = Cinema.glass(activity, 56f, if (listening) Cinema.alpha(Cinema.STRIPE_TERRA, 0.16f) else 0x17FFF2DE)
+    }
+
+    /** One list card on the search page's right side: poster, name, "Film · 2026", chevron. */
+    private fun searchRow(e: Entry, related: List<Title>): View {
+        val card = GlowCard(activity, 24f).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(Cinema.px(activity, 20), 0, Cinema.px(activity, 20), 0); contentDescription = e.title.name }
+        val thumb = FrameLayout(activity).apply {
+            setBackgroundColor(Cinema.PLACEHOLDER); clipToOutline = true
+            outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, Cinema.pxf(activity, 9)) } }
+        }
+        val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        thumb.addView(image, FrameLayout.LayoutParams(-1, -1))
+        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 160) { b -> image.setImageBitmap(b) } }
+        card.addView(thumb, LinearLayout.LayoutParams(Cinema.px(activity, 58), Cinema.px(activity, 78)))
+        val text = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        text.addView(Cinema.text(activity, e.title.name, 27, Cinema.CREAM, weight = 500).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        text.addView(Cinema.text(activity, listOfNotNull(if (e.title.kind == Kind.SHOW) "Series" else "Film", e.title.year?.toString(), if (e.library != null) "In your library" else null).joinToString(" · "), 18, Cinema.DIM),
+            LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 5) })
+        card.addView(text, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = Cinema.px(activity, 22) })
+        card.addView(Cinema.icon(activity, R.drawable.ic_cin_chev, Cinema.DIM), LinearLayout.LayoutParams(Cinema.px(activity, 26), Cinema.px(activity, 26)))
+        card.setOnClickListener { openDetail(e, related) }
+        return card
+    }
+
+    /** The right side with no query: trending searches (today's top titles) and genres to browse. */
+    private fun showTrending(s: SearchUi) {
+        s.side.removeAllViews()
+        val head = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(Cinema.icon(activity, R.drawable.ic_cin_trend, Cinema.DIM), LinearLayout.LayoutParams(Cinema.px(activity, 22), Cinema.px(activity, 22)).apply { marginEnd = Cinema.px(activity, 14) })
+        head.addView(Cinema.text(activity, "Trending searches", 17, Cinema.DIM, weight = 600, tracking = 0.24f, caps = true))
+        s.side.addView(head)
+        val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false }
+        s.side.addView(list)
+        val gen = generation
+        worker.execute {
+            val top = catalog.shelf(Catalog.homePage().first()).titles.take(3).map { entry(it) }
+            activity.runOnUiThread {
+                if (gen != generation || searchText.isNotBlank()) return@runOnUiThread
+                top.forEach { e -> list.addView(searchRow(e, top.map { it.title }), LinearLayout.LayoutParams(-1, Cinema.px(activity, 104)).apply { topMargin = Cinema.px(activity, 18) }) }
+            }
+        }
+        s.side.addView(Cinema.text(activity, "Browse by theme", 17, Cinema.DIM, weight = 600, tracking = 0.24f, caps = true), LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 40) })
+        // Real genres, two rows of three, each opening its own page.
+        val themes = listOf("drm", "trl", "scf", "cmy", "hst", "ani").mapNotNull { code -> Catalog.GENRES.firstOrNull { it.code == code } }
+        themes.chunked(3).forEachIndexed { r, chunk ->
+            val row = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+            chunk.forEachIndexed { i, g ->
+                row.addView(pill(g.label, accent = false).apply { setOnClickListener { go(Dest.InGenre(g), remember = true) } },
+                    LinearLayout.LayoutParams(-2, Cinema.px(activity, 50)).apply { if (i > 0) marginStart = Cinema.px(activity, 12) })
+            }
+            s.side.addView(row, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, if (r == 0) 18 else 12) })
+        }
+    }
+
+    /** Searches the library and the catalogue for [query]; at least two letters. Results replace the right side. */
+    private fun runSearch(query: String) {
+        val s = searchUi ?: return
+        val g = ++generation
+        s.results.removeAllViews()
+        if (query.length < 2) { showTrending(s); return }
+        worker.execute {
+            val mine = if (jellyfin.isConnected) jellyfin.library().filter { it.name.contains(query, ignoreCase = true) } else emptyList()
+            val found = Catalog.searchSpecs(query).map { catalog.shelf(it) }
+            activity.runOnUiThread {
+                if (g != generation || searchUi !== s) return@runOnUiThread
+                val library = libraryEntries(mine)
+                val shelves = found.map { it.heading to it.titles.map { t -> entry(t) } }
+                s.side.removeAllViews()
+                s.side.addView(Cinema.text(activity, "Results for “$query”", 17, Cinema.DIM, weight = 600, tracking = 0.24f, caps = true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+                val top = (library + shelves.flatMap { it.second }).distinctBy { it.title.name.lowercase() + it.title.year }.take(5)
+                if (top.isEmpty()) s.side.addView(note("Nothing found for “$query”"), LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 18) })
+                top.forEach { e -> s.side.addView(searchRow(e, top.map { it.title }), LinearLayout.LayoutParams(-1, Cinema.px(activity, 104)).apply { topMargin = Cinema.px(activity, 18) }) }
+                // Everything found, as poster rows below the keyboard.
+                fun add(heading: String, entries: List<Entry>) {
+                    if (entries.isEmpty()) return
+                    val r = row(heading, null, into = s.results)
+                    r.setCount(entries.size)
+                    val related = entries.map { it.title }
+                    entries.forEachIndexed { i, e -> r.inner.addView(card(e, related), cardParams(i)) }
                 }
+                add("In your library", library)
+                shelves.forEach { (h, list) -> add(h, list) }
             }
         }
-        input.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun afterTextChanged(s: Editable?) {
+    }
+
+    // --- Voice ---
+
+    /** Starts listening: [held] when the remote's mic button is being held (letting go finishes). */
+    private fun startVoice(held: Boolean) {
+        if (current != Dest.Search) go(Dest.Search)
+        voiceHeld = held
+        val v = voice ?: VoiceSearch(activity) { state -> onVoice(state) }.also { voice = it }
+        v.start()
+    }
+
+    private fun onVoice(state: VoiceState) {
+        val s = searchUi ?: return
+        val listening = state is VoiceState.Listening || state is VoiceState.Requesting
+        s.keyboardArea.forEach { it.visibility = if (listening) View.INVISIBLE else View.VISIBLE }
+        s.voiceView.visibility = if (listening) View.VISIBLE else View.GONE
+        when (state) {
+            is VoiceState.Listening -> {
+                showQuery(state.partial)
+                s.voiceView.update(state.partial, state.level, if (voiceHeld) "Release the mic button when you’re done · Back to cancel" else "Speak now · Back to cancel")
+            }
+            VoiceState.Requesting -> { showQuery(""); s.voiceView.update("", 0f, "Allow the microphone to search by voice") }
+            is VoiceState.Done -> {
+                searchText = state.text.take(Qwerty.MAX_LENGTH); showQuery()
                 searchPending?.let { ui.removeCallbacks(it) }
-                val q = s?.toString()?.trim().orEmpty()
-                searchPending = Runnable { run(q) }.also { ui.postDelayed(it, 500) }
+                runSearch(searchText.trim())
+                s.mic.requestFocus()
             }
-        })
-        input.setOnEditorActionListener { _, action, _ ->
-            if (action == EditorInfo.IME_ACTION_SEARCH) { searchPending?.let { ui.removeCallbacks(it) }; run(input.text.toString().trim()); true } else false
+            is VoiceState.Unavailable -> {
+                showQuery()
+                s.hint.text = state.reason
+                s.mic.requestFocus()
+            }
+            VoiceState.Idle -> { showQuery(); s.mic.requestFocus() }
         }
-        input.post { input.requestFocus(); (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager)?.showSoftInput(input, 0) }
+    }
+
+    /** The voice key on the remote (search / assistant). Down starts holding-to-talk; up finishes. */
+    fun voiceKey(down: Boolean, repeat: Int): Boolean {
+        if (!isVisible) return false
+        if (down && repeat == 0) { voiceKeyDownAt = android.os.SystemClock.uptimeMillis(); startVoice(held = true) }
+        else if (!down && voiceHeld && android.os.SystemClock.uptimeMillis() - voiceKeyDownAt > 600) voice?.stop()
+        return true
+    }
+
+    /** Forwarded from MainActivity's permission result. */
+    fun onPermissionResult(requestCode: Int, granted: Boolean) { if (requestCode == VoiceSearch.PERMISSION_REQUEST) voice?.onPermission(granted) }
+
+    private val voiceActive: Boolean get() = voice?.state.let { it is VoiceState.Listening || it is VoiceState.Requesting }
+
+    /** The search field's microphone: a saffron-to-terracotta disc with soft halo rings; grows and glows on focus. */
+    private class MicButton(context: Context) : View(context) {
+        private val disc = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val ring = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val icon = context.getDrawable(R.drawable.ic_cin_mic)!!.mutate().apply { setTint(0xFF1D0D05.toInt()) }
+        init { isFocusable = true; isClickable = true }
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            disc.shader = android.graphics.RadialGradient(w / 2f, h * 0.4f, w / 2f, Cinema.STRIPE_SAFFRON, Cinema.STRIPE_TERRA, android.graphics.Shader.TileMode.CLAMP)
+        }
+        override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: android.graphics.Rect?) {
+            super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
+            val s = if (gainFocus) 1.1f else 1f
+            animate().scaleX(s).scaleY(s).setDuration(160).start(); invalidate()
+        }
+        override fun onDraw(canvas: Canvas) {
+            val c = width / 2f
+            ring.color = Cinema.alpha(Cinema.STRIPE_ORANGE, if (isFocused) 0.3f else 0.12f); canvas.drawCircle(c, c, c + Cinema.pxf(context, 15), ring)
+            ring.color = Cinema.alpha(Cinema.STRIPE_TERRA, if (isFocused) 0.45f else 0.25f); canvas.drawCircle(c, c, c + Cinema.pxf(context, 7), ring)
+            canvas.drawCircle(c, c, c, disc)
+            val i = Cinema.px(context, 19)
+            icon.setBounds(i, i, width - i, height - i); icon.draw(canvas)
+        }
     }
 
     // --- Featured title ----------------------------------------------------------------------------

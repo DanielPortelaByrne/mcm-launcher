@@ -11,6 +11,8 @@
     <!-- Lets the launcher switch its remote-button service back on if the TV drops it (e.g. after a reboot).
          Granted once over ADB: pm grant com.example.tvlauncher android.permission.WRITE_SECURE_SETTINGS -->
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
+    <!-- Voice search in Cinema (asked for at runtime, the first time the mic is used). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <queries>
         <package android:name="com.google.android.apps.tv.launcherx" />
@@ -20,6 +22,8 @@
         <package android:name="com.google.android.youtube.tv" />
         <package android:name="com.netflix.ninja" />
         <package android:name="com.stremio.one" />
+        <!-- So SpeechRecognizer can find the TV's speech service (package visibility, Android 11+). -->
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
