@@ -197,14 +197,13 @@ class SeerrClient(context: Context) {
      * same indexers the library uses, so nothing goes through Stremio. The service waits for torrent metadata, so this call is slow.
      */
     /** [season] and [episode] are set for a TV episode; the server then looks for that one episode. */
-    fun startStream(title: String, year: Int?, season: Int? = null, episode: Int? = null): StreamStart = try {
-        val endpoint = (prefs.getString("stream_server", null) ?: java.net.URI("http", null, host, 5057, null, null, null).toString()).trimEnd('/')
-        val c = open("POST", "$endpoint/start")
+    fun startStream(title: String, year: Int?, season: Int? = null, episode: Int? = null, runtimeMin: Int? = null): StreamStart = try {
+        val c = open("POST", "${streamEndpoint()}/start")
         c.readTimeout = 120_000
         c.doOutput = true
+        val endpoint = streamEndpoint()
         try {
-            val body = JSONObject().put("title", title).put("year", year?.toString().orEmpty())
-            if (season != null && episode != null) body.put("season", season).put("episode", episode)
+            val body = streamBody(title, year, season, episode, runtimeMin)
             c.outputStream.use { it.write(body.toString().toByteArray()) }
             when (c.responseCode) {
                 200 -> {
@@ -220,6 +219,37 @@ class SeerrClient(context: Context) {
     } catch (e: Exception) {
         Log.w(TAG, "startStream failed: ${e.javaClass.simpleName}")
         StreamStart(StreamStatus.UNAVAILABLE, null, null)
+    }
+
+    private fun streamEndpoint() = (prefs.getString("stream_server", null) ?: java.net.URI("http", null, host, 5057, null, null, null).toString()).trimEnd('/')
+
+    private fun streamBody(title: String, year: Int?, season: Int?, episode: Int?, runtimeMin: Int?) = JSONObject().put("title", title).put("year", year?.toString().orEmpty()).apply {
+        if (season != null && episode != null) put("season", season).put("episode", episode)
+        runtimeMin?.takeIf { it > 0 }?.let { put("runtime", it) }   // lets the service judge which release can keep up
+    }
+
+    private val prepared = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /**
+     * Asks the stream service to search for a title now, so Stream now (if pressed) skips the indexer search. Fire and
+     * forget: at most once per title every ten minutes, short timeouts, and a service without /prepare (404) is fine.
+     */
+    fun prepareStream(title: String, year: Int?, season: Int? = null, episode: Int? = null, runtimeMin: Int? = null) {
+        if (!isSignedIn) return
+        val key = listOf(title, year, season, episode).joinToString("|")
+        val now = System.currentTimeMillis()
+        if ((prepared[key] ?: 0L) > now - 10 * 60_000L) return
+        prepared[key] = now
+        try {
+            val c = open("POST", "${streamEndpoint()}/prepare")
+            c.connectTimeout = 3000; c.readTimeout = 5000; c.doOutput = true
+            try {
+                c.outputStream.use { it.write(streamBody(title, year, season, episode, runtimeMin).toString().toByteArray()) }
+                val code = c.responseCode
+                (if (code < 400) c.inputStream else c.errorStream)?.use { it.readBytes() }
+                if (code == 401) prepared.remove(key)
+            } finally { c.disconnect() }
+        } catch (e: Exception) { prepared.remove(key); Log.w(TAG, "prepareStream failed: ${e.javaClass.simpleName}") }
     }
 
     fun seasons(tmdbId: Long): List<SeasonInfo> = get(SeerrApi.path(Kind.SHOW, tmdbId))?.let { SeerrSeasons.parseSeasons(it) }.orEmpty()

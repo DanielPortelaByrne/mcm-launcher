@@ -1649,6 +1649,8 @@ class MoviesPanel(
             detailScrolledState(scroll, moreHeading!!, r.scroller, t, topRow)
         }
         setupPrimary(primary, e, clearStale, restart) { openDetail(e, related) }
+        // A film that can only be streamed: have the stream service search for it now, so Stream now starts quicker.
+        if (!inLibrary && t.kind == Kind.MOVIE && seerr.isSignedIn) slowPool.execute { seerr.prepareStream(t.name, t.year, runtimeMin = t.runtimeMin) }
         detailEntry = e
         // A series' progress lives on its episode cards, so its page is drawn again; a film just redoes its buttons.
         detailButtons = if (t.kind == Kind.SHOW) ({ val back = returnFocus; closeDetail(restoreFocus = false); openDetail(e, related); returnFocus = back })
@@ -1813,7 +1815,7 @@ class MoviesPanel(
             ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 3500)
         }
         slowPool.execute {
-            val result = seerr.startStream(e.title.name, e.title.year, episode?.first, episode?.second)
+            val result = seerr.startStream(e.title.name, e.title.year, episode?.first, episode?.second, if (episode == null) e.title.runtimeMin else null)
             activity.runOnUiThread {
                 Perf.end("stream.press->startReply", result.status.name)
                 if (token != streamToken) return@runOnUiThread   // cancelled with Back
@@ -2077,7 +2079,11 @@ class MoviesPanel(
                     else -> Unit
                 }
             }
-            card.onLit = { lit -> if (lit) FastFocus.reveal(card, null, dp(24), dp(56), 0) }
+            card.onLit = { lit ->
+                if (lit) FastFocus.reveal(card, null, dp(24), dp(56), 0)
+                // An episode that would be streamed: search for it while the viewer looks at it.
+                if (lit && mine == null && !look.unaired && seerr.isSignedIn) slowPool.execute { seerr.prepareStream(e.title.name, e.title.year, s.number, ep.number) }
+            }
             return card to look
         }
 

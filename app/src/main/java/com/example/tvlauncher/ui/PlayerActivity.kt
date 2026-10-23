@@ -600,12 +600,8 @@ class PlayerActivity : AppCompatActivity() {
         override fun run() {
             if (isFinishing) return
             val url = items.firstOrNull()?.url?.replace("/stream/", "/status/") ?: return
-            Thread {
-                val info = try {
-                    val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                    c.connectTimeout = 4000; c.readTimeout = 4000
-                    try { if (c.responseCode == 200) JSONObject(c.inputStream.bufferedReader().use { it.readText() }) else null } finally { c.disconnect() }
-                } catch (_: Exception) { null }
+            statusPoller.execute {
+                val info = fetchStatus(url)
                 runOnUiThread {
                     info?.let { i ->
                         streamSeeds = i.takeIf { it.has("seeds") }?.optInt("seeds"); streamPeers = i.takeIf { it.has("peers") }?.optInt("peers")
@@ -614,7 +610,7 @@ class PlayerActivity : AppCompatActivity() {
                     }
                     handler.postDelayed(this, 5000)
                 }
-            }.start()
+            }
         }
     }
 
@@ -749,17 +745,27 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     /** Asks the home server where the film is, once a second, until the first frame is on screen. */
+    /** One thread for the stream service's /status polls (every second while loading, every five while playing). */
+    private val statusPoller = java.util.concurrent.Executors.newSingleThreadExecutor()   // its thread starts on first use
+
+    /**
+     * One /status answer, or null. The body is read to the end and the stream closed rather than the connection
+     * dropped, so the next poll reuses the same keep-alive connection instead of opening a new one.
+     */
+    private fun fetchStatus(url: String): JSONObject? = try {
+        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 4000; c.readTimeout = 4000
+        if (c.responseCode == 200) JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+        else { c.errorStream?.use { it.readBytes() }; null }
+    } catch (_: Exception) { null }
+
     private fun pollStatus() {
         if (started || isFinishing || !streamOnly()) return
         val url = items.firstOrNull()?.url?.replace("/stream/", "/status/") ?: return
-        Thread {
-            val info = try {
-                val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                c.connectTimeout = 4000; c.readTimeout = 4000
-                try { if (c.responseCode == 200) JSONObject(c.inputStream.bufferedReader().use { it.readText() }) else null } finally { c.disconnect() }
-            } catch (_: Exception) { null }
+        statusPoller.execute {
+            val info = fetchStatus(url)
             runOnUiThread { applyStatus(info) }
-        }.start()
+        }
     }
 
     private fun applyStatus(info: JSONObject?) {
@@ -953,7 +959,7 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         episodeGeneration++
-        episodeLookup.shutdownNow()
+        episodeLookup.shutdownNow(); statusPoller.shutdownNow()
         if (chrome != null) chromeImages.close()
         handler.removeCallbacksAndMessages(null)
         if (::player.isInitialized) {

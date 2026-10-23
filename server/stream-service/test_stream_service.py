@@ -303,5 +303,112 @@ class EndToEnd(unittest.TestCase):
             self.streams.start('Heat', '1995')
 
 
+class SearchCacheTests(unittest.TestCase):
+    """/prepare searches ahead; /start then reuses the answer instead of asking the indexers again."""
+
+    def setUp(self):
+        self.now = 1000.0
+        self.calls = []
+
+        def search(title, year, episode=None):
+            self.calls.append((title, year, episode))
+            return [release('%s %s 1080p' % (title, year))]
+        self.cache = svc.SearchCache(search, ttl=600, clock=lambda: self.now)
+
+    def test_a_second_ask_within_the_ttl_is_a_hit(self):
+        first = self.cache.get('Heat', '1995')
+        self.assertIs(self.cache.get('heat', '1995'), first)   # same title, different case: same key
+        self.assertEqual(len(self.calls), 1)
+
+    def test_answers_expire(self):
+        self.cache.get('Heat', '1995')
+        self.now += 601
+        self.cache.get('Heat', '1995')
+        self.assertEqual(len(self.calls), 2)
+
+    def test_each_episode_and_year_is_its_own_entry(self):
+        self.cache.get('The Pitt', None, (2, 4))
+        self.cache.get('The Pitt', None, (2, 5))
+        self.cache.get('The Pitt', None, (2, 4))
+        self.cache.get('Heat', '1995'); self.cache.get('Heat', '2026')
+        self.assertEqual(self.calls, [('The Pitt', None, (2, 4)), ('The Pitt', None, (2, 5)), ('Heat', '1995', None), ('Heat', '2026', None)])
+
+    def test_warm_runs_once_in_the_background_and_start_joins_it(self):
+        gate = threading.Event()
+
+        def slow(title, year, episode=None):
+            gate.wait(2)
+            self.calls.append(title)
+            return [release('Heat 1995 1080p')]
+        cache = svc.SearchCache(slow, ttl=600, clock=lambda: self.now)
+        self.assertTrue(cache.warm('Heat', '1995'))
+        self.assertFalse(cache.warm('Heat', '1995'))        # already running: not started twice
+        got = []
+        joiner = threading.Thread(target=lambda: got.append(cache.get('Heat', '1995')))
+        joiner.start()
+        time.sleep(0.05)
+        gate.set()
+        joiner.join(2)
+        self.assertEqual(self.calls, ['Heat'])              # the /start waited for the warm-up instead of searching again
+        self.assertEqual(len(got[0]), 1)
+        self.assertFalse(cache.warm('Heat', '1995'))        # fresh now: nothing to do
+
+    def test_a_failed_search_is_not_cached(self):
+        fails = [True]
+
+        def flaky(title, year, episode=None):
+            self.calls.append(title)
+            if fails.pop(0) if fails else False:
+                raise svc.ServiceError('indexers unavailable')
+            return []
+        cache = svc.SearchCache(flaky, ttl=600, clock=lambda: self.now)
+        with self.assertRaises(svc.ServiceError):
+            cache.get('Heat', '1995')
+        self.assertEqual(cache.get('Heat', '1995'), [])
+        self.assertEqual(len(self.calls), 2)
+
+    def test_start_uses_what_prepare_found(self):
+        streams = svc.Streams(Path(tempfile.mkdtemp()), host_media=Path(tempfile.mkdtemp()))
+        searched = []
+        streams.search = lambda title, year, episode=None: searched.append(title) or [release('Heat 1995 1080p BluRay')]
+        streams.qbit = lambda path, form=None: None
+        streams.resolve = lambda hash_: None
+        streams.searches.get('Heat', '1995')                 # what a /prepare leaves behind
+        streams.start('Heat', '1995')
+        self.assertEqual(searched, ['Heat'])
+
+
+class StreamingScore(unittest.TestCase):
+    """For streaming, a release has to arrive faster than it plays: bitrate is weighed against seeders."""
+
+    GB = 1024 ** 3
+
+    def test_a_heavy_4k_with_few_seeders_loses_to_a_well_seeded_1080p(self):
+        uhd = release('Heat 1995 2160p WEB-DL', seeders=9, size=11 * self.GB)
+        hd = release('Heat 1995 1080p WEB-DL', seeders=150, size=4 * self.GB)
+        self.assertEqual(svc.pick([uhd, hd], 'Heat', 1995)['title'], hd['title'])
+
+    def test_a_well_seeded_large_file_is_not_penalised(self):
+        big = release('Heat 1995 1080p BluRay', seeders=400, size=10 * self.GB)
+        small = release('Heat 1995 1080p WEBRip', seeders=400, size=2 * self.GB)
+        self.assertGreater(svc.stream_score(big), svc.stream_score(small))   # better source, and the seeders can carry it
+
+    def test_running_time_changes_the_estimate(self):
+        r = release('Heat 1995 1080p BluRay', seeders=6, size=8 * self.GB)
+        self.assertLess(svc.stream_score(r, runtime_minutes=60), svc.stream_score(r, runtime_minutes=170))
+
+    def test_an_episode_is_judged_against_an_episode_length(self):
+        ep = release('The Pitt S02E04 1080p WEB-DL', seeders=10, size=3 * self.GB)
+        self.assertLess(svc.stream_score(ep, episode=(2, 4)), svc.stream_score(ep))
+
+    def test_seeders_count_for_more_than_in_the_download_score(self):
+        few = release('Heat 1995 1080p BluRay', seeders=10, size=2 * self.GB)
+        many = release('Heat 1995 1080p BluRay', seeders=1000, size=2 * self.GB)
+        self.assertGreater(svc.stream_score(many) - svc.stream_score(few), svc.score(many) - svc.score(few))
+
+    def test_the_download_score_is_unchanged(self):
+        self.assertAlmostEqual(svc.score(release('Heat 1995 1080p BluRay', seeders=100)), 3.0 * 2 + 2.0 + 2.0)
+
+
 if __name__ == '__main__':
     unittest.main()
