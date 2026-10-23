@@ -192,6 +192,15 @@ class CreditsStartTest {
         assertEquals(hour - 30_000L, PlayerMath.creditsStartMs(listOf(ch(0, "Opening credits", 1)), hour))
     }
 
+    @Test fun a_short_unnamed_last_chapter_near_the_end_is_the_credits() {
+        // Fallout S2 E1: nine chapters named "Chapter N", the last at 56:17 of 60:09.
+        val fallout = (0..7).map { ch(it, "Chapter ${it + 1}", it * 6) } + Chapter(8, "Chapter 9", 3_377_165L, null)
+        assertEquals(3_377_165L, PlayerMath.creditsStartMs(fallout, 3_609_731L))
+        // A long last act is not the credits, nor is a named scene.
+        assertEquals(hour - 30_000L, PlayerMath.creditsStartMs(listOf(ch(0, "Chapter 1", 0), ch(1, "Chapter 2", 50)), hour))
+        assertEquals(hour - 30_000L, PlayerMath.creditsStartMs(listOf(ch(0, "Chapter 1", 0), ch(1, "The showdown", 57)), hour))
+    }
+
     @Test fun short_or_unknown_lengths_give_nothing() {
         assertNull(PlayerMath.creditsStartMs(emptyList(), 5 * 60_000L))
         assertNull(PlayerMath.creditsStartMs(emptyList(), 0L))

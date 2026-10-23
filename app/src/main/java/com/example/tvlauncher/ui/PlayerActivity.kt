@@ -401,7 +401,7 @@ class PlayerActivity : AppCompatActivity() {
                 refreshNextHook()
                 autoplay.ready(next.id, SystemClock.elapsedRealtime())
                 nextCard.bind(next)
-                RemoteImages.shared(this).load(jellyfin.imageUrl(next.id, 300), jellyfin.playbackHeaders(), maxWidth = 480) { bitmap ->
+                RemoteImages.shared(this).load(jellyfin.imageUrl(next.id, 560), jellyfin.playbackHeaders(), maxWidth = 1000) { bitmap ->
                     if (generation == episodeGeneration) nextCard.artwork.setImageBitmap(bitmap)
                 }
                 showNextEpisode()

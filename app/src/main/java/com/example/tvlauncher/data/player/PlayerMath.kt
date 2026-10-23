@@ -25,6 +25,7 @@ data class Trickplay(val width: Int, val height: Int, val tileWidth: Int, val ti
 }
 
 object PlayerMath {
+    private val GENERIC = Regex("(?i)(chapter|scene)\\s*\\d+|\\d+")
     private val CREDITS = Regex("(?i)\\b(end\\s*)?credits?\\b|\\boutro\\b|\\bclosing\\b")
 
     /**
@@ -35,6 +36,8 @@ object PlayerMath {
     fun creditsStartMs(chapters: List<Chapter>, durationMs: Long): Long? {
         if (durationMs < 10 * 60_000L) return null
         chapters.lastOrNull { CREDITS.containsMatchIn(it.name) && it.startMs >= durationMs * 0.6 && it.startMs < durationMs - 5_000 }?.let { return it.startMs }
+        // Chapters with no real names ("Chapter 9"): a short last one in the final tenth is almost always the credits.
+        chapters.maxByOrNull { it.startMs }?.takeIf { GENERIC.matches(it.name.trim()) && it.startMs >= durationMs * 0.9 && durationMs - it.startMs in 45_000L..6 * 60_000L }?.let { return it.startMs }
         return durationMs - 30_000L
     }
 
