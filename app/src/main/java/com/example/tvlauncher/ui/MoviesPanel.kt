@@ -156,6 +156,7 @@ class MoviesPanel(
     /** Groups this page's picture requests, so a rebuilt page drops the ones the old page still had queued. */
     private var pageTag = Any()
     private val catalog = CatalogRepository(activity)
+    private val picks by lazy { com.example.tvlauncher.data.movies.PicksRepository(activity, seerr, jellyfin, com.example.tvlauncher.data.movies.WatchHistory(activity)) }
     private val ui = Handler(Looper.getMainLooper())
     private var generation = 0
     private var current: Dest = Dest.Home
@@ -595,7 +596,7 @@ class MoviesPanel(
         // Rows never wait for the library: they draw from the catalogue at once, and this one fetch badges them when it lands.
         jellyfin.takeIf { it.isConnected }?.let { j -> worker.execute { j.library(); ui.post { rebadge(gen) } } }
         when (val d = current) {
-            Dest.Home -> { buildHero(); libraryRow(gen, "My library", 18); serviceTiles(); genreTiles(); shelves(Catalog.homePage(), gen) }
+            Dest.Home -> { buildHero(); picksRow(gen); libraryRow(gen, "My library", 18); serviceTiles(); genreTiles(); shelves(Catalog.homePage(), gen) }
             Dest.Films -> { buildHero(); shelves(Catalog.filmsPage(), gen) }
             Dest.Series -> { buildHero(); shelves(Catalog.seriesPage(), gen) }
             Dest.Docs -> { buildHero(); shelves(Catalog.documentariesPage(), gen) }
@@ -702,6 +703,55 @@ class MoviesPanel(
     private fun libraryEntries(items: List<JellyfinItem>): List<Entry> = items.map { Entry(libraryTitle(it), it, jellyfin.playbackHeaders()) }
 
     /** A row of the owner's own titles, or the offer to connect Jellyfin. */
+    // --- Picked for you ----------------------------------------------------------------------------
+
+    /** A pick as a page title: TMDB's poster for the row, its full-size backdrop for the featured title. */
+    private fun pickTitle(p: com.example.tvlauncher.data.movies.Pick): Title {
+        val s = p.suggestion
+        return Title(
+            key = "tmdb:" + com.example.tvlauncher.data.movies.Picks.key(s.kind, s.tmdbId), kind = s.kind, name = s.name, year = s.year,
+            overview = s.overview, runtimeMin = null, genres = s.genres, age = null, imdbScore = null,
+            posterUrl = s.posterPath?.let { "https://image.tmdb.org/t/p/w342$it" },
+            backdropUrl = s.backdropPath?.let { "https://image.tmdb.org/t/p/original$it" },
+            imdbId = null, tmdbId = s.tmdbId.toString()
+        )
+    }
+
+    /**
+     * "Picked for you" on Home: titles recommended from what has been downloaded, watched and streamed, each saying
+     * why. The last picks show at once; fresh ones replace them when they are due. The top three also become the
+     * featured titles, in place of what is trending (which stays until there are picks).
+     */
+    private fun picksRow(gen: Int) {
+        val row = row("Picked for you", null)
+        row.inner.minimumHeight = Cinema.px(activity, 488)
+        var shown: List<String> = emptyList()
+        fun show(list: List<com.example.tvlauncher.data.movies.Pick>) {
+            if (gen != generation) return
+            val keys = list.map { it.suggestion.key }
+            if (keys == shown) return
+            shown = keys
+            row.inner.removeAllViews(); row.deferred.clear()
+            if (list.isEmpty()) { row.hide(); return }
+            row.heading?.visibility = View.VISIBLE; row.scroller.visibility = View.VISIBLE
+            val entries = list.map { entry(pickTitle(it)) }
+            val related = entries.map { it.title }
+            val because = list.map { "Because you watched ${it.because}" }
+            // Under a poster there is room for little: "Like Rick and Morty". The featured title says it in full.
+            entries.forEachIndexed { i, e -> row.inner.addView(card(e, related, note = "Like ${list[i].because}", defer = if (i >= EAGER_POSTERS) row else null), cardParams(i)) }
+            row.setCount(entries.size)
+            row.scroller.post { row.loadNear() }
+            val featured = entries.indices.filter { entries[it].title.backdropUrl != null }.take(3)
+            if (featured.isNotEmpty()) setHero(featured.map { entries[it] }, related, featured.map { because[it] })
+        }
+        worker.execute {
+            val saved = picks.saved()
+            activity.runOnUiThread { if (saved.isNotEmpty()) show(saved) }
+            val fresh = picks.fresh()
+            activity.runOnUiThread { if (fresh != null) show(fresh) else if (saved.isEmpty()) row.hide() }
+        }
+    }
+
     private fun libraryRow(gen: Int, heading: String, limit: Int) {
         val row = row(heading, "On your Jellyfin")
         if (!jellyfin.isConnected) {
@@ -1863,6 +1913,7 @@ class MoviesPanel(
                     StreamStatus.READY -> {
                         val url = result.url ?: return@runOnUiThread failed("The stream service didn't send a link. Try again in a minute.")
                         screen.message("Found a copy. Starting the player…")
+                        remember(e.title, streamed = true)
                         val candidate = StreamCandidate("stream:${e.title.key}", PlayerActivity.STREAM_PROVIDER, result.label ?: e.title.name, url, null, StreamMetadata())
                         PlayerActivity.launch(activity, listOf(RankedStream(candidate, 100, 0L, false, Verdict.RECOMMENDED, null, emptyList())), label, e.title.imdbId,
                             artUrl = e.title.backdropUrl ?: e.title.posterUrl,
@@ -1889,8 +1940,15 @@ class MoviesPanel(
     /** Set when a library title starts playing, so the page asks Jellyfin where the viewer got to once they are back. */
     private var playbackStarted = false
 
+    /** Notes a title as watched or streamed here, for "Picked for you". */
+    private fun remember(t: Title, streamed: Boolean) {
+        val id = t.tmdbId?.toLongOrNull() ?: return
+        worker.execute { picks.history.add(id, t.kind, t.name, t.genres, streamed) }
+    }
+
     private fun watch(item: JellyfinItem, title: Title, fromStart: Boolean = false) {
         playbackStarted = true
+        remember(title, streamed = false)
         if (!item.isSeries) { JellyfinPlayback.play(activity, jellyfin, item, title.name, title.imdbId ?: "jf:${item.id}", fromStart); return }
         Toast.makeText(activity, "Finding the next episode…", Toast.LENGTH_SHORT).show()
         worker.execute {
@@ -1951,7 +2009,7 @@ class MoviesPanel(
         val ep = owned.filter { it.resumeMs > 0 && !it.played && it.season != null && it.episode != null }
             .maxWithOrNull(compareBy<JellyfinItem> { it.season }.thenBy { it.episode }) ?: return
         primary.setText("Resume S${ep.season} E${ep.episode}")
-        primary.setOnClickListener { playbackStarted = true; JellyfinPlayback.play(activity, jellyfin, ep, "${e.title.name} · S${ep.season} E${ep.episode}", "jf:${ep.id}") }
+        primary.setOnClickListener { playbackStarted = true; remember(e.title, streamed = false); JellyfinPlayback.play(activity, jellyfin, ep, "${e.title.name} · S${ep.season} E${ep.episode}", "jf:${ep.id}") }
     }
 
     private fun drawSeasons(box: LinearLayout, e: Entry, tmdb: Long?, seasons: List<SeasonState>, owned: List<JellyfinItem>,
@@ -2066,7 +2124,7 @@ class MoviesPanel(
             else images.load(url, headers, maxWidth = Cinema.px(activity, 400)) { b -> if (token == loading) card.setStill(b) }
 
             card.play.setOnClickListener { v ->
-                if (mine != null) { playbackStarted = true; JellyfinPlayback.play(activity, jellyfin, mine, label, "jf:${mine.id}") }
+                if (mine != null) { playbackStarted = true; remember(e.title, streamed = false); JellyfinPlayback.play(activity, jellyfin, mine, label, "jf:${mine.id}") }
                 else streamNow(e, v, s.number to ep.number, label)
             }
             card.download.setOnClickListener {
@@ -2309,11 +2367,11 @@ class MoviesPanel(
     }
 
     /** A poster with its name beneath; grows and glows on focus; a badge says when it is already in the library. */
-    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true, defer: Row? = null): View {
+    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true, defer: Row? = null, note: String? = null): View {
         val card = PosterCard(activity, if (small) 200 else 260, if (small) 300 else 390)
         card.contentDescription = e.title.name
         card.title?.text = e.title.name
-        card.subline?.text = subline(e.title)
+        card.subline?.text = note ?: subline(e.title)
         dress(card, e, badge, defer)
         card.onFocus = { lit -> if (lit) { reveal(card); prefetchOnRest(card, e) } }
         card.setOnClickListener { if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }

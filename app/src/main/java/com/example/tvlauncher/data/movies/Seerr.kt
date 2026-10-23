@@ -258,6 +258,9 @@ class SeerrClient(context: Context) {
 
     fun titleInfo(kind: Kind, tmdbId: Long): Pair<String, String?>? = get(SeerrApi.path(kind, tmdbId))?.let { SeerrRequests.parseTitle(it) }
 
+    /** TMDB's recommendations for a title, through Seerr (which also says what is already on the server). Null when unreachable. */
+    fun recommendations(kind: Kind, tmdbId: Long): List<Suggestion>? = get(SeerrApi.path(kind, tmdbId) + "/recommendations?page=1")?.let { Picks.parseSuggestions(it) }
+
     /** Free space where films are stored, in bytes, or null. */
     fun freeSpaceBytes(): Long? = get("/api/v1/service/radarr/0")?.let { SeerrRequests.parseFreeSpace(it) }
 
