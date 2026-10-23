@@ -25,7 +25,8 @@ class RemoteImages private constructor(context: Context) {
         decode = ::decodeTo,
         sizeOf = { it.byteCount },
         deliver = { r -> main.post(r) },
-        largeCapBytes = 16L * 1024 * 1024   // about four full-screen backdrops, kept apart from the posters
+        largeCapBytes = 16L * 1024 * 1024,   // about four full-screen backdrops, kept apart from the posters
+        priorityWorkers = 1
     )
 
     /**
@@ -35,6 +36,15 @@ class RemoteImages private constructor(context: Context) {
      */
     fun load(url: String, headers: Map<String, String> = emptyMap(), maxWidth: Int = 0, tag: Any? = null, done: (Bitmap) -> Unit) =
         load(url, headers, maxWidth, tag, "", false, done)
+
+    /** Visible profile pictures and favourites go ahead of ordinary poster requests. */
+    fun loadPriority(url: String, maxWidth: Int, tag: Any?, done: (Bitmap) -> Unit) {
+        val at = Perf.now()
+        load(url, emptyMap(), maxWidth, tag, "", true) { b ->
+            Perf.took("letterboxd image $maxWidth", Perf.now() - at)
+            done(b)
+        }
+    }
 
     /** A backdrop: loaded ahead of every queued poster, and kept in memory apart from them. */
     fun loadBackdrop(url: String, headers: Map<String, String> = emptyMap(), maxWidth: Int, done: (Bitmap) -> Unit) =
@@ -46,6 +56,14 @@ class RemoteImages private constructor(context: Context) {
      */
     fun loadShadedPoster(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, done: (Bitmap) -> Unit) =
         load(url, headers, maxWidth, tag, SHADED, false, done)
+
+    fun loadShadedPosterPriority(url: String, maxWidth: Int, tag: Any?, done: (Bitmap) -> Unit) {
+        val at = Perf.now()
+        load(url, emptyMap(), maxWidth, tag, SHADED, true) { b ->
+            Perf.took("letterboxd poster image", Perf.now() - at)
+            done(b)
+        }
+    }
 
     private fun load(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, variant: String, urgent: Boolean, done: (Bitmap) -> Unit) {
         // Already decoded: draw it now, in this frame, rather than one post later.

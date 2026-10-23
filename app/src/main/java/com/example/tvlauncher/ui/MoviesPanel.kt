@@ -175,7 +175,7 @@ class MoviesPanel(
     private val catalog = CatalogRepository(activity)
     private val picks by lazy { com.example.tvlauncher.data.movies.PicksRepository(activity, seerr, jellyfin, com.example.tvlauncher.data.movies.WatchHistory(activity)) }
     private val ui = Handler(Looper.getMainLooper())
-    private var generation = 0
+    @Volatile private var generation = 0
     private var current: Dest = Dest.Home
     private val trail = ArrayDeque<Dest>()
     private var returnFocus: View? = null
@@ -661,8 +661,19 @@ class MoviesPanel(
     /** Starts every waiting row that is within a screen of the visible part of the page. */
     private fun fillNear() {
         if (pending.isEmpty()) return
+        // A refreshed Letterboxd row may have replaced its old views before their deferred load ran.
+        pending.removeAll { lazy ->
+            var parent: android.view.ViewParent? = lazy.row.scroller.parent
+            while (parent != null && parent !== content) parent = parent.parent
+            parent == null
+        }
         val limit = page.scrollY + page.height * 2
-        val due = pending.filter { (it.row.heading ?: it.row.scroller).top < limit }
+        val due = pending.filter {
+            val target = it.row.heading ?: it.row.scroller
+            val bounds = android.graphics.Rect(0, 0, target.width, target.height)
+            content.offsetDescendantRectToMyCoords(target, bounds)
+            bounds.top < limit
+        }
         if (due.isEmpty()) return
         pending.removeAll(due.toSet())
         due.forEach { it.load() }
@@ -807,29 +818,48 @@ class MoviesPanel(
         val row = row(heading, caption, into = into)
         row.inner.minimumHeight = Cinema.px(activity, 488)
         if (films.isEmpty()) { row.inner.addView(note(empty)); return row }
-        // The cards go up at once; each poster's address is looked up (eight at a time, the first ones first) and its
-        // picture fills in as it arrives, so a long row never waits for all of them.
+        // Reserve the row now; build and fetch only near the viewport. A slow poster never holds up its neighbours.
         val shown = films.take(LB_ROW_LIMIT)
         val posters = java.util.concurrent.ConcurrentHashMap<String, String>()
-        val cards = HashMap<String, PosterCard>()
-        shown.forEachIndexed { i, f ->
-            val v = card(Entry(lbTitle(f, null), null, emptyMap()), emptyList(), badge = false, note = line(f), chip = chip(f)) { lbOpen(f, posters[f.slug]) }
-            (v as? PosterCard)?.let { cards[f.slug] = it }
-            row.inner.addView(v, cardParams(i))
-        }
         row.setCount(films.size)
-        lbFocusIfLost(row)
-        shelfPool.execute {
-            shown.chunked(8).forEach { chunk ->
-                if (gen != generation) return@execute
-                val found = lbPosters(chunk)
-                posters.putAll(found)
-                activity.runOnUiThread {
-                    if (gen != generation) return@runOnUiThread
-                    chunk.forEach { f -> found[f.slug]?.let { u -> images.loadShadedPoster(u, emptyMap(), 332, pageTag) { b -> cards[f.slug]?.setShadedPoster(b); frost?.refresh() } } }
+        val tag = pageTag
+        fun addFrom(from: Int) {
+            if (gen != generation) return
+            val to = minOf(from + CARDS_PER_FRAME, shown.size)
+            for (i in from until to) {
+                val f = shown[i]
+                val v = card(Entry(lbTitle(f, null), null, emptyMap()), emptyList(), badge = false, note = line(f), chip = chip(f)) { lbOpen(f, posters[f.slug]) } as PosterCard
+                row.inner.addView(v, cardParams(i))
+                val load = {
+                    lbPosterPool.execute {
+                        if (gen == generation) lb.posterUrl(f.slug)?.let { url ->
+                            posters[f.slug] = url
+                            activity.runOnUiThread {
+                                if (gen == generation && row.scroller.isAttachedToWindow) {
+                                    val bounds = android.graphics.Rect(0, 0, row.scroller.width, row.scroller.height)
+                                    content.offsetDescendantRectToMyCoords(row.scroller, bounds)
+                                    // Cached URLs can return before the newly added card has had its first layout.
+                                    val left = if (v.width > 0) v.left else i * Cinema.px(activity, 288)
+                                    val right = left + Cinema.px(activity, 260)
+                                    val bottom = maxOf(bounds.bottom, bounds.top + Cinema.px(activity, 488))
+                                    val visible = bounds.top < page.scrollY + page.height && bottom > page.scrollY &&
+                                        left < row.scroller.scrollX + row.scroller.width - row.scroller.paddingRight && right > row.scroller.scrollX
+                                    val done: (Bitmap) -> Unit = { b -> if (gen == generation) { v.setShadedPoster(b); frost?.refresh() } }
+                                    if (visible) images.loadShadedPosterPriority(url, Cinema.px(activity, 260), tag, done)
+                                    else images.loadShadedPoster(url, emptyMap(), Cinema.px(activity, 260), tag, done)
+                                }
+                            }
+                        }
+                    }
                 }
+                if (i < EAGER_POSTERS) load() else row.deferred += v to load
             }
+            if (from == 0) lbFocusIfLost(row)
+            if (to < shown.size) android.view.Choreographer.getInstance().postFrameCallback { addFrom(to) }
+            else row.scroller.post { if (gen == generation) row.loadNear() }
         }
+        pending += Lazy(row) { addFrom(0) }
+        page.post { if (gen == generation) fillNear() }
         return row
     }
 
@@ -838,6 +868,7 @@ class MoviesPanel(
         val row = row(heading, caption, into = into)
         row.inner.minimumHeight = Cinema.px(activity, 300)
         if (lists.isEmpty()) { row.inner.addView(note("No lists yet")); return row }
+        val tag = pageTag
         lists.forEachIndexed { i, l ->
             val card = ListCard(activity, posterW = 120, step = 76, widthMock = 500)
             card.name.text = l.name
@@ -845,18 +876,20 @@ class MoviesPanel(
             card.setOnClickListener { go(Dest.LbListPage(l.path), remember = true) }
             card.setOnFocusChangeListener { v, f -> if (f) reveal(v) }
             row.inner.addView(card, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = Cinema.px(activity, 56) })
-        }
-        row.setCount(lists.size)
-        lbFocusIfLost(row)
-        shelfPool.execute {
-            val posters = lbPosters(lists.flatMap { it.previews })
-            activity.runOnUiThread {
-                if (gen != generation) return@runOnUiThread
-                lists.forEachIndexed { i, l -> (row.inner.getChildAt(i) as? ListCard)?.let { c ->
-                    l.previews.take(5).forEachIndexed { k, f -> posters[f.slug]?.let { u -> images.load(u, maxWidth = 240, tag = pageTag) { b -> c.posters[k].setImageBitmap(b) } } }
+            row.deferred += card to {
+                l.previews.take(5).forEachIndexed { k, f -> lbPosterPool.execute {
+                    if (gen == generation) lb.posterUrl(f.slug)?.let { url -> activity.runOnUiThread {
+                        if (gen == generation) images.load(url, maxWidth = 240, tag = tag) { b ->
+                            if (gen == generation) card.posters[k].setImageBitmap(b)
+                        }
+                    } }
                 } }
             }
         }
+        row.setCount(lists.size)
+        lbFocusIfLost(row)
+        pending += Lazy(row) { row.loadNear() }
+        page.post { if (gen == generation) fillNear() }
         return row
     }
 
@@ -901,15 +934,18 @@ class MoviesPanel(
         content.addView(recentHolder, LinearLayout.LayoutParams(-1, -2))
         val perPerson = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         content.addView(perPerson, LinearLayout.LayoutParams(-1, -2))
+        lbFilmRow("Recently watched", if (users.size > 1) "by the people you follow" else null, emptyList(), gen, recentHolder, empty = "Loading…")
 
         val diaries = java.util.concurrent.ConcurrentHashMap<String, List<com.example.tvlauncher.data.letterboxd.LbDiaryEntry>>()
-        var recentRow: Row? = null
+        var recentScheduled = false
+        var lastRecent: List<Pair<String, com.example.tvlauncher.data.letterboxd.LbDiaryEntry>>? = null
         fun drawRecent() {
             val merged = users.flatMap { u -> diaries[u].orEmpty().map { u to it } }.sortedByDescending { it.second.date ?: "" }.take(18)
-            if (merged.isEmpty()) return
+            if (merged == lastRecent) return
+            if (merged.isEmpty() && diaries.size < users.size) return
+            lastRecent = merged
             recentHolder.removeAllViews()
-            val owners = merged.associate { (u, d) -> d.film.slug + d.date to u }
-            recentRow = lbFilmRow("Recently watched", if (users.size > 1) "by you both" else null, merged.map { it.second.film.copy(rating = it.second.rating) }, gen, into = recentHolder,
+            lbFilmRow("Recently watched", if (users.size > 1) "by the people you follow" else null, merged.map { it.second.film.copy(rating = it.second.rating) }, gen, into = recentHolder,
                 line = { f -> listOfNotNull(f.stars, merged.firstOrNull { it.second.film.slug == f.slug }?.second?.date?.let { lbDay(it) }).joinToString("  ·  ").ifBlank { null } },
                 chip = { f -> merged.firstOrNull { it.second.film.slug == f.slug }?.first?.let { lbName(it).substringBefore(' ') } })
         }
@@ -923,20 +959,29 @@ class MoviesPanel(
                 card.bind(lbName(u), u, last?.film?.name ?: p.recent.firstOrNull()?.name, (last?.rating ?: p.recent.firstOrNull()?.rating)?.let { com.example.tvlauncher.data.letterboxd.Lb.stars(it) },
                     lbDay(last?.date), p.stats.filter { it.second.lowercase() in setOf("films", "this year", "lists", "following") }.take(3).map { it.first to it.second })
                 card.avatar.set(lbName(u), null)
-                p.avatar?.let { a -> images.load(a, maxWidth = 220, tag = pageTag) { b -> card.avatar.set(lbName(u), b) } }
-                shelfPool.execute {
-                    val posters = lbPosters(p.favourites)
-                    activity.runOnUiThread {
-                        if (gen != generation) return@runOnUiThread
-                        p.favourites.forEachIndexed { k, f -> posters[f.slug]?.let { url -> images.load(url, maxWidth = 200, tag = pageTag) { b -> card.favs[k].setImageBitmap(b); if (k == 1) card.washWith(b) } } }
+                val tag = pageTag
+                p.avatar?.let { a -> images.loadPriority(a, maxWidth = Cinema.px(activity, 96), tag = tag) { b -> if (gen == generation) card.avatar.set(lbName(u), b) } }
+                p.favourites.take(4).forEachIndexed { k, f ->
+                    lbPosterPool.execute {
+                        if (gen == generation) lb.posterUrl(f.slug)?.let { url -> activity.runOnUiThread {
+                            if (gen == generation) images.loadPriority(url, maxWidth = Cinema.px(activity, 110), tag = tag) { b ->
+                                if (gen == generation) { card.favs[k].setImageBitmap(b); if (k == 1) card.washWith(b) }
+                            }
+                        } }
                     }
                 }
             }
             lb.load("/$u/films/diary/", 30 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.MINUTE, { com.example.tvlauncher.data.letterboxd.Lb.diary(it) }) { d ->
-                if (gen != generation || d == null) return@load
-                diaries[u] = d
-                drawRecent()
-                d.firstOrNull()?.let { last -> cards[i].bind(lbName(u), u, last.film.name, last.rating?.let { com.example.tvlauncher.data.letterboxd.Lb.stars(it) }, lbDay(last.date), lbStats[u].orEmpty()) }
+                if (gen != generation) return@load
+                diaries[u] = d.orEmpty()
+                if (!recentScheduled) {
+                    recentScheduled = true
+                    android.view.Choreographer.getInstance().postFrameCallback {
+                        recentScheduled = false
+                        if (gen == generation) drawRecent()
+                    }
+                }
+                d?.firstOrNull()?.let { last -> cards[i].bind(lbName(u), u, last.film.name, last.rating?.let { com.example.tvlauncher.data.letterboxd.Lb.stars(it) }, lbDay(last.date), lbStats[u].orEmpty()) }
             }
         }
         // Each member's watchlist and likes, in turn.
@@ -944,13 +989,15 @@ class MoviesPanel(
             val watch = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
             val likes = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
             perPerson.addView(watch); perPerson.addView(likes)
+            lbFilmRow("${lbName(u)}’s watchlist", null, emptyList(), gen, watch, empty = "Loading…")
+            lbFilmRow("${lbName(u)} liked", null, emptyList(), gen, likes, empty = "Loading…")
             lb.load("/$u/watchlist/", com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.films(it) }) { f ->
-                if (gen != generation || f == null) return@load
-                watch.removeAllViews(); lbFilmRow("${lbName(u)}’s watchlist", null, f.take(20), gen, into = watch, line = { null })
+                if (gen != generation) return@load
+                watch.removeAllViews(); lbFilmRow("${lbName(u)}’s watchlist", null, f.orEmpty().take(20), gen, into = watch, line = { null }, empty = if (f == null) "Couldn't load this watchlist just now" else "Nothing here yet")
             }
             lb.load("/$u/likes/films/", com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.films(it) }) { f ->
-                if (gen != generation || f == null) return@load
-                likes.removeAllViews(); lbFilmRow("${lbName(u)} liked", null, f.take(20), gen, into = likes, line = { it.stars?.let { s -> "$s  ♥" } ?: "♥" })
+                if (gen != generation) return@load
+                likes.removeAllViews(); lbFilmRow("${lbName(u)} liked", null, f.orEmpty().take(20), gen, into = likes, line = { it.stars?.let { s -> "$s  ♥" } ?: "♥" }, empty = if (f == null) "Couldn't load liked films just now" else "Nothing here yet")
             }
         }
     }

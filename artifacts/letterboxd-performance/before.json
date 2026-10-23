@@ -1,0 +1,26 @@
+{
+  "label": "before",
+  "runs": [
+    {
+      "iteration": 1,
+      "buildMs": 295,
+      "members": 2,
+      "memberDataMs": 3131,
+      "memberArtworkMs": 3495
+    },
+    {
+      "iteration": 2,
+      "buildMs": 98,
+      "members": 2,
+      "memberDataMs": 2156,
+      "memberArtworkMs": 2156
+    },
+    {
+      "iteration": 3,
+      "buildMs": 107,
+      "members": 2,
+      "memberDataMs": 1848,
+      "memberArtworkMs": 1848
+    }
+  ]
+}

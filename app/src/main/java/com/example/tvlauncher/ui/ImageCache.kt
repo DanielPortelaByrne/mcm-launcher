@@ -24,7 +24,9 @@ class ImageCache<T : Any>(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Room kept for big pictures (backdrops), apart from the posters, so a page of posters cannot push them out. */
     largeCapBytes: Long = 0L,
-    private val largeBytes: Int = 1_000_000
+    private val largeBytes: Int = 1_000_000,
+    /** Capacity reserved for visible artwork even while ordinary workers wait on unrelated downloads. */
+    priorityWorkers: Int = 0
 ) {
     private val memory = ByteLru<T>(memoryCapBytes.toLong(), sizeOf)
     private val large = ByteLru<T>(largeCapBytes, sizeOf)
@@ -49,6 +51,7 @@ class ImageCache<T : Any>(
 
     init {
         repeat(workers) { i -> Thread({ work() }, "images-$i").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }.start() }
+        repeat(priorityWorkers) { i -> Thread({ work(urgentOnly = true) }, "images-visible-$i").apply { isDaemon = true; priority = Thread.NORM_PRIORITY - 1 }.start() }
     }
 
     /** The decoded image if it is in memory now, without any work. */
@@ -76,7 +79,7 @@ class ImageCache<T : Any>(
             val fresh = Job(k, url, headers, maxWidth, variant).also { it.waiters += Waiter(tag, done); it.urgent = urgent }
             jobs[k] = fresh
             (if (urgent) urgentQueue else queue).addFirst(fresh)
-            lock.notify()
+            lock.notifyAll()
         }
     }
 
@@ -100,10 +103,10 @@ class ImageCache<T : Any>(
 
     fun close() { closed = true; synchronized(lock) { queue.clear(); urgentQueue.clear(); jobs.clear(); lock.notifyAll() } }
 
-    private fun work() {
+    private fun work(urgentOnly: Boolean = false) {
         while (!closed) {
             val job = synchronized(lock) {
-                while (queue.isEmpty() && urgentQueue.isEmpty() && !closed) lock.wait()
+                while (urgentQueue.isEmpty() && (urgentOnly || queue.isEmpty()) && !closed) lock.wait()
                 if (closed) return
                 (urgentQueue.pollFirst() ?: queue.removeFirst()).also { it.running = true }
             }
@@ -161,7 +164,8 @@ class ImageCache<T : Any>(
     private fun key(url: String, maxWidth: Int, variant: String) = "$maxWidth|$variant|$url"
 
     companion object {
-        fun sha1(text: String): String = MessageDigest.getInstance("SHA-1").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+        fun sha1(text: String): String = MessageDigest.getInstance("SHA-1").digest(text.toByteArray())
+            .joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') }
     }
 }
 

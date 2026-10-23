@@ -21,7 +21,10 @@ class LetterboxdRepository(activity: Activity, allowBrowser: Boolean = true) {
     private val prefs = activity.getSharedPreferences("letterboxd_follow", Activity.MODE_PRIVATE)
     private val main = Handler(Looper.getMainLooper())
     private val pool = Executors.newFixedThreadPool(2)
-    private val inFlight = ConcurrentHashMap<String, Boolean>()
+    private val pages = PageCache(dir, { path -> web.page(path)?.let { slim(it) } })
+    private data class Parsed(val html: String, val value: Any)
+    private data class Snapshot(val digest: String, val value: Any) : java.io.Serializable
+    private val parsed = LinkedHashMap<String, Parsed>(32, 0.75f, true)
 
     // --- Who is followed ----------------------------------------------------------------------------
 
@@ -41,39 +44,48 @@ class LetterboxdRepository(activity: Activity, allowBrowser: Boolean = true) {
      * page could not be had at all.
      */
     fun <T> load(path: String, maxAgeMs: Long, parse: (String) -> T?, done: (T?) -> Unit) {
-        pool.execute {
-            val file = cacheFile(path)
-            val saved = file.takeIf { it.exists() }?.let { runCatching { it.readText() }.getOrNull() }
-            val savedValue = saved?.let { runCatching { parse(it) }.getOrNull() }
-            if (savedValue != null) main.post { done(savedValue) }
-            val fresh = saved == null || System.currentTimeMillis() - file.lastModified() > maxAgeMs
-            if (!fresh) return@execute
-            if (inFlight.putIfAbsent(path, true) != null && savedValue != null) return@execute
-            try {
-                val html = web.page(path)?.let { slim(it) }
-                if (html == null) { if (savedValue == null) main.post { done(null) }; return@execute }
-                if (html != saved) runCatching { File(dir, file.name + ".tmp").also { it.writeText(html) }.renameTo(file) }
-                else file.setLastModified(System.currentTimeMillis())
-                val value = runCatching { parse(html) }.getOrNull()
-                if (html != saved || savedValue == null) main.post { done(value) }
-            } finally { inFlight.remove(path) }
-        }
+        val started = android.os.SystemClock.elapsedRealtime()
+        // Each public URL has one model shape. Lambda class names contain runtime identities and cannot be disk keys.
+        val key = path
+        pages.load(path, maxAgeMs, { html ->
+            val snapshot = File(dir, com.example.tvlauncher.ui.ImageCache.sha1("parsed-v2:" + key) + ".bin")
+            val digest by lazy { java.security.MessageDigest.getInstance("SHA-256").digest(html.toByteArray())
+                .joinToString("") { (it.toInt() and 255).toString(16).padStart(2, '0') } }
+            @Suppress("UNCHECKED_CAST")
+            val hit = synchronized(parsed) { parsed[key]?.takeIf { it.html == html }?.value as? T } ?: runCatching {
+                java.io.ObjectInputStream(snapshot.inputStream().buffered()).use { it.readObject() as Snapshot }
+                    .takeIf { it.digest == digest }?.value as? T
+            }.getOrNull()
+            val parseStart = android.os.SystemClock.elapsedRealtime()
+            val value = hit ?: runCatching { parse(html) }.getOrNull()
+            com.example.tvlauncher.ui.Perf.took("letterboxd parse $path", android.os.SystemClock.elapsedRealtime() - parseStart)
+            if (value != null) synchronized(parsed) {
+                parsed[key] = Parsed(html, value as Any)
+                while (parsed.size > 32) parsed.remove(parsed.keys.first())
+            }
+            main.post {
+                com.example.tvlauncher.ui.Perf.took("letterboxd data $path", android.os.SystemClock.elapsedRealtime() - started)
+                done(value)
+            }
+            // Retain parsed public data across process restarts. A digest and schema version invalidate old snapshots.
+            // Only app-private, self-written files are read; corrupt or incompatible copies fall back to HTML parsing.
+            if (hit == null && value is java.io.Serializable) runCatching {
+                val tmp = File.createTempFile(snapshot.name, ".tmp", dir)
+                try {
+                    java.io.ObjectOutputStream(tmp.outputStream().buffered()).use { it.writeObject(Snapshot(digest, value)) }
+                    if (!tmp.renameTo(snapshot)) tmp.delete()
+                } finally { tmp.delete() }
+            }
+        }, { main.post { done(null) } })
     }
 
     /** Blocking: the page now, saved copy first when it is recent enough. Null when it cannot be had. */
     fun pageNow(path: String, maxAgeMs: Long): String? {
-        val file = cacheFile(path)
-        if (file.exists() && System.currentTimeMillis() - file.lastModified() < maxAgeMs) return file.readText()
-        val html = web.page(path)?.let { slim(it) } ?: return file.takeIf { it.exists() }?.readText()
-        runCatching { File(dir, file.name + ".tmp").also { it.writeText(html) }.renameTo(file) }
-        return html
+        return pages.pageNow(path, maxAgeMs)
     }
 
     /** True when [path] is known not to exist (a member's film page they never logged, a username with no account). */
     fun missing(html: String?) = html != null && html.contains("<title>Letterboxd - Not Found</title>")
-
-    // The version is part of the name: when what is kept of a page changes, the copies saved before are left unused.
-    private fun cacheFile(path: String) = File(dir, com.example.tvlauncher.ui.ImageCache.sha1("v2:" + path) + ".html")
 
     // --- Posters --------------------------------------------------------------------------------------
 
@@ -101,7 +113,7 @@ class LetterboxdRepository(activity: Activity, allowBrowser: Boolean = true) {
     private val saveTask = Runnable { pool.execute { runCatching { File(dir, "posters.tmp").also { it.writeText(JSONObject(posters as Map<*, *>).toString()) }.renameTo(posterFile) } } }
     private fun savePostersSoon() { main.removeCallbacks(saveTask); main.postDelayed(saveTask, 2000) }
 
-    fun close() { pool.shutdownNow(); web.close() }
+    fun close() { main.removeCallbacks(saveTask); pages.close(); pool.shutdownNow(); web.close() }
 
     companion object {
         val DEFAULT = listOf("evacawley", "DanielPortelaB")

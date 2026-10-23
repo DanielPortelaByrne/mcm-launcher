@@ -11,6 +11,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
 class ImageCacheTest {
+    @Test fun cache_keys_keep_the_existing_sha1_format() {
+        assertEquals("a9993e364706816aba3e25717850c26c9cd0d89d", ImageCache.sha1("abc"))
+    }
     @get:Rule val folder = TemporaryFolder()
 
     private val fetches = Collections.synchronizedList(ArrayList<String>())
@@ -82,6 +85,24 @@ class ImageCacheTest {
         gate.countDown()
         assertTrue(all.await(5, TimeUnit.SECONDS))
         assertEquals(listOf("0", "backdrop", "2", "1"), order)
+    }
+
+    @Test fun visible_artwork_does_not_wait_for_an_unrelated_download() {
+        val blocked = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val visible = CountDownLatch(1)
+        val c = ImageCache<String>(folder.root, 1_000_000, 1_000_000,
+            fetch = { url, _ ->
+                if (url == "slow") { blocked.countDown(); release.await(3, TimeUnit.SECONDS) }
+                url.toByteArray()
+            }, decode = { bytes, _, _ -> String(bytes) }, sizeOf = { it.length },
+            deliver = { it.run() }, workers = 1, priorityWorkers = 1)
+        try {
+            c.load("slow", emptyMap(), 100, null) { }
+            assertTrue(blocked.await(1, TimeUnit.SECONDS))
+            c.load("visible", emptyMap(), 100, null, urgent = true) { visible.countDown() }
+            assertTrue("Visible image queued behind another page's download", visible.await(500, TimeUnit.MILLISECONDS))
+        } finally { release.countDown(); c.close() }
     }
 
     @Test fun big_pictures_are_not_pushed_out_by_small_ones() {

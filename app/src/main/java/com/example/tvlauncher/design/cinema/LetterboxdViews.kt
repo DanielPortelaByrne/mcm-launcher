@@ -46,7 +46,7 @@ class AvatarView(context: Context, private val sizeMock: Int) : FrameLayout(cont
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
 
     init {
-        setWillNotDraw(false); clipChildren = false
+        setWillNotDraw(false); clipChildren = false; clipToPadding = false
         background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Cinema.STRIPE_RED, Cinema.SAFFRON)).apply { shape = GradientDrawable.OVAL }
         outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setOval(0, 0, v.width, v.height) } }
         addView(initial, LayoutParams(-1, -1)); addView(image, LayoutParams(-1, -1))
@@ -118,8 +118,9 @@ class MemberCard(context: Context) : FrameLayout(context) {
             fan.addView(v, LayoutParams(Cinema.px(context, 98), Cinema.px(context, 147)).apply { leftMargin = Cinema.px(context, i * 30); topMargin = Cinema.px(context, tops[i]) })
         }
         face.addView(fan, LayoutParams(Cinema.px(context, 190), Cinema.px(context, 200), Gravity.END or Gravity.TOP).apply { rightMargin = Cinema.px(context, 26); topMargin = Cinema.px(context, 40) })
-        val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(Cinema.px(context, 34), Cinema.px(context, 30), Cinema.px(context, 34), 0); clipChildren = false }
-        val top = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false }
+        // The avatar paints its rings beyond its bounds. Padding must not crop those rings.
+        val column = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; setPadding(Cinema.px(context, 34), Cinema.px(context, 30), Cinema.px(context, 34), 0); clipChildren = false; clipToPadding = false }
+        val top = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
         top.addView(avatar, LinearLayout.LayoutParams(Cinema.px(context, 96), Cinema.px(context, 96)))
         val names = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
         names.addView(name); names.addView(handle, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(context, 6) })
@@ -260,6 +261,7 @@ class ReviewCard(context: Context, widthMock: Int = 540, heightMock: Int = 300) 
 
     init {
         isFocusable = true; isClickable = true; background = rest
+        clipChildren = false; clipToPadding = false
         setPadding(Cinema.px(context, 30), Cinema.px(context, 28), Cinema.px(context, 30), Cinema.px(context, 24))
         val head = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false }
         head.addView(avatar, LinearLayout.LayoutParams(Cinema.px(context, 52), Cinema.px(context, 52)))

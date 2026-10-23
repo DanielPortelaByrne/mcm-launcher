@@ -50,10 +50,15 @@ data class FilmPage(
 }
 
 /** Film text without em dashes: "a — b" reads as "a, b". */
-fun String.withoutEmDashes(): String = replace(Regex("\\s*\u2014\\s*"), ", ")
+private val emDashSpacing = Regex("\\s*\u2014\\s*")
+fun String.withoutEmDashes(): String = if ('\u2014' in this) replace(emDashSpacing, ", ") else this
 
 /** Reads a Letterboxd film page. Resilient by design: a missing section just leaves that field empty. */
 object LetterboxdParser {
+    private val cleanTags = Regex("<[^>]+>")
+    private val cleanHex = Regex("&#x([0-9a-fA-F]+);")
+    private val cleanDecimal = Regex("&#(\\d+);")
+    private val cleanWhitespace = Regex("[\\s\\u00a0]+")
     private val opts = setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
 
     fun parse(html: String): FilmPage {
@@ -104,10 +109,11 @@ object LetterboxdParser {
 
     /** Strips tags and decodes the handful of entities Letterboxd uses. */
     fun clean(raw: String): String {
-        var s = Regex("<[^>]+>").replace(raw, "")
-        s = Regex("&#x([0-9a-fA-F]+);").replace(s) { it.groupValues[1].toInt(16).toChar().toString() }
-        s = Regex("&#(\\d+);").replace(s) { it.groupValues[1].toInt().toChar().toString() }
+        if ('<' !in raw && '&' !in raw) return cleanWhitespace.replace(raw, " ").trim().withoutEmDashes()
+        var s = cleanTags.replace(raw, "")
+        s = cleanHex.replace(s) { it.groupValues[1].toInt(16).toChar().toString() }
+        s = cleanDecimal.replace(s) { it.groupValues[1].toInt().toChar().toString() }
         return s.replace("&amp;", "&").replace("&quot;", "\"").replace("&lt;", "<").replace("&gt;", ">").replace("&nbsp;", " ").replace("&rsquo;", "’")
-            .replace(Regex("[\\s\\u00a0]+"), " ").trim().withoutEmDashes()
+            .replace(cleanWhitespace, " ").trim().withoutEmDashes()
     }
 }

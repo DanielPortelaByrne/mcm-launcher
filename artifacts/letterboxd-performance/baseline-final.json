@@ -1,0 +1,35 @@
+{
+  "label": "before",
+  "runs": [
+    {
+      "iteration": 1,
+      "buildMs": 312,
+      "members": 2,
+      "memberDataMs": 3191,
+      "memberArtworkMs": 3587,
+      "firstRowDataMs": 4155,
+      "firstRowArtworkMs": 10314
+    },
+    {
+      "iteration": 2,
+      "buildMs": 97,
+      "members": 2,
+      "memberDataMs": 751,
+      "memberArtworkMs": 810,
+      "firstRowDataMs": 1101,
+      "firstRowArtworkMs": 2187
+    },
+    {
+      "iteration": 3,
+      "buildMs": 74,
+      "members": 2,
+      "memberDataMs": 424,
+      "memberArtworkMs": 424,
+      "firstRowDataMs": 789,
+      "firstRowArtworkMs": 1817
+    }
+  ],
+  "frames": 149,
+  "framesOver100Ms": 37,
+  "frameP95Ms": 585
+}
