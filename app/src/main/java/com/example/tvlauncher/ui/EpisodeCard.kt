@@ -51,8 +51,9 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
     private val badgeText = Cinema.text(context, "", 13, Cinema.SAFFRON, weight = 700, tracking = 0.14f).apply { maxLines = 1 }
     private val actions = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; clipChildren = false; clipToPadding = false }
     private val airs = Cinema.text(context, "", 18, Cinema.CREAM, weight = 600, tracking = 0.12f, caps = true).apply { visibility = GONE }
-    private val track = View(context).apply { setBackgroundColor(Cinema.alpha(Cinema.CREAM, 0.2f)); visibility = GONE }
-    private val fill = View(context).apply { background = StripeDrawable(horizontalBands = true, radius = 0f); visibility = GONE }
+    // Watch progress along the still's foot, saffron over a dark track like the Continue row.
+    private val track = View(context).apply { setBackgroundColor(0x66000000); visibility = GONE }
+    private val fill = View(context).apply { setBackgroundColor(Cinema.SAFFRON); visibility = GONE }
     private val texts = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val title = Cinema.text(context, name, 23, Cinema.CARD_TITLE, weight = 500).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
     private val meta = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -105,8 +106,8 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         still.addView(actions, LayoutParams(-1, -1))
         airs.setPadding(p(18), p(10), p(18), p(10)); airs.background = Cinema.glass(context, 22f, 0xA80C0806.toInt())
         still.addView(airs, LayoutParams(-2, -2, Gravity.CENTER))
-        still.addView(track, LayoutParams(-1, p(7), Gravity.BOTTOM))
-        still.addView(fill, LayoutParams(0, p(7), Gravity.BOTTOM or Gravity.START))
+        still.addView(track, LayoutParams(-1, p(6), Gravity.BOTTOM))
+        still.addView(fill, LayoutParams(0, p(6), Gravity.BOTTOM or Gravity.START))
         column.addView(still, LinearLayout.LayoutParams(stillW, stillH))
 
         texts.addView(title, LinearLayout.LayoutParams(stillW, -2))
@@ -120,6 +121,15 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         play.onFocus = { post { refresh() } }
         download.onFocus = { post { refresh() } }
         buildPlaceholder()
+    }
+
+    /** Watched all the way through: the Play disc shows a tick instead (it still plays the episode again). */
+    var watched = false
+        set(value) { field = value; showPlayIcon() }
+
+    private fun showPlayIcon() {
+        if (watched) play.set(R.drawable.ic_cin_check, Cinema.SAFFRON, ring = false, progress = null) else play.set(R.drawable.ic_cin_play, Cinema.CREAM, ring = false, progress = null)
+        play.contentDescription = if (watched) "Watched. Play episode $number again" else "Play episode $number"
     }
 
     /** Every focus stop on the card, left to right. */
@@ -155,7 +165,7 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
             CardState.DOWNLOADING -> download.set(R.drawable.ic_cin_dl, Cinema.SAFFRON, ring = true, progress = look.progress, iconMock = 26)
             else -> download.set(R.drawable.ic_cin_dl, Cinema.CREAM, ring = false, progress = null)
         }
-        play.contentDescription = "Play episode $number"
+        showPlayIcon()
         download.contentDescription = when (look.state) {
             CardState.LIBRARY -> "In your library"
             CardState.REQUESTED -> "Requested"
@@ -188,7 +198,7 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         val on = fraction != null && fraction > 0f
         track.visibility = if (on) VISIBLE else GONE
         fill.visibility = if (on) VISIBLE else GONE
-        if (on) (fill.layoutParams as LayoutParams).width = (stillW * fraction!!.coerceIn(0f, 1f)).toInt().coerceAtLeast(p(7))
+        if (on) (fill.layoutParams as LayoutParams).width = (stillW * fraction!!.coerceIn(0f, 1f)).toInt().coerceAtLeast(p(6))
         fill.requestLayout()
     }
 

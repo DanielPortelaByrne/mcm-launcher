@@ -380,6 +380,7 @@ class MainActivity : AppCompatActivity() {
         refreshApps()
         bootMark("refreshApps")
         collection.homeReturned()
+        if (::moviesPanel.isInitialized) moviesPanel.onResume()
         artModeOverlay.resume()
         if (!hasResumedOnce && accountsRepo.pickerBoot != bootCount() && accountsRepo.accounts().size > 1) {
             if (whoPicker.show()) accountsRepo.pickerBoot = bootCount()

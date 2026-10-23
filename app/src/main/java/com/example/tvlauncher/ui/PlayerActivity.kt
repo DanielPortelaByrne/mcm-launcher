@@ -111,6 +111,8 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var history: PlaybackStore
     private lateinit var continueStore: ContinueWatching
     private var payload: String? = null
+    /** Restart was pressed: play from 0:00 and let neither the server's nor this TV's resume point move it. */
+    private var forcedStart = false
     private lateinit var network: NetworkEstimator
     private lateinit var bandwidth: DefaultBandwidthMeter
     private val resumePrefs by lazy { getSharedPreferences("resume_positions", MODE_PRIVATE) }
@@ -155,6 +157,7 @@ class PlayerActivity : AppCompatActivity() {
         imdbId = intent.getStringExtra(EXTRA_IMDB)
         live = intent.getBooleanExtra(EXTRA_LIVE, false)
         jf = com.example.tvlauncher.data.jellyfin.JellyfinReport.fromJson(intent.getStringExtra(EXTRA_JF))
+        forcedStart = intent.getBooleanExtra(EXTRA_FROM_START, false)
         title =intent.getStringExtra(EXTRA_TITLE).orEmpty()
         art = intent.getStringExtra(EXTRA_ART)
         history = PlaybackStore(this)
@@ -259,7 +262,7 @@ class PlayerActivity : AppCompatActivity() {
      */
     private fun applyFreshItem(report: com.example.tvlauncher.data.jellyfin.JellyfinReport, fresh: JellyfinItem) {
         val start = if (fresh.played) 0L else fresh.resumeMs
-        val updated = report.copy(sourceId = fresh.sourceId, startMs = start)
+        val updated = report.copy(sourceId = fresh.sourceId, startMs = if (forcedStart) 0L else start)
         jf = updated
         itemAudioCodec = fresh.audioCodec
         if (!started && index == 0 && fresh.audioCodec != null && fresh.audioCodec in stereoCodecs() && items.firstOrNull()?.label != STEREO_LABEL) {
@@ -378,7 +381,7 @@ class PlayerActivity : AppCompatActivity() {
         items = parse(nextIntent.getStringExtra(EXTRA_ITEMS))
         imdbId = plan.resumeKey; title = plan.title; jf = plan.report
         payload = nextIntent.getStringExtra(EXTRA_PAYLOAD)
-        nextItem = null; nextPlan = null; autoplay = EpisodeAutoplay(); episodeGeneration++
+        nextItem = null; nextPlan = null; autoplay = EpisodeAutoplay(); episodeGeneration++; forcedStart = false
         startAttempt(0)
         prefetchNextEpisode(next)
     }
@@ -400,7 +403,7 @@ class PlayerActivity : AppCompatActivity() {
             .setConnectTimeoutMs(if (slow) 60_000 else 15_000).setReadTimeoutMs(if (slow) 60_000 else 15_000)
         // A Jellyfin title picks up where the server says the viewer left off; anything else, where this TV last did.
         val serverStart = jf?.startMs
-        val resume = com.example.tvlauncher.data.jellyfin.JellyfinApi.resumePosition(serverStart, resumePrefs.getLong(imdbId ?: "", 0L))
+        val resume = if (forcedStart) 0L else com.example.tvlauncher.data.jellyfin.JellyfinApi.resumePosition(serverStart, resumePrefs.getLong(imdbId ?: "", 0L))
         // Retry transient network errors more patiently for streams: a stalled torrent recovers far more often than it dies.
         val retries = if (slow) STREAM_LOAD_RETRIES else DEFAULT_LOAD_RETRIES
         player.setMediaSource(DefaultMediaSourceFactory(this, extractorsFor(item)).setDataSourceFactory(http)
@@ -503,7 +506,7 @@ class PlayerActivity : AppCompatActivity() {
             startupMs = SystemClock.elapsedRealtime() - prepareAt
             handler.removeCallbacks(startupTimeout)
             Log.i(TAG, "First frame after ${startupMs} ms")
-            Perf.mark("player.firstFrame (prepare->frame ${startupMs} ms, seekable=${player.isCurrentMediaItemSeekable})")
+            Perf.mark("player.firstFrame (prepare->frame ${startupMs} ms, seekable=${player.isCurrentMediaItemSeekable}, at ${player.currentPosition} ms)")
             reportToJellyfin("Playing")
         }
 
@@ -984,6 +987,7 @@ class PlayerActivity : AppCompatActivity() {
         private const val EXTRA_LIVE = "live"
         private const val EXTRA_ART = "art"
         private const val EXTRA_JF = "jf"
+        private const val EXTRA_FROM_START = "fromStart"
         /** The film's details for the chrome (year, genres, runtime, certificate, rating, overview), as JSON. */
         private const val EXTRA_META = "meta"
         private const val STARTUP_TIMEOUT_MS = 25_000L
@@ -997,8 +1001,9 @@ class PlayerActivity : AppCompatActivity() {
         private const val ENGINE_STARTUP_TIMEOUT_MS = 75_000L
 
         /** Starts playback of [ranked] in order, capped at three attempts. */
-        fun launch(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?, report: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null, artUrl: String? = null, meta: PlayerMeta? = null) {
-            context.startActivity(playbackIntent(context, ranked, title, imdbId, report).putExtra(EXTRA_ART, artUrl).putExtra(EXTRA_META, meta?.let { metaJson(it) }))
+        fun launch(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?, report: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null, artUrl: String? = null, meta: PlayerMeta? = null, fromStart: Boolean = false) {
+            context.startActivity(playbackIntent(context, ranked, title, imdbId, report).putExtra(EXTRA_ART, artUrl).putExtra(EXTRA_META, meta?.let { metaJson(it) })
+                .putExtra(EXTRA_FROM_START, fromStart))
         }
 
         private fun metaJson(m: PlayerMeta): String = JSONObject().put("title", m.title).put("year", m.year ?: 0)

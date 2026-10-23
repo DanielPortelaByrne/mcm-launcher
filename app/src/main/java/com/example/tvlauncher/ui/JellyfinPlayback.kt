@@ -18,10 +18,14 @@ object JellyfinPlayback {
      * own. [resumeKey] keeps a separate "where I got to" for each film or episode. Playback starts where Jellyfin says
      * the viewer left off, and its progress is sent back so the server's "continue watching" stays right.
      */
-    fun play(activity: Activity, client: JellyfinClient, item: JellyfinItem, title: String, resumeKey: String) {
+    fun play(activity: Activity, client: JellyfinClient, item: JellyfinItem, title: String, resumeKey: String, fromStart: Boolean = false) {
         Perf.mark("library.play")
         val plan = prepare(client, item, title, resumeKey)
-        PlayerActivity.launch(activity, plan.streams, plan.title, plan.resumeKey, plan.report)
+        // The viewer's place will have moved by the time they come back, so the cached library must be asked again.
+        client.invalidateLibrary()
+        // Restart: from 0:00, whatever the server or this TV remembered.
+        val report = if (fromStart) plan.report.copy(startMs = 0L) else plan.report
+        PlayerActivity.launch(activity, plan.streams, plan.title, plan.resumeKey, report, fromStart = fromStart)
     }
 
     /** Builds the next playback locally, so the countdown never waits on an extra item lookup. */
