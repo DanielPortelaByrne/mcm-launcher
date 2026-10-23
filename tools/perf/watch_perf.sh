@@ -14,6 +14,9 @@ sleep 6
 $A shell am start -n $PKG/.MainActivity --ez debug_cinema true --es debug_cinema_dest detail-library > /dev/null 2>&1
 sleep 15
 $A exec-out screencap -p > "$OUT/detail.png"
+# Only press OK on a play button (never Delete).
+f=$($A exec-out uiautomator dump /dev/tty 2>/dev/null | grep -o '<node[^>]*focused="true"[^>]*>' | grep -o 'content-desc="[^"]*"')
+case "$f" in *'"Watch now"'*|*'"Continue'*) ;; *) echo "focused: $f; not pressing anything"; exit 1;; esac
 $A logcat -c
 $A logcat -v time -s Perf:I PlayerActivity:I > "$OUT/watch.log" &
 LOGPID=$!

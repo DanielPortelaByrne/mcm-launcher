@@ -255,3 +255,88 @@ Notes:
   lists); the list's item id is the source id for single-version files, and a differing source restarts the attempt.
 - 1.6: Downloads was not a measured hot spot; done cheaply (parallel/persisted title lookups, no rebuild when
   nothing changed). In-place row updates were left out.
+
+## Phase 0 baseline re-run (for the scroll numbers)
+
+`gfxinfo` varies a lot run to run on this device (1.4 GB RAM, ~490 MB swapped, Spotify and others resident), so the
+baseline build (7c90410) was installed again at the end and the scroll pass repeated: 76.9 %, 79.8 %, 93.3 % janky
+(p50 77 / 89 / 97 ms). With the two runs above, the baseline median is **~80 % janky, p50 ~81 ms**. The re-run's cold
+open was 3.8–4.6 s to the first row: its `catalog.xml` had just been rebuilt small; the 9–15 s seen at first is what
+the accumulated 1.7 MB file cost.
+
+## Phase 2 — after (77ad815)
+
+- Posters from the disk cache: cold open → first poster ~0.3–1.4 s after the first row (Phase 1: ~1.9 s after it,
+  all from the network). Image cache memory is shared and keyed by width; backdrops for the half-resolution views
+  are JustWatch's s640 copy (22 KB) instead of s1440 (100 KB).
+- Scroll jank unchanged by Phase 2 (87 %, 84 % in two runs): it is GPU-bound, see Phase 3.
+- A first-open regression found while measuring: a row could parse a shelf in parallel with the start-up pre-read
+  of the same shelf (2–3 s under contention). Fixed with one reader per shelf; it still varies 0.9–2.5 s when Movies
+  is opened 6 s after a cold launcher start (the script's timing), because the home screen is loading then too.
+
+## Phase 3 — after (c4ae6cc, 2df4a43, 55ef74b)
+
+`framestats` showed the UI thread at ~1 ms per frame and the render thread/GPU at 40–60 ms: the page was GPU-bound.
+Experiments (each a temporary build, scroll pass once):
+
+| Change (cumulative where noted) | Janky | p50 |
+|---|---|---|
+| Phase 2 build | 84–92 % | 73–81 ms |
+| frost blur switched off entirely (experiment) | 50 % | 57 ms |
+| frost as a software snapshot of the whole page (first try) | 65 % | 61 ms — but 44 ms of main thread per snapshot |
+| + no animated translationZ / weight change / glow on cards (experiment) | 62 % | 57 ms |
+| + no elevation shadow on resting posters (experiment) | 49 % | 48 ms |
+| + no foreground gradient on posters (experiment) | 40 % | 42 ms |
+| frost as a GPU node recorded at 1/4 scale (second try) | 64 % | 53 ms — the layer still re-rendered with the page |
+| **shipped:** snapshot of only the views under the rail (2 ms), bitmap shadows/blooms, baked poster shading, cards added 4 per frame, far posters deferred | 28–45 % | 40–48 ms |
+
+Final scroll pass (three runs): **28.3 %, 43.6 %, 44.8 % janky (median 43.6 %), p50 40–48 ms, p90 73–77 ms**, and
+659–742 frames delivered in the same 35 s of input (baseline 357–640) — against ~80 % / p50 ~81 ms before.
+Not done in Phase 3:
+- `Cinema.weight()` on focus (a relayout per D-pad press) was kept: removing it with the glow and Z changes moved
+  jank only 65 % → 62 % in the experiment, and the weight change is part of the look.
+- `fillNear` lookahead kept at two screens; cards are now added 4 per frame, which removed the long main-thread
+  bursts (a 16-card row was 200–390 ms in one go).
+- RecyclerView rows: not needed for this result.
+- Hero timer: still posts every 9 s while scrolled away (it already skips the work); negligible.
+- Remaining GPU cost is the full-screen ambient background, the focused card's real shadow, text and posters.
+
+## Phase 4 — after (3022595; stream-service change **not deployed**)
+
+| | Before | After |
+|---|---|---|
+| Stream now, warm torrent: press → first frame | 5.3 s (prepare → frame 2.4 s) | 5.6 s (2.6 s) — seekable now (bb44fe7) |
+| Stream now, cold torrent (Backrooms, first try) | 27.7 s | — |
+| Stream now, cold torrent (Salem's Lot) | — | 47.4 s (torrent warm-up; the read from byte 0 dominated) |
+| `/start` reply | 0.8–1.0 s on the deployed service (its search came back fast for these) | `/prepare` cannot be measured until deployed |
+
+- 4.1 and 4.2 live in the server; the app fires `/prepare` and sends `runtime`. Against the deployed (old) service
+  `/prepare` gets a 404, which is ignored (checked on the TV).
+- 4.3 buffer: kept at 96 MB. The heap on this TV is shared with 100+ MB of native bitmaps and the streaming score now
+  prefers releases the seeders can carry, so a larger cap was not justified.
+- 4.4 seeking in an unfinished stream: done with the seek bug fix (bb44fe7): forward seeks are held at what is
+  downloaded/buffered with a note; libtorrent piece deadlines remain a separate task.
+- 4.5: one status-poll executor per player instead of a Thread per poll.
+
+## Phase 5 — measured, nothing shipped
+
+- `steamdeck.local` lookups: ping by name vs by IP on the TV differs by ~10 ms typically (once ~130 ms). Not worth a
+  DNS cache.
+- Keep-alive (reading bodies fully and not calling `disconnect()` for images, JustWatch and Jellyfin): image fetch
+  median 123 ms / p90 248 ms with it vs 77 / 223 ms without, on an empty disk cache (106 fetches each). No benefit
+  shown, so it was reverted. OkHttp not added.
+
+## Library Watch now — final
+
+Press → first frame **5.7 s** (Inception, E-AC-3 soundtrack learned) vs 11.3 s at baseline (Toy Story 5, DTS).
+Activity start to `prepare()` is still ~1.2–1.4 s (PlayerActivity/ExoPlayer setup); the first-attempt-then-stereo
+fall-back that used to cost ~6.5 s happens once per codec.
+
+## Not shipped / for later
+
+- Downloads rows are rebuilt (not updated in place) when something changes; they are skipped when nothing changed.
+- Perfetto traces (needs a config pushed to the device); framestats were used instead.
+- A cold first open of Movies within ~6 s of a cold launcher start is still 1.5–3 s to the first row (CPU contention
+  with the home screen, whose `film_info.xml` is 3.4 MB of SharedPreferences: the same problem 1.3 fixed for the
+  catalogue, out of scope here).
+- Deploy the stream service to the Deck to get `/prepare`, the search cache and the streaming score.
