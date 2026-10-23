@@ -1220,10 +1220,17 @@ class MoviesPanel(
         }
         val icon = Cinema.icon(activity, R.drawable.ic_cin_search, Cinema.SAFFRON)
         field.addView(icon, LinearLayout.LayoutParams(Cinema.px(activity, 40), Cinema.px(activity, 40)))
+        // The query and its caret share a line: the caret follows the last letter typed, and sits before the grey prompt
+        // while nothing has been typed (see placeCaret). The query is capped so the caret always has room after it.
+        val line = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        field.addView(line, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = Cinema.px(activity, 22) })
         val caret = View(activity).apply { setBackgroundColor(Cinema.SAFFRON) }
-        field.addView(caret, LinearLayout.LayoutParams(Cinema.px(activity, 3), Cinema.px(activity, 48)).apply { marginStart = Cinema.px(activity, 22) })
         val query = Cinema.text(activity, "", 36, Cinema.CREAM, weight = 300).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.START }
-        field.addView(query, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = Cinema.px(activity, 22) })
+        line.addView(caret, LinearLayout.LayoutParams(Cinema.px(activity, 3), Cinema.px(activity, 48)))
+        line.addView(query, LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 22) })
+        line.addOnLayoutChangeListener { v, l, _, r, _, ol, _, or, _ ->
+            if (r - l != or - ol) { query.maxWidth = (v.width - Cinema.px(activity, 40)).coerceAtLeast(0); query.post { query.requestLayout() } }
+        }
         val hint = Cinema.text(activity, "Say a title, actor or theme", 18, Cinema.MUTED, tracking = 0.04f)
         field.addView(hint, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = Cinema.px(activity, 20) })
         val mic = MicButton(activity).apply { contentDescription = "Voice search"; setOnClickListener { startVoice(held = false) } }
@@ -1268,6 +1275,18 @@ class MoviesPanel(
         searchPending = Runnable { runSearch(q) }.also { ui.postDelayed(it, 500) }
     }
 
+    /** Puts the caret just after the typed text ([after]), or before the grey prompt when nothing is typed yet. */
+    private fun placeCaret(s: SearchUi, after: Boolean) {
+        val line = s.caret.parent as? LinearLayout ?: return
+        val caretFirst = line.indexOfChild(s.caret) == 0
+        if (caretFirst == !after) return
+        line.removeView(s.caret)
+        line.addView(s.caret, if (after) 1 else 0)
+        (s.query.layoutParams as LinearLayout.LayoutParams).marginStart = if (after) 0 else Cinema.px(activity, 22)
+        (s.caret.layoutParams as LinearLayout.LayoutParams).marginStart = if (after) Cinema.px(activity, 6) else 0
+        line.requestLayout()
+    }
+
     private fun showQuery(partial: String? = null) {
         val s = searchUi ?: return
         val listening = partial != null
@@ -1284,6 +1303,7 @@ class MoviesPanel(
         s.query.setTextColor(if (!listening && searchText.isEmpty()) 0xFF8F8272.toInt() else Cinema.CREAM)
         Cinema.weight(s.query, 36, serif = false, weight = if (!listening && searchText.isEmpty()) 300 else 400)
         s.caret.visibility = if (listening) View.GONE else View.VISIBLE
+        placeCaret(s, after = !listening && searchText.isNotEmpty())
         s.icon.setColorFilter(if (listening) Cinema.TERRA else Cinema.SAFFRON)
         s.hint.text = if (listening) "LISTENING" else "Say a title, actor or theme"
         Cinema.style(s.hint, 18, if (listening) Cinema.TERRA else Cinema.MUTED, weight = if (listening) 600 else 400, tracking = if (listening) 0.14f else 0.04f)
