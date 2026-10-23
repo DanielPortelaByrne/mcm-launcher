@@ -239,7 +239,7 @@ class MoviesPanel(
     }
     fun close() {
         navigationFocusListener?.let { if (top.viewTreeObserver.isAlive) top.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
-        worker.shutdownNow(); shelfPool.shutdownNow(); slowPool.shutdownNow(); images.close()
+        worker.shutdownNow(); shelfPool.shutdownNow(); slowPool.shutdownNow(); infoPool.shutdownNow(); images.close()
     }
 
     /** Back closes a title's page, then steps back through where the viewer has been, then lets the panel close. */
@@ -684,7 +684,31 @@ class MoviesPanel(
     // --- Downloads ---------------------------------------------------------------------------------
 
     private var requestDiagnostics: Map<Int, RequestDiagnostic> = emptyMap()
-    private val knownTitles = HashMap<Long, Pair<String, String?>>()   // keyed by TMDB id, doubled, plus one for a series
+    /** Name and poster per title, keyed by TMDB id, doubled, plus one for a series. Kept on disk between sessions. */
+    private val knownTitles: java.util.concurrent.ConcurrentHashMap<Long, Pair<String, String?>> by lazy {
+        java.util.concurrent.ConcurrentHashMap<Long, Pair<String, String?>>().also { map ->
+            try {
+                val saved = org.json.JSONObject(activity.getSharedPreferences("downloads", Context.MODE_PRIVATE).getString("titles", "{}") ?: "{}")
+                saved.keys().forEach { k -> saved.optJSONArray(k)?.let { a -> map[k.toLong()] = a.optString(0) to a.optString(1).ifBlank { null } } }
+            } catch (_: Exception) { }
+        }
+    }
+    private val infoPool = Executors.newFixedThreadPool(4)   // threads start only when first used
+
+    /** Looks up every title not yet known, four at a time instead of one after another, and keeps them for next time. */
+    private fun learnTitles(wanted: List<Pair<Kind, Long>>) {
+        val missing = wanted.filter { (kind, tmdb) -> tmdb > 0 && !knownTitles.containsKey(tmdb * 2 + if (kind == Kind.SHOW) 1 else 0) }.distinct()
+        if (missing.isEmpty()) return
+        val found = try {
+            infoPool.invokeAll(missing.map { (kind, tmdb) -> java.util.concurrent.Callable { seerr.titleInfo(kind, tmdb)?.let { (tmdb * 2 + if (kind == Kind.SHOW) 1 else 0) to it } } }, 30, java.util.concurrent.TimeUnit.SECONDS)
+                .mapNotNull { f -> try { f.get() } catch (_: Exception) { null } }
+        } catch (_: InterruptedException) { emptyList() }
+        if (found.isEmpty()) return
+        found.forEach { (k, v) -> knownTitles[k] = v }
+        val json = org.json.JSONObject()
+        knownTitles.forEach { (k, v) -> json.put(k.toString(), org.json.JSONArray().put(v.first).put(v.second ?: "")) }
+        activity.getSharedPreferences("downloads", Context.MODE_PRIVATE).edit().putString("titles", json.toString()).apply()
+    }
 
     private fun titleKey(r: SeerrRequest) = r.tmdbId * 2 + if (r.kind == Kind.SHOW) 1 else 0
 
@@ -744,6 +768,7 @@ class MoviesPanel(
         holder.addView(note("Loading…").apply { setPadding(margin, dp(10), 0, 0) })
         var firstLoad = true
         var loading = false
+        var lastSignature: String? = null
         var scheduled: Runnable? = null
         fun refresh() {
             scheduled?.let { ui.removeCallbacks(it) }
@@ -757,16 +782,24 @@ class MoviesPanel(
                 val rawRequests = seerr.requestsOrNull()
                 // One queued season must not hide another season of the same show.
                 val requests = rawRequests.orEmpty().filter { !RequestPipelineApi.covered(it, queue.orEmpty()) }
-                queue.orEmpty().forEach { q -> val k = q.tmdbId * 2 + if (q.source == QueueSource.SONARR) 1 else 0; if (q.tmdbId > 0 && !knownTitles.containsKey(k)) seerr.titleInfo(if (q.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE, q.tmdbId)?.let { knownTitles[k] = it } }
-                requests.forEach { r -> if (!knownTitles.containsKey(titleKey(r))) seerr.titleInfo(r.kind, r.tmdbId)?.let { knownTitles[titleKey(r)] = it } }
                 // Single episodes asked for one at a time: monitored in Sonarr with nothing grabbed yet. A series already listed above is not repeated.
                 val listed = inQueue + requests.map { titleKey(it) }
                 val wanted = sonarr.wanted().orEmpty().groupBy { it.seriesTmdbId }.filterKeys { it * 2 + 1 !in listed }
-                wanted.keys.forEach { tmdb -> if (!knownTitles.containsKey(tmdb * 2 + 1)) seerr.titleInfo(Kind.SHOW, tmdb)?.let { knownTitles[tmdb * 2 + 1] = it } }
+                learnTitles(queue.orEmpty().map { q -> (if (q.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE) to q.tmdbId } +
+                    requests.map { it.kind to it.tmdbId } + wanted.keys.map { Kind.SHOW to it })
                 val wantedEpisodes = wanted.values.flatten()
+                // Nothing moved since the last look: leave the rows as they are (no rebuild, focus untouched).
+                val signature = listOf(queue, rawRequests == null, snapshot?.healthy, requests, diagnostics, wanted, knownTitles.size,
+                    if (diagnostics.isNotEmpty()) System.currentTimeMillis() / 60_000 else 0).toString()
                 activity.runOnUiThread {
                     loading = false
                     if (gen != generation) return@runOnUiThread
+                    if (signature == lastSignature) {
+                        scheduled = Runnable { if (gen == generation && current == Dest.Downloads && !detailOpen) refresh() }
+                        ui.postDelayed(scheduled!!, 15_000)
+                        return@runOnUiThread
+                    }
+                    lastSignature = signature
                     val focused = (0 until holder.childCount).firstOrNull { holder.getChildAt(it).hasFocus() }
                     holder.removeAllViews()
                     requestDiagnostics = diagnostics
