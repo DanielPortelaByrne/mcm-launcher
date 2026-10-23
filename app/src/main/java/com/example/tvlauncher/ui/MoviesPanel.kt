@@ -824,11 +824,13 @@ class MoviesPanel(
                 // Single episodes asked for one at a time: monitored in Sonarr with nothing grabbed yet. A series already listed above is not repeated.
                 val listed = inQueue + requests.map { titleKey(it) }
                 val wanted = sonarr.wanted().orEmpty().groupBy { it.seriesTmdbId }.filterKeys { it * 2 + 1 !in listed }
+                // Episodes asked for before they air: Sonarr's wanted list leaves them out, its calendar has them.
+                val upcoming = sonarr.upcoming().orEmpty().groupBy { it.seriesTmdbId }.filterKeys { it * 2 + 1 !in inQueue }
                 learnTitles(queue.orEmpty().map { q -> (if (q.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE) to q.tmdbId } +
-                    requests.map { it.kind to it.tmdbId } + wanted.keys.map { Kind.SHOW to it })
-                val wantedEpisodes = wanted.values.flatten()
+                    requests.map { it.kind to it.tmdbId } + wanted.keys.map { Kind.SHOW to it } + upcoming.keys.map { Kind.SHOW to it })
+                val wantedEpisodes = wanted.values.flatten() + upcoming.values.flatten()
                 // Nothing moved since the last look: leave the rows as they are (no rebuild, focus untouched).
-                val signature = listOf(queue, rawRequests == null, snapshot?.healthy, requests, diagnostics, wanted, knownTitles.size,
+                val signature = listOf(queue, rawRequests == null, snapshot?.healthy, requests, diagnostics, wanted, upcoming, knownTitles.size,
                     if (diagnostics.isNotEmpty()) System.currentTimeMillis() / 60_000 else 0).toString()
                 activity.runOnUiThread {
                     loading = false
@@ -845,11 +847,11 @@ class MoviesPanel(
                     if (rawRequests == null) holder.addView(note("Couldn't read your requests. Showing the download queue only.").apply { setPadding(margin, dp(4), margin, dp(4)) })
                     if (snapshot?.healthy != true) holder.addView(note("Automatic search status is unavailable. Download-client progress is shown below.").apply { setPadding(margin, dp(4), margin, dp(4)) })
                     val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) { refresh() } } +
-                        wanted.map { (tmdb, eps) -> wantedRow(tmdb, eps) { refresh() } }
+                        wanted.map { (tmdb, eps) -> wantedRow(tmdb, eps) { refresh() } } + upcoming.map { (tmdb, eps) -> upcomingRow(tmdb, eps) { refresh() } }
                     if (rows.isEmpty()) holder.addView(note(if (queue == null) "Couldn't reach the download queue just now." else "Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
                     val q = queue.orEmpty()
                     updateStats(stats, listOf(q.count { it.isDownloading }, q.count { it.isWaiting }, q.count { it.status in setOf("metadata", "stalled") },
-                        requests.count { it.stage == Stage.SEARCHING && diagnostics[it.id]?.stopped != true }))
+                        requests.count { it.stage == Stage.SEARCHING && diagnostics[it.id]?.stopped != true } + upcoming.values.sumOf { it.size }))
                     rows.forEachIndexed { i, r -> holder.addView(r, LinearLayout.LayoutParams(-1, Cinema.px(activity, 128)).apply { setMargins(margin, Cinema.px(activity, if (i > 0) 14 else 28), pageEnd, 0) }) }
                     // Everything not yet finished, including requests no release has been found for. Kept last so first focus stays on the top row.
                     val pendingQueue = queue.orEmpty().filter { it.canCancel && (it.isActive || it.isWaiting) }
@@ -1023,6 +1025,29 @@ class MoviesPanel(
                     worker.execute {
                         val done = sonarr.unwant(episodes.map { it.id })
                         activity.runOnUiThread { Toast.makeText(activity, if (done) "Stopped looking for $title" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
+                    }
+                },
+                SheetAction("Keep them") { }
+            ))
+        }
+        return row
+    }
+
+    /** Episodes of one series asked for before they air. Pressing it offers to stop waiting for them. */
+    private fun upcomingRow(tmdb: Long, episodes: List<WantedEpisode>, refresh: () -> Unit): View {
+        val info = knownTitles[tmdb * 2 + 1]
+        val title = info?.first ?: episodes.first().seriesTitle.ifBlank { "Title $tmdb" }
+        val sorted = episodes.sortedWith(compareBy({ it.season }, { it.number }))
+        val first = sorted.first()
+        val listed = sorted.take(3).joinToString(", ") { "S${it.season} E${it.number}" } + if (sorted.size > 3) " +${sorted.size - 3}" else ""
+        val status = "Waiting to air · S${first.season} E${first.number} · " + (EpisodeCards.formatDate(first.airDate)?.substringBeforeLast(' ') ?: "TBA")
+        val row = requestCard(info?.second, title, listed, status, active = false, progress = null, sweeping = false)
+        row.setOnClickListener {
+            infoSheet.show("UPCOMING", title, null, listOf(status, "These download by themselves once they air. Cancelling stops waiting for them."), null, listOf(
+                SheetAction("Cancel", "Stop waiting for them", primary = true) {
+                    slowPool.execute {
+                        val done = sonarr.unwant(episodes.map { it.id })
+                        activity.runOnUiThread { Toast.makeText(activity, if (done) "Stopped waiting for $title" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
                     }
                 },
                 SheetAction("Keep them") { }
@@ -1956,8 +1981,12 @@ class MoviesPanel(
             var look = episodeCardState(mine != null, states[s.number to ep.number], s.availability, ep.airDate, today, tmdb != null,
                 EpisodeCards.download(downloads, tmdb, s.number, ep.number))
             fun rebind() {
-                card.bind(look, EpisodeCards.formatDate(ep.airDate)?.uppercase())
-                card.tipText = if (look.state == CardState.REQUEST) "Download S${s.number} E${ep.number}" else null
+                card.bind(look, EpisodeCards.formatDate(ep.airDate)?.uppercase() ?: "TBA")
+                card.tipText = when (look.state) {
+                    CardState.REQUEST -> "Download S${s.number} E${ep.number}"
+                    CardState.UNAIRED -> EpisodeCards.preRequestTip(s.number, ep.number)
+                    else -> null
+                }
             }
             rebind()
             val runtime = mine?.runtimeMin ?: ep.runtime
@@ -1983,7 +2012,24 @@ class MoviesPanel(
                 when (look.state) {
                     CardState.REQUESTED -> Toast.makeText(activity, "Requested, waiting for a release", Toast.LENGTH_SHORT).show()
                     CardState.DOWNLOADING -> Toast.makeText(activity, look.progress?.let { "Downloading, ${Math.round(it * 100)}% so far" } ?: "Downloading", Toast.LENGTH_SHORT).show()
-                    CardState.REQUEST -> when {
+                    // Asked for before it aired: offer to stop waiting for it.
+                    CardState.UNAIRED_REQUESTED -> if (tmdb != null) infoSheet.show("REQUESTED", label, EpisodeCards.airsLabel(ep.airDate),
+                        listOf("It will download by itself once it airs."), null, listOf(
+                            SheetAction("Cancel request", "Stop waiting for this episode", primary = true) {
+                                worker.execute {
+                                    val done = sonarr.unwantEpisodes(tmdb, s.number, listOf(ep.number))
+                                    activity.runOnUiThread {
+                                        if (done) {
+                                            states[s.number to ep.number] = EpisodeState.NONE
+                                            look = episodeCardState(mine != null, EpisodeState.NONE, s.availability, ep.airDate, today, true, null)
+                                            if (token == loading) rebind()
+                                        }
+                                        Toast.makeText(activity, if (done) "Cancelled S${s.number} E${ep.number}" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            SheetAction("Keep it") { }))
+                    CardState.REQUEST, CardState.UNAIRED -> when {
                         tmdb == null -> Unit
                         !seerr.isSignedIn -> seerrSheet.show(seerr, jellyfin) { }
                         else -> {
@@ -1997,7 +2043,8 @@ class MoviesPanel(
                                             states[s.number to ep.number] = EpisodeState.REQUESTED
                                             look = episodeCardState(mine != null, EpisodeState.REQUESTED, s.availability, ep.airDate, today, true, null)
                                             if (token == loading) rebind()
-                                            Toast.makeText(activity, "${e.title.name} S${s.number} E${ep.number} is queued", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(activity, if (look.unaired) EpisodeCards.preRequestDone(s.number, ep.number, ep.airDate)
+                                                else "${e.title.name} S${s.number} E${ep.number} is queued", Toast.LENGTH_LONG).show()
                                         }
                                         EpisodeOutcome.NOT_CONFIGURED -> Toast.makeText(activity, "Sonarr's details aren't available, so only whole seasons can be requested here", Toast.LENGTH_LONG).show()
                                         EpisodeOutcome.NOT_FOUND -> Toast.makeText(activity, "Sonarr couldn't find that episode yet. Try again in a moment", Toast.LENGTH_LONG).show()

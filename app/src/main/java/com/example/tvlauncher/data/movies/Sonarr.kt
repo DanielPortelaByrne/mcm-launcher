@@ -11,8 +11,11 @@ private const val TAG = "Sonarr"
 /** Where Sonarr is and how to add a series to it, as Seerr has it configured. */
 data class SonarrConfig(val baseUrl: String, val apiKey: String, val profileId: Int, val rootFolder: String, val seasonFolders: Boolean, val seriesType: String)
 
-/** One episode that has been asked for and has no file yet. [id] is Sonarr's id for it. */
-data class WantedEpisode(val id: Int, val seriesTmdbId: Long, val seriesTitle: String, val season: Int, val number: Int)
+/** One episode that has been asked for and has no file yet. [id] is Sonarr's id for it; [airDate] ("2026-12-21") when it has not aired. */
+data class WantedEpisode(val id: Int, val seriesTmdbId: Long, val seriesTitle: String, val season: Int, val number: Int, val airDate: String? = null)
+
+/** What asking for some episodes does: every one is monitored; only those already out are searched for now. */
+data class EpisodeRequestPlan(val monitor: List<Int>, val search: List<Int>)
 
 enum class EpisodeState { NONE, REQUESTED, DOWNLOADED }
 
@@ -85,6 +88,38 @@ object SonarrApi {
     } catch (_: Exception) { emptyList() }
 
     fun searchBody(ids: List<Int>): String = JSONObject().put("name", "EpisodeSearch").put("episodeIds", JSONArray(ids)).toString()
+
+    /**
+     * Splits the asked-for episodes of [season] into those to monitor (all of them) and those to search for now. One
+     * that has not aired ([nowMs] before its `airDateUtc`, or no date at all) is only monitored: no indexer has it yet,
+     * and Sonarr grabs it from its RSS feeds once it is out.
+     */
+    fun requestPlan(episodesJson: String, season: Int, numbers: Collection<Int>, nowMs: Long): EpisodeRequestPlan = try {
+        val a = JSONArray(episodesJson)
+        val chosen = (0 until a.length()).map { a.getJSONObject(it) }.filter { it.optInt("seasonNumber") == season && it.optInt("episodeNumber") in numbers }
+        EpisodeRequestPlan(chosen.map { it.getInt("id") }, chosen.filter { aired(it.optString("airDateUtc"), nowMs) }.map { it.getInt("id") })
+    } catch (_: Exception) { EpisodeRequestPlan(emptyList(), emptyList()) }
+
+    /** True once [airDateUtc] ("2026-12-21T02:00:00Z") has passed; an unknown date has not. */
+    fun aired(airDateUtc: String?, nowMs: Long): Boolean {
+        if (airDateUtc.isNullOrBlank() || airDateUtc.length < 19) return false
+        return try {
+            val f = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }
+            (f.parse(airDateUtc.take(19))?.time ?: return false) <= nowMs
+        } catch (_: Exception) { false }
+    }
+
+    /** Sonarr's calendar: monitored episodes with no file that have not aired yet (what has been asked for ahead). */
+    fun upcomingEpisodes(json: String, nowMs: Long): List<WantedEpisode> = try {
+        val a = JSONArray(json)
+        (0 until a.length()).map { a.getJSONObject(it) }
+            .filter { it.optBoolean("monitored") && !it.optBoolean("hasFile") && !aired(it.optString("airDateUtc"), nowMs) }
+            .map { r ->
+                val series = r.optJSONObject("series")
+                WantedEpisode(r.optInt("id"), series?.optLong("tmdbId") ?: 0L, series?.optString("title").orEmpty(), r.optInt("seasonNumber"), r.optInt("episodeNumber"),
+                    r.optString("airDate").ifBlank { null })
+            }.filter { it.id > 0 && it.seriesTmdbId > 0 }
+    } catch (_: Exception) { emptyList() }
 }
 
 /**
@@ -116,14 +151,36 @@ class SonarrClient(private val seerr: SeerrClient) {
         }
         // A series that has only just been added fetches its episode list in the background; give it a moment.
         var ids: List<Int> = emptyList()
+        var episodesJson: String? = null
         for (attempt in 1..8) {
-            ids = call(c, "GET", "/api/v3/episode?seriesId=$id")?.let { SonarrApi.episodeIds(it, season, numbers) }.orEmpty()
+            episodesJson = call(c, "GET", "/api/v3/episode?seriesId=$id")
+            ids = episodesJson?.let { SonarrApi.episodeIds(it, season, numbers) }.orEmpty()
             if (ids.size == numbers.size || (ids.isNotEmpty() && attempt >= 4)) break
             Thread.sleep(1000)
         }
         if (ids.isEmpty()) return EpisodeOutcome.NOT_FOUND
-        if (call(c, "PUT", "/api/v3/episode/monitor", SonarrApi.monitorBody(ids)) == null) return EpisodeOutcome.FAILED
-        return if (call(c, "POST", "/api/v3/command", SonarrApi.searchBody(ids)) == null) EpisodeOutcome.FAILED else EpisodeOutcome.QUEUED
+        val plan = episodesJson?.let { SonarrApi.requestPlan(it, season, numbers, System.currentTimeMillis()) } ?: EpisodeRequestPlan(ids, ids)
+        if (call(c, "PUT", "/api/v3/episode/monitor", SonarrApi.monitorBody(plan.monitor.ifEmpty { ids })) == null) return EpisodeOutcome.FAILED
+        // Episodes not out yet are only monitored: Sonarr picks them up from RSS when they air, so nothing is searched.
+        if (plan.search.isEmpty()) return EpisodeOutcome.QUEUED
+        return if (call(c, "POST", "/api/v3/command", SonarrApi.searchBody(plan.search)) == null) EpisodeOutcome.FAILED else EpisodeOutcome.QUEUED
+    }
+
+    /** Stops wanting the given episodes of one season (an episode asked for before it aired). */
+    fun unwantEpisodes(tmdbId: Long, season: Int, numbers: List<Int>): Boolean {
+        val c = config() ?: return false
+        val id = seriesId(c, tmdbId) ?: return false
+        val ids = call(c, "GET", "/api/v3/episode?seriesId=$id")?.let { SonarrApi.episodeIds(it, season, numbers) }.orEmpty()
+        return ids.isNotEmpty() && unwant(ids)
+    }
+
+    /** Episodes asked for ahead of airing, over the next year. Null when Sonarr cannot be reached. */
+    fun upcoming(): List<WantedEpisode>? {
+        val c = config() ?: return null
+        val f = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+        val now = System.currentTimeMillis()
+        val start = f.format(java.util.Date(now)); val end = f.format(java.util.Date(now + 366L * 24 * 3600 * 1000))
+        return call(c, "GET", "/api/v3/calendar?start=$start&end=$end&unmonitored=false&includeSeries=true")?.let { SonarrApi.upcomingEpisodes(it, now) }
     }
 
     /** Monitored episodes with no file: what has been asked for but not yet grabbed. Null when Sonarr cannot be reached. */

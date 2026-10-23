@@ -77,6 +77,8 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
     private val box = RectF()
     private var lit = false
     private var unaired = false
+    /** Unaired with nothing to press: the card itself takes focus. */
+    private var cardStop = false
 
     init {
         clipChildren = false; clipToPadding = false; setWillNotDraw(false)
@@ -133,7 +135,7 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
     }
 
     /** Every focus stop on the card, left to right. */
-    val focusStops: List<View> get() = if (unaired) listOf(this) else listOfNotNull(
+    val focusStops: List<View> get() = if (cardStop) listOf(this) else listOfNotNull(
         play.takeIf { it.visibility == VISIBLE && it.isFocusable }, download.takeIf { it.visibility == VISIBLE && it.isFocusable })
 
     /** Where Down from the season bar lands. */
@@ -141,8 +143,9 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
 
     /** Shows [look]: the badge, the discs, and for an unaired episode the greyed still and [airsLabel]. */
     fun bind(look: CardLook, airsLabel: String?) {
-        unaired = look.state == CardState.UNAIRED
-        isFocusable = unaired; isClickable = unaired
+        unaired = look.unaired
+        cardStop = unaired && !look.downloadFocusable && !look.playShown
+        isFocusable = cardStop; isClickable = cardStop
         badge.visibility = if (look.badge != null) VISIBLE else GONE
         badgeText.text = look.badge.orEmpty()
         val accent = if (look.badgeAccent) Cinema.SAFFRON else Cinema.MUTED
@@ -153,7 +156,7 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
             setStroke(Math.max(1, p(1)), if (look.badgeAccent) Cinema.alpha(Cinema.SAFFRON, 0.5f) else Cinema.alpha(Cinema.CREAM, 0.2f))
         }
 
-        actions.visibility = if (unaired) GONE else VISIBLE
+        actions.visibility = if (cardStop) GONE else VISIBLE
         play.visibility = if (look.playShown) VISIBLE else GONE
         play.isFocusable = look.playShown
         download.visibility = if (look.downloadShown) VISIBLE else GONE
@@ -161,7 +164,7 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         download.isClickable = look.downloadFocusable
         when (look.state) {
             CardState.LIBRARY -> download.set(R.drawable.ic_cin_check, Cinema.SAFFRON, ring = false, progress = null, alpha = 0.9f)
-            CardState.REQUESTED -> download.set(R.drawable.ic_cin_clock, Cinema.SAFFRON, ring = false, progress = null)
+            CardState.REQUESTED, CardState.UNAIRED_REQUESTED -> download.set(R.drawable.ic_cin_clock, Cinema.SAFFRON, ring = false, progress = null)
             CardState.DOWNLOADING -> download.set(R.drawable.ic_cin_dl, Cinema.SAFFRON, ring = true, progress = look.progress, iconMock = 26)
             else -> download.set(R.drawable.ic_cin_dl, Cinema.CREAM, ring = false, progress = null)
         }
@@ -169,11 +172,19 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         download.contentDescription = when (look.state) {
             CardState.LIBRARY -> "In your library"
             CardState.REQUESTED -> "Requested"
+            CardState.UNAIRED_REQUESTED -> "Requested. Downloads when it airs"
+            CardState.UNAIRED -> "Download episode $number when it airs"
             CardState.DOWNLOADING -> look.badge?.lowercase() ?: "Downloading"
             else -> "Download episode $number"
         }
 
         airs.visibility = if (unaired && airsLabel != null) VISIBLE else GONE
+        // With a disc to press, the label moves to the still's foot so the two do not overlap; alone, it stays centred.
+        (airs.layoutParams as LayoutParams).let { lp ->
+            lp.gravity = if (cardStop) Gravity.CENTER else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            lp.bottomMargin = if (cardStop) 0 else p(16)
+            airs.layoutParams = lp
+        }
         airs.text = airsLabel?.let { "Airs $it" }.orEmpty()
         val filter = if (unaired) ColorMatrixColorFilter(ColorMatrix().apply {
             setSaturation(0.15f); postConcat(ColorMatrix().apply { setScale(0.55f, 0.55f, 0.55f, 1f) })
