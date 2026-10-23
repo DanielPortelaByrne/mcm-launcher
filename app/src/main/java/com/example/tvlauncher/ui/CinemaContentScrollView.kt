@@ -31,7 +31,11 @@ class CinemaContentScrollView @JvmOverloads constructor(
             navigationTarget?.invoke()?.takeIf { it.isShown && it.isFocusable }?.let { return it }
         }
         if (direction == View.FOCUS_UP || direction == View.FOCUS_DOWN) {
-            return FocusFinder.getInstance().findNextFocus(this, focused, direction) ?: focused
+            val next = FocusFinder.getInstance().findNextFocus(this, focused, direction)
+            // Up from the topmost item: nothing above can take focus (a page header, the Downloads counts), so show the
+            // top of the page instead of leaving it scrolled out of reach.
+            if (next == null && direction == View.FOCUS_UP && scrollY > 0) smoothScrollTo(0, 0)
+            return next ?: focused
         }
         return super.focusSearch(focused, direction)
     }
