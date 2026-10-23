@@ -235,19 +235,64 @@ class PlayerActivity : AppCompatActivity() {
         intent.getStringExtra(EXTRA_META)?.let { m -> runCatching { chrome?.setMeta(metaFrom(JSONObject(m))) } }
         val report = jf
         if (report == null) startAttempt(0) else {
+            // Start loading at once from what the library list already said (source and resume point), held paused; the
+            // item's details (chapters, trickplay, the server's latest resume point) are fetched alongside. Playback
+            // begins when they arrive, or after ITEM_WAIT_MS at most, so a slow answer never holds up the film.
+            startAttempt(0, play = false)
+            val release = Runnable { if (!isFinishing && !isDestroyed) player.playWhenReady = true }
+            handler.postDelayed(release, ITEM_WAIT_MS)
             val client = jellyfin
             reporter.execute {
                 val fresh = client.item(report.itemId)
                 handler.post {
                     if (isFinishing || isDestroyed) return@post
-                    jf = fresh?.let { report.copy(sourceId = it.sourceId, startMs = if (it.played) 0L else it.resumeMs) } ?: report
-                    fresh?.let { showItem(it) }
-                    startAttempt(0)
+                    if (fresh != null) applyFreshItem(report, fresh)
+                    handler.removeCallbacks(release); player.playWhenReady = true
                     prefetchNextEpisode(fresh)
                 }
             }
         }
     }
+
+    /**
+     * The full item arrived after loading started from the list's copy. Another version of the file means starting
+     * again with it; a resume point that moved (watched elsewhere, or the list was a few minutes old) means a seek.
+     */
+    private fun applyFreshItem(report: com.example.tvlauncher.data.jellyfin.JellyfinReport, fresh: JellyfinItem) {
+        val start = if (fresh.played) 0L else fresh.resumeMs
+        val updated = report.copy(sourceId = fresh.sourceId, startMs = start)
+        jf = updated
+        itemAudioCodec = fresh.audioCodec
+        if (!started && index == 0 && fresh.audioCodec != null && fresh.audioCodec in stereoCodecs() && items.firstOrNull()?.label != STEREO_LABEL) {
+            // This TV could not play this soundtrack last time: go straight to the stereo copy instead of finding out again.
+            Perf.mark("player.stereoFirst ${fresh.audioCodec}")
+            if (fresh.sourceId != report.sourceId) {
+                val plan = JellyfinPlayback.prepare(jellyfin, fresh, title, imdbId ?: "jf:${fresh.id}")
+                items = parse(playbackIntent(this, plan.streams, plan.title, plan.resumeKey, updated).getStringExtra(EXTRA_ITEMS))
+            }
+            items = listOf(stereoItem(updated)) + items
+            startAttempt(0, play = false)
+        } else if (fresh.sourceId != report.sourceId) {
+            Perf.mark("player.sourceChanged")
+            val plan = JellyfinPlayback.prepare(jellyfin, fresh, title, imdbId ?: "jf:${fresh.id}")
+            items = parse(playbackIntent(this, plan.streams, plan.title, plan.resumeKey, updated).getStringExtra(EXTRA_ITEMS))
+            startAttempt(0, play = false)
+        } else if (!started && kotlin.math.abs(updated.startMs - report.startMs) > RESUME_DRIFT_MS) {
+            player.seekTo(updated.startMs)
+        }
+        showItem(fresh)
+    }
+
+    /** The audio codec of the library file playing, once its full item has arrived. */
+    private var itemAudioCodec: String? = null
+
+    /** Soundtrack codecs this TV has had to convert to stereo before. */
+    private fun stereoCodecs(): Set<String> = captionPrefs.getStringSet(STEREO_CODECS, null).orEmpty()
+
+    /** The library file with its soundtrack converted to stereo AAC and the picture untouched. */
+    private fun stereoItem(report: com.example.tvlauncher.data.jellyfin.JellyfinReport) = items[0].copy(
+        url = com.example.tvlauncher.data.jellyfin.JellyfinApi.stereoStreamUrl(report.base, report.itemId, report.sourceId, "mcm-stereo-${jfSession.id}"),
+        label = STEREO_LABEL)
 
     private fun prefetchNextEpisode(current: JellyfinItem?) {
         val report = jf ?: return
@@ -316,7 +361,7 @@ class PlayerActivity : AppCompatActivity() {
 
     // --- attempts ---------------------------------------------------------------------------------
 
-    private fun startAttempt(i: Int) {
+    private fun startAttempt(i: Int, play: Boolean = true) {
         index = i
         if (i == 0) audioFallbackQueued = false
         val item = items[i]
@@ -340,7 +385,7 @@ class PlayerActivity : AppCompatActivity() {
         prepareAt = SystemClock.elapsedRealtime()
         Perf.mark("player.prepare")
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = play
         handler.removeCallbacks(startupTimeout)
         handler.postDelayed(startupTimeout, if (slow) ENGINE_STARTUP_TIMEOUT_MS else STARTUP_TIMEOUT_MS)
     }
@@ -413,15 +458,13 @@ class PlayerActivity : AppCompatActivity() {
             // A valid picture does not mean its soundtrack can play. For example, Chromecast HD
             // cannot decode AC-3/E-AC-3 when the connected TV only accepts stereo PCM.
             val report = jf ?: return
-            if (index != 0 || audioFallbackQueued || audio.isEmpty() || tracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) return
+            if (index != 0 || audioFallbackQueued || audio.isEmpty() || tracks.isTypeSelected(C.TRACK_TYPE_AUDIO) || items[0].label == STEREO_LABEL) return
             audioFallbackQueued = true
+            // Remember the codec, so the next film with this soundtrack starts on the stereo copy straight away.
+            itemAudioCodec?.let { c -> captionPrefs.edit().putStringSet(STEREO_CODECS, stereoCodecs() + c).apply() }
             handler.post {
                 if (!foreground || releasingPlayer || isFinishing || isDestroyed || index != 0 || jf?.itemId != report.itemId) return@post
-                val stereo = items[0].copy(
-                    url = com.example.tvlauncher.data.jellyfin.JellyfinApi.stereoStreamUrl(
-                        report.base, report.itemId, report.sourceId, "mcm-stereo-${jfSession.id}"),
-                    label = "Stereo audio")
-                items = listOf(items[0], stereo) + items.drop(1)
+                items = listOf(items[0], stereoItem(report)) + items.drop(1)
                 fail("Soundtrack is unsupported; converting audio to stereo")
             }
         }
@@ -913,6 +956,12 @@ class PlayerActivity : AppCompatActivity() {
         /** The film's details for the chrome (year, genres, runtime, certificate, rating, overview), as JSON. */
         private const val EXTRA_META = "meta"
         private const val STARTUP_TIMEOUT_MS = 25_000L
+        /** How long a library film waits, paused and loading, for its full item before playing anyway. */
+        private const val ITEM_WAIT_MS = 1_500L
+        private const val STEREO_LABEL = "Stereo audio"
+        private const val STEREO_CODECS = "stereo_codecs"
+        /** A fresher resume point further than this from the list's one is worth a seek before playback starts. */
+        private const val RESUME_DRIFT_MS = 5_000L
         /** A torrent has to find peers and buffer first. */
         private const val ENGINE_STARTUP_TIMEOUT_MS = 75_000L
 

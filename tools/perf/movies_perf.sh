@@ -30,6 +30,7 @@ sleep 10
 # Scripted scroll. Focus starts on the featured title's first button.
 $A shell dumpsys gfxinfo $PKG reset > /dev/null
 $A shell 'k(){ input keyevent $1; sleep $2; }
+k 22 0.8
 for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14; do k 20 0.35; done
 for i in 1 2 3 4 5 6 7 8; do k 22 0.3; done
 for i in 1 2 3 4 5 6 7 8; do k 21 0.3; done

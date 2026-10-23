@@ -87,4 +87,19 @@ class JellyfinApiTest {
         assertTrue(JellyfinApi.parseItems("not json").isEmpty())
         assertTrue(JellyfinApi.parseItems("""{"Items":[]}""").isEmpty())
     }
+
+    @Test fun reads_the_default_soundtrack_codec() {
+        val json = """{"Items":[{"Id":"m1","Name":"Film","Type":"Movie","MediaSources":[{"Id":"src","DefaultAudioStreamIndex":2,"MediaStreams":[
+            {"Index":0,"Type":"Video","Codec":"hevc"},{"Index":1,"Type":"Audio","Codec":"aac"},{"Index":2,"Type":"Audio","Codec":"DTS"}]}]},
+            {"Id":"m2","Name":"Listed","Type":"Movie"}]}"""
+        val items = JellyfinApi.parseItems(json)
+        assertEquals("dts", items[0].audioCodec)
+        assertEquals("src", items[0].sourceId)
+        assertNull(items[1].audioCodec)   // the library list does not carry streams
+    }
+
+    @Test fun without_a_default_the_first_soundtrack_counts() {
+        val source = org.json.JSONObject("""{"MediaStreams":[{"Index":0,"Type":"Video","Codec":"h264"},{"Index":1,"Type":"Audio","Codec":"eac3"},{"Index":2,"Type":"Audio","Codec":"aac"}]}""")
+        assertEquals("eac3", JellyfinApi.defaultAudioCodec(source))
+    }
 }
