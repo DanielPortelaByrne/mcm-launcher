@@ -168,7 +168,10 @@ class PlayerActivity : AppCompatActivity() {
         bandwidth = DefaultBandwidthMeter.getSingletonInstance(this)
         trackSelector = DefaultTrackSelector(this)
         captionsOn = captionPrefs.getBoolean("captions", true)
-        player = ExoPlayer.Builder(this, DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+        // The FFmpeg audio decoder comes after the TV's own decoders: it is used only for a soundtrack the TV cannot play
+        // (or pass through to the screen), such as Dolby Digital Plus or DTS.
+        player = ExoPlayer.Builder(this, DefaultRenderersFactory(this).setEnableDecoderFallback(true)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON))
             .setTrackSelector(trackSelector).setBandwidthMeter(bandwidth).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000)
             .apply {
                 // The buffer lives in this app's own memory. Left to itself it can grow to ~131 MB for video, more than the
@@ -1006,7 +1009,8 @@ class PlayerActivity : AppCompatActivity() {
         /** How long a library film waits, paused and loading, for its full item before playing anyway. */
         private const val ITEM_WAIT_MS = 1_500L
         private const val STEREO_LABEL = "Stereo audio"
-        private const val STEREO_CODECS = "stereo_codecs"
+        // Renamed when the FFmpeg decoder arrived: what was learned without it (DTS, E-AC-3) no longer applies.
+        private const val STEREO_CODECS = "stereo_codecs_ffmpeg"
         /** A fresher resume point further than this from the list's one is worth a seek before playback starts. */
         private const val RESUME_DRIFT_MS = 5_000L
         /** A torrent has to find peers and buffer first. */

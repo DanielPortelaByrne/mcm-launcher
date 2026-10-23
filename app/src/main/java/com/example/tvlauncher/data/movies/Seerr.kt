@@ -208,7 +208,9 @@ class SeerrClient(context: Context) {
             when (c.responseCode) {
                 200 -> {
                     val body = JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-                    StreamStart(StreamStatus.READY, endpoint + body.getString("path"), body.optString("label").ifBlank { null })
+                    // The original file, never the service's on-the-fly audio conversion: the player decodes any soundtrack
+                    // itself now, and only the original can be seeked.
+                    StreamStart(StreamStatus.READY, endpoint + body.getString("path") + "?audio=original", body.optString("label").ifBlank { null })
                 }
                 401 -> { signOut(); StreamStart(StreamStatus.NOT_SIGNED_IN, null, null) }
                 404, 422 -> StreamStart(StreamStatus.NOT_FOUND, null, null)
@@ -226,6 +228,7 @@ class SeerrClient(context: Context) {
     private fun streamBody(title: String, year: Int?, season: Int?, episode: Int?, runtimeMin: Int?) = JSONObject().put("title", title).put("year", year?.toString().orEmpty()).apply {
         if (season != null && episode != null) put("season", season).put("episode", episode)
         runtimeMin?.takeIf { it > 0 }?.let { put("runtime", it) }   // lets the service judge which release can keep up
+        put("audio", "any")   // this player decodes Dolby Digital Plus and DTS, so those releases need not be passed over
     }
 
     private val prepared = java.util.concurrent.ConcurrentHashMap<String, Long>()

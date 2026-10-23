@@ -57,6 +57,11 @@ class SelectionRules(unittest.TestCase):
         # With only E-AC-3 seeded, the film is still offered rather than failing.
         self.assertEqual(svc.pick([eac3], 'Backrooms', 2026)['title'], eac3['title'])
 
+    def test_a_player_that_decodes_any_audio_is_not_steered_away_from_e_ac_3(self):
+        eac3 = release('Backrooms 2026 1080p AMZN WEB-DL DDP5 1 Atmos H 264', seeders=800)
+        plain = release('Backrooms 2026 1080p WEB-DL HEVC x265 5.1 BONE', seeders=120)
+        self.assertEqual(svc.pick([eac3, plain], 'Backrooms', 2026, any_audio=True)['title'], eac3['title'])
+
     def test_pick_returns_none_when_nothing_survives(self):
         self.assertIsNone(svc.pick([release('Heat 1995 HDCAM', seeders=50)], 'Heat', 1995))
         self.assertEqual(svc.pick([release('Heat 1995 1080p', seeders=50)], 'Heat', 1995)['seeders'], 50)
@@ -262,6 +267,21 @@ class EndToEnd(unittest.TestCase):
         with urllib.request.urlopen(request, timeout=30) as response:
             self.assertEqual(response.status, 206)
             self.assertEqual(response.headers['Content-Range'], 'bytes 100-199/%d' % len(self.film))
+            self.assertEqual(response.read(), self.film[100:200])
+
+    def test_audio_original_serves_a_converted_film_as_it_is_with_ranges(self):
+        from http.server import ThreadingHTTPServer as Server
+        server = Server(('127.0.0.1', 0), svc.Handler)
+        server.streams = self.streams
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.streams.start('Heat', '1995')
+        entry = self.streams.wait_for_entry(HASH)
+        entry['transcode'] = True   # what an E-AC-3 release gets, for players that cannot decode it
+        url = 'http://127.0.0.1:%d/stream/%s?audio=original' % (server.server_address[1], HASH)
+        request = urllib.request.Request(url, headers={'Range': 'bytes=100-199'})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            self.assertEqual(response.status, 206)
             self.assertEqual(response.read(), self.film[100:200])
 
     def test_proxy_magnet_urls_are_replaced_with_a_magnet_from_the_info_hash(self):

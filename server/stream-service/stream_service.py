@@ -157,12 +157,13 @@ def score(result):
     return resolution * 2 + source + seeds - oversize - silent
 
 
-def stream_score(result, runtime_minutes=None, episode=None):
+def stream_score(result, runtime_minutes=None, episode=None, any_audio=False):
     """Like score(), but for playing while it downloads: a release must arrive faster than it plays.
 
     The bitrate is estimated from size and running time and set against what its seeders can typically sustain. A
     heavy release with few seeders, which would win on resolution alone and then stop to buffer, is pushed down; seeders
-    count for more than in score(). The download pipeline keeps score() unchanged.
+    count for more than in score(). The download pipeline keeps score() unchanged. With any_audio (a player that decodes
+    E-AC-3, DTS and TrueHD itself) those soundtracks are not penalised.
     """
     info = parse_release(result.get('title'))
     resolution = dict(RESOLUTIONS).get(info['resolution'], 1.0)
@@ -172,14 +173,14 @@ def stream_score(result, runtime_minutes=None, episode=None):
     mbps = (result.get('size') or 0) * 8 / (minutes * 60) / 1e6
     comfortable = seeders * MBPS_PER_SEEDER * STREAM_HEADROOM
     starved = 3.0 * math.log2(mbps / comfortable) if mbps > comfortable > 0 else 0.0
-    silent = AUDIO_PENALTY if audio_unplayable(result.get('title')) else 0.0
+    silent = AUDIO_PENALTY if not any_audio and audio_unplayable(result.get('title')) else 0.0
     return resolution * 2 + source + 2 * math.log10(seeders) - starved - silent
 
 
-def pick(results, title, year, episode=None, runtime_minutes=None):
+def pick(results, title, year, episode=None, runtime_minutes=None, any_audio=False):
     """Best acceptable result to stream, or None."""
     kept = [r for r in results if acceptable(r, title, year, episode)[0]]
-    return max(kept, key=lambda r: stream_score(r, runtime_minutes, episode)) if kept else None
+    return max(kept, key=lambda r: stream_score(r, runtime_minutes, episode, any_audio)) if kept else None
 
 
 class SearchCache:
@@ -427,14 +428,14 @@ class Streams:
         """Searches for the title in the background, so a /start that follows skips the indexers. Returns at once."""
         return self.searches.warm(title, year, episode)
 
-    def start(self, title, year, episode=None, runtime_minutes=None):
+    def start(self, title, year, episode=None, runtime_minutes=None, any_audio=False):
         """Finds the best copy and adds it to qBittorrent. Returns at once; the film's details arrive in the background.
 
         episode is (season, episode) for a TV episode, or None for a film.
         Returns (hash, label, phase) where phase is 'ready' or 'connecting'.
         """
         results = self.searches.get(title, year, episode)
-        choice = pick(results, title, year, episode, runtime_minutes)
+        choice = pick(results, title, year, episode, runtime_minutes, any_audio)
         if choice is None:
             raise LookupError('no source')
         link = magnet_for(choice, title)
@@ -609,7 +610,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/health':
             self.reply(200, {'ok': True})
         elif self.path.startswith('/stream/'):
-            self.serve(self.path[len('/stream/'):].split('?')[0].lower())
+            hash_, _, query = self.path[len('/stream/'):].partition('?')
+            # audio=original: the player decodes any soundtrack itself, so serve the file as it is (seekable) even when
+            # its audio would otherwise be converted for older players.
+            self.serve(hash_.lower(), original='audio=original' in query.split('&'))
         elif self.path.startswith('/status/'):
             self.report(self.path[len('/status/'):].split('?')[0].lower())
         else:
@@ -633,6 +637,7 @@ class Handler(BaseHTTPRequestHandler):
             episode_key = (season, episode)
         runtime = body.get('runtime')
         runtime = runtime if isinstance(runtime, int) and 0 < runtime < 1000 else None
+        self.any_audio = body.get('audio') == 'any'
         return title, (year if year.isdigit() else None), episode_key, runtime
 
     def do_POST(self):
@@ -653,7 +658,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(202, {'ok': True, 'searching': searching})
                 return
             started = time.time()
-            hash_, label, phase = self.server.streams.start(title, year, episode_key, runtime)
+            hash_, label, phase = self.server.streams.start(title, year, episode_key, runtime, getattr(self, 'any_audio', False))
             LOG.info('start %s: %r %s %s in %.1fs as %s', phase, title, year, episode_key or '', time.time() - started, label)
             self.reply(200, {'path': '/stream/' + hash_, 'label': label, 'phase': phase})
         except LookupError as error:
@@ -679,7 +684,7 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.reply(200, info)
 
-    def serve(self, hash_):
+    def serve(self, hash_, original=False):
         if not re.fullmatch(r'[0-9a-f]{40}', hash_):
             self.reply(404, {'error': 'Not found'})
             return
@@ -687,7 +692,7 @@ class Handler(BaseHTTPRequestHandler):
         if entry is None:
             self.reply(404, {'error': 'Not found'})
             return
-        if entry['transcode']:
+        if entry['transcode'] and not original:
             self.serve_transcoded(entry)
             return
         total = entry['size']
