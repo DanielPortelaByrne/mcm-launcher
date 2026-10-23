@@ -301,7 +301,7 @@ class MoviesPanel(
                 activity.runOnUiThread {
                     val screen = StreamLoadingView(activity, e.title.name)
                     (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1)); streamLoading = screen
-                    e.title.backdropUrl?.let { u -> images.load(u, maxWidth = LOADING_BACKDROP_PX) { b -> screen.backdrop(b) } }
+                    e.title.backdropUrl?.let { u -> images.load(heroBackdropUrl(u), maxWidth = HERO_BACKDROP_PX) { b -> screen.backdrop(b) } }
                 }
             }
             return
@@ -554,10 +554,10 @@ class MoviesPanel(
     // --- Building a page ---------------------------------------------------------------------------
 
     /**
-     * The featured title and title pages draw their backdrop at half resolution (about 615 px across), so JustWatch's
-     * 640-wide copy is enough: a fifth of the bytes of the 1440 one and the same picture at that size.
+     * JustWatch's largest backdrop (1920 x ~900). The featured title, title pages and the stream loading screen fill
+     * most of a 1080p screen at full resolution, so any smaller copy is visibly stretched.
      */
-    private fun halfBackdrop(url: String) = url.replace("/s1440/", "/s640/")
+    private fun heroBackdropUrl(url: String) = url.replace("/s1440/", "/s1920/")
 
     private fun build() {
         val buildStart = Perf.now()
@@ -1542,7 +1542,7 @@ class MoviesPanel(
         }
         heroBackdrop.show(null)
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(halfBackdrop(u), maxWidth = HALF_BACKDROP_PX) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400); Perf.end("movies.open->hero") } }
+            images.load(heroBackdropUrl(u), maxWidth = HERO_BACKDROP_PX) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400); Perf.end("movies.open->hero") } }
         }
         if (focusedAt >= 0) heroButtons.getChildAt(minOf(focusedAt, heroButtons.childCount - 1))?.requestFocus()
         else if (!detailOpen && overlay.findFocus() == null && current != Dest.Search) requestFocusRobust(overlay as ViewGroup, heroButtons.getChildAt(0))
@@ -1585,7 +1585,7 @@ class MoviesPanel(
         detail.addView(backdrop, FrameLayout.LayoutParams(Cinema.px(activity, if (e.library != null) 1060 else 1230), -1, Gravity.END))
         detail.addView(View(activity).apply { background = Scrim.detail() }, FrameLayout.LayoutParams(-1, -1))
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(halfBackdrop(u), maxWidth = HALF_BACKDROP_PX) { b -> if (backdrop.isAttachedToWindow) backdrop.show(b) }
+            images.load(heroBackdropUrl(u), maxWidth = HERO_BACKDROP_PX) { b -> if (backdrop.isAttachedToWindow) backdrop.show(b) }
         }
 
         val side = Cinema.px(activity, 96)
@@ -1809,7 +1809,7 @@ class MoviesPanel(
         (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1))
         streamLoading = screen
         screen.requestFocus()
-        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u -> images.load(u, maxWidth = LOADING_BACKDROP_PX) { b -> screen.backdrop(b) } }
+        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u -> images.load(heroBackdropUrl(u), maxWidth = HERO_BACKDROP_PX) { b -> screen.backdrop(b) } }
         fun failed(message: String) {
             screen.message(message); screen.stats(null, null, null, null)
             ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 3500)
@@ -2355,8 +2355,7 @@ class MoviesPanel(
         const val PREWARM_SHELVES = 4
         const val CARDS_PER_FRAME = 4
         const val EAGER_POSTERS = 9      // a screen and a half of posters per row; the rest load as the row scrolls
-        const val HALF_BACKDROP_PX = 640
-        const val LOADING_BACKDROP_PX = 960   // the stream loading screen's backdrop is screen-wide, drawn at half
+        const val HERO_BACKDROP_PX = 1920
         const val RETURN_REFRESH_DELAY_MS = 1_500L
         const val EAGER_SHELVES = 2
         const val PREWARM_DELAY_MS = 4_000L

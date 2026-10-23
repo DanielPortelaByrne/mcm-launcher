@@ -151,7 +151,7 @@ object JellyfinApi {
         .put("PositionTicks", positionMs.coerceAtLeast(0L) * 10_000L).put("IsPaused", paused).put("CanSeek", true)
         .put("PlayMethod", "DirectStream").toString()
 
-    fun backdropUrl(base: String, id: String, maxWidth: Int = 1280): String = "$base/Items/${enc(id)}/Images/Backdrop?maxWidth=$maxWidth&quality=85"
+    fun backdropUrl(base: String, id: String, maxWidth: Int = 1920): String = "$base/Items/${enc(id)}/Images/Backdrop?maxWidth=$maxWidth&quality=85"
 
     /** The film or series with these ids (a TMDB id is used when the IMDb one is missing), or null. Never a title match. */
     fun findByIds(items: List<JellyfinItem>, imdbId: String?, tmdbId: String?, series: Boolean): JellyfinItem? = items.firstOrNull {
