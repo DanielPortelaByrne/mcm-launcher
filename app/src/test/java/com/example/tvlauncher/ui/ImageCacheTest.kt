@@ -71,6 +71,31 @@ class ImageCacheTest {
         assertEquals(listOf("0", "3", "2", "1"), order)
     }
 
+    @Test fun an_urgent_request_goes_ahead_of_posters_asked_for_after_it() {
+        gate = CountDownLatch(1)
+        val c = cache()
+        val order = Collections.synchronizedList(ArrayList<String>()); val all = CountDownLatch(4)
+        c.load("http://p/0", emptyMap(), 0, null) { order += "0"; all.countDown() }   // taken by the worker, blocks on the gate
+        Thread.sleep(100)
+        c.load("http://p/backdrop", emptyMap(), 0, null, urgent = true) { order += "backdrop"; all.countDown() }
+        listOf("1", "2").forEach { n -> c.load("http://p/$n", emptyMap(), 0, null) { order += n; all.countDown() } }
+        gate.countDown()
+        assertTrue(all.await(5, TimeUnit.SECONDS))
+        assertEquals(listOf("0", "backdrop", "2", "1"), order)
+    }
+
+    @Test fun big_pictures_are_not_pushed_out_by_small_ones() {
+        val c = ImageCache(folder.root, 1_000_000, 100,
+            fetch = { url, _ -> url.toByteArray() }, decode = { bytes, _, _ -> String(bytes) },
+            sizeOf = { if (it.contains("big")) 60 else 30 }, deliver = { it.run() }, workers = 1,
+            largeCapBytes = 100, largeBytes = 50)
+        val done = CountDownLatch(5)
+        c.load("http://p/big", emptyMap(), 0, null) { done.countDown() }
+        repeat(4) { i -> c.load("http://p/small$i", emptyMap(), 0, null) { done.countDown() } }
+        assertTrue(done.await(5, TimeUnit.SECONDS))
+        assertEquals("http://p/big", c.cached("http://p/big", 0))   // four posters overflowed their own space, not this
+    }
+
     @Test fun a_rebuilt_page_drops_what_its_old_page_queued() {
         gate = CountDownLatch(1)
         val c = cache()

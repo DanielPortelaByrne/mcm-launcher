@@ -24,7 +24,8 @@ class RemoteImages private constructor(context: Context) {
         fetch = ::download,
         decode = ::decodeTo,
         sizeOf = { it.byteCount },
-        deliver = { r -> main.post(r) }
+        deliver = { r -> main.post(r) },
+        largeCapBytes = 16L * 1024 * 1024   // about four full-screen backdrops, kept apart from the posters
     )
 
     /**
@@ -33,19 +34,23 @@ class RemoteImages private constructor(context: Context) {
      * that [cancel] can drop together.
      */
     fun load(url: String, headers: Map<String, String> = emptyMap(), maxWidth: Int = 0, tag: Any? = null, done: (Bitmap) -> Unit) =
-        load(url, headers, maxWidth, tag, "", done)
+        load(url, headers, maxWidth, tag, "", false, done)
+
+    /** A backdrop: loaded ahead of every queued poster, and kept in memory apart from them. */
+    fun loadBackdrop(url: String, headers: Map<String, String> = emptyMap(), maxWidth: Int, done: (Bitmap) -> Unit) =
+        load(url, headers, maxWidth, null, "", true, done)
 
     /**
      * A poster with the card's foot shading (transparent to 25 % black over its lower half, the old live foreground
      * gradient) painted into the picture once, so the card has one layer less to draw every frame.
      */
     fun loadShadedPoster(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, done: (Bitmap) -> Unit) =
-        load(url, headers, maxWidth, tag, SHADED, done)
+        load(url, headers, maxWidth, tag, SHADED, false, done)
 
-    private fun load(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, variant: String, done: (Bitmap) -> Unit) {
+    private fun load(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, variant: String, urgent: Boolean, done: (Bitmap) -> Unit) {
         // Already decoded: draw it now, in this frame, rather than one post later.
         if (Looper.myLooper() == Looper.getMainLooper()) core.cached(url, maxWidth, variant)?.let { done(it); return }
-        core.load(url, headers, maxWidth, tag, variant, done)
+        core.load(url, headers, maxWidth, tag, variant, urgent, done)
     }
 
     /** Drops every waiting request made with [tag] (a page that has been replaced). */

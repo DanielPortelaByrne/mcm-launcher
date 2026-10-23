@@ -2,13 +2,13 @@ package com.example.tvlauncher.design.cinema
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.ComposeShader
 import android.graphics.LinearGradient
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
-import android.graphics.PorterDuffXfermode
 import android.graphics.Shader
 import android.graphics.drawable.Drawable
 import android.view.View
@@ -18,49 +18,67 @@ import com.example.tvlauncher.design.Cinema
  * A backdrop picture for a featured title or a title page: centre-cropped into the view (biased by [focusX]: 0.5
  * centre, 1 right), with its left part faded to nothing ([fadeTo], the share of the width the fade spans, `.mk`).
  *
- * The crop and the fade are painted once into a cached bitmap when the picture or the size changes; drawing is a
- * single blit, so the page scrolls over it for free.
+ * The crop and the fade are a shader (the picture, masked by a gradient) drawn by the GPU, so a new picture costs no
+ * CPU painting and no full-screen bitmap. A new picture cross-fades over the one before; nothing is blanked first.
  */
 class HeroBackdrop(context: Context, private val focusX: Float = 0.5f, private val fadeTo: Float = 0.38f) : View(context) {
-    private var source: Bitmap? = null
-    private var cache: Bitmap? = null
-    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private class Layer(val bitmap: Bitmap) { val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.DITHER_FLAG) }
+    private var current: Layer? = null
+    private var previous: Layer? = null
+    private var mix = 1f
+    private var fade: android.animation.ValueAnimator? = null
 
-    init { isFocusable = false; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO; alpha = 0f }
+    init { isFocusable = false; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
 
-    /** Shows [bitmap], fading it in. */
+    /**
+     * Shows [bitmap]: cross-fading from the current picture when there is one on screen, at once when the view is not
+     * yet on screen (a page being built from pictures already in memory). Null clears it.
+     */
     fun show(bitmap: Bitmap?) {
-        source = bitmap; rebuild()
-        if (bitmap == null) { alpha = 0f; return }
-        alpha = 0f; animate().alpha(1f).setDuration(350).start()
+        if (bitmap != null && bitmap === current?.bitmap) return
+        fade?.cancel(); fade = null
+        if (bitmap == null) { current = null; previous = null; mix = 1f; invalidate(); return }
+        val next = Layer(bitmap).also { shade(it) }
+        val animate = isAttachedToWindow && isShown && width > 0 && com.example.tvlauncher.design.Motion.animationsOn(this)
+        previous = if (animate) current else null
+        current = next
+        if (!animate) { mix = 1f; invalidate(); return }
+        mix = 0f
+        fade = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 300
+            addUpdateListener { mix = it.animatedValue as Float; invalidate() }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(a: android.animation.Animator) { previous = null; mix = 1f; invalidate() }
+            })
+            start()
+        }
     }
 
-    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) = rebuild()
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) { current?.let { shade(it) }; previous?.let { shade(it) } }
 
-    private fun rebuild() {
-        val src = source ?: run { cache?.recycle(); cache = null; return invalidate() }
-        if (width <= 0 || height <= 0) return
-        // Full resolution: at half, the picture was visibly soft across most of the screen.
+    override fun onDetachedFromWindow() { super.onDetachedFromWindow(); fade?.cancel(); fade = null; previous = null; mix = 1f }
+
+    /** The crop (a local matrix on the picture) and the left fade (the picture masked by a gradient), for this size. */
+    private fun shade(layer: Layer) {
         val w = width; val h = height
-        // The featured title turns every few seconds: reuse the bitmap rather than allocate ~5 MB on the main thread.
-        val out = cache?.takeIf { it.width == w && it.height == h && it.isMutable }?.also { it.eraseColor(0) }
-            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { cache?.recycle() }
-        val c = Canvas(out)
+        if (w <= 0 || h <= 0) return
+        val src = layer.bitmap
         val scale = maxOf(w.toFloat() / src.width, h.toFloat() / src.height)
-        val dx = (w - src.width * scale) * focusX
-        val dy = (h - src.height * scale) * 0.5f
-        c.drawBitmap(src, Matrix().apply { setScale(scale, scale); postTranslate(dx, dy) }, Paint(Paint.FILTER_BITMAP_FLAG))
-        if (fadeTo > 0f) c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply {
-            shader = LinearGradient(0f, 0f, w * fadeTo, 0f, 0, -0x1000000, Shader.TileMode.CLAMP)
-            xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
-        })
-        cache = out
-        invalidate()
+        val picture = BitmapShader(src, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply {
+            setLocalMatrix(Matrix().apply {
+                setScale(scale, scale)
+                postTranslate((w - src.width * scale) * focusX, (h - src.height * scale) * 0.5f)
+            })
+        }
+        layer.paint.shader = if (fadeTo > 0f)
+            ComposeShader(picture, LinearGradient(0f, 0f, w * fadeTo, 0f, 0, -0x1000000, Shader.TileMode.CLAMP), PorterDuff.Mode.DST_IN)
+        else picture
     }
 
     override fun onDraw(canvas: Canvas) {
-        val c = cache ?: return
-        canvas.drawBitmap(c, null, android.graphics.Rect(0, 0, width, height), paint)
+        val w = width.toFloat(); val h = height.toFloat()
+        previous?.let { it.paint.alpha = 255; canvas.drawRect(0f, 0f, w, h, it.paint) }
+        current?.let { it.paint.alpha = (mix * 255).toInt(); canvas.drawRect(0f, 0f, w, h, it.paint) }
     }
 }
 

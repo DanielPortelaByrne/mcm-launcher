@@ -301,7 +301,7 @@ class MoviesPanel(
                 activity.runOnUiThread {
                     val screen = StreamLoadingView(activity, e.title.name)
                     (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1)); streamLoading = screen
-                    e.title.backdropUrl?.let { u -> images.load(heroBackdropUrl(u), maxWidth = HERO_BACKDROP_PX) { b -> screen.backdrop(b) } }
+                    backdropFor(e)?.let { u -> images.loadBackdrop(u, maxWidth = HERO_BACKDROP_PX) { b -> screen.backdrop(b) } }
                 }
             }
             return
@@ -552,6 +552,24 @@ class MoviesPanel(
     }
 
     // --- Building a page ---------------------------------------------------------------------------
+
+    /** The backdrop to show for [e]: the catalogue's, else the library's own, at hero size. Null when it has none. */
+    private fun backdropFor(e: Entry): String? =
+        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { heroBackdropUrl(it) }
+
+    /** Loads [e]'s backdrop into memory now, so its page or turn as the featured title shows it at once. */
+    private fun prefetchBackdrop(e: Entry) { backdropFor(e)?.let { u -> images.loadBackdrop(u, maxWidth = HERO_BACKDROP_PX) { } } }
+
+    private var restPrefetch: Runnable? = null
+
+    /**
+     * Resting on a poster for a moment fetches its backdrop, so opening it shows the picture at once. Skimming along a
+     * row does not: each move cancels the wait.
+     */
+    private fun prefetchOnRest(card: View, e: Entry) {
+        restPrefetch?.let { ui.removeCallbacks(it) }
+        restPrefetch = Runnable { if (card.hasFocus() || card.isFocused) prefetchBackdrop(e) }.also { ui.postDelayed(it, REST_PREFETCH_MS) }
+    }
 
     /**
      * JustWatch's largest backdrop (1920 x ~900). The featured title, title pages and the stream loading screen fill
@@ -1489,6 +1507,8 @@ class MoviesPanel(
             heroDots.addView(View(activity), LinearLayout.LayoutParams(Cinema.px(activity, 64), Cinema.px(activity, 10)).apply { if (i > 0) marginStart = Cinema.px(activity, 8) })
         }
         showHero(0)
+        // The other featured titles' pictures, ready in memory before their turn comes.
+        heroEntries.drop(1).forEach { prefetchBackdrop(it) }
         ui.removeCallbacks(heroTick)
         if (heroEntries.size > 1) ui.postDelayed(heroTick, HERO_TURN_MS)
     }
@@ -1540,10 +1560,10 @@ class MoviesPanel(
             heroDots.getChildAt(i).background = if (i == index) StripeDrawable(horizontalBands = true, radius = Cinema.pxf(activity, 5))
                 else android.graphics.drawable.GradientDrawable().apply { cornerRadius = Cinema.pxf(activity, 5); setColor(Cinema.alpha(Cinema.CREAM, 0.22f)) }
         }
-        heroBackdrop.show(null)
-        (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(heroBackdropUrl(u), maxWidth = HERO_BACKDROP_PX) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400); Perf.end("movies.open->hero") } }
-        }
+        // The last picture stays up until this one is ready, then cross-fades; a title with no picture clears it.
+        backdropFor(e)?.let { u ->
+            images.loadBackdrop(u, maxWidth = HERO_BACKDROP_PX) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400); Perf.end("movies.open->hero") } }
+        } ?: heroBackdrop.show(null)
         if (focusedAt >= 0) heroButtons.getChildAt(minOf(focusedAt, heroButtons.childCount - 1))?.requestFocus()
         else if (!detailOpen && overlay.findFocus() == null && current != Dest.Search) requestFocusRobust(overlay as ViewGroup, heroButtons.getChildAt(0))
     }
@@ -1584,9 +1604,8 @@ class MoviesPanel(
         val backdrop = HeroBackdrop(activity, focusX = 1f, fadeTo = 0.38f)
         detail.addView(backdrop, FrameLayout.LayoutParams(Cinema.px(activity, if (e.library != null) 1060 else 1230), -1, Gravity.END))
         detail.addView(View(activity).apply { background = Scrim.detail() }, FrameLayout.LayoutParams(-1, -1))
-        (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(heroBackdropUrl(u), maxWidth = HERO_BACKDROP_PX) { b -> if (backdrop.isAttachedToWindow) backdrop.show(b) }
-        }
+        // From memory this arrives before the page is on screen, and shows at once; otherwise it fades in when ready.
+        backdropFor(e)?.let { u -> images.loadBackdrop(u, maxWidth = HERO_BACKDROP_PX) { b -> backdrop.show(b) } }
 
         val side = Cinema.px(activity, 96)
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false; setPadding(side, Cinema.px(activity, 70), side, Cinema.px(activity, 120)) }
@@ -1809,7 +1828,7 @@ class MoviesPanel(
         (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1))
         streamLoading = screen
         screen.requestFocus()
-        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u -> images.load(heroBackdropUrl(u), maxWidth = HERO_BACKDROP_PX) { b -> screen.backdrop(b) } }
+        backdropFor(e)?.let { u -> images.loadBackdrop(u, maxWidth = HERO_BACKDROP_PX) { b -> screen.backdrop(b) } }
         fun failed(message: String) {
             screen.message(message); screen.stats(null, null, null, null)
             ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 3500)
@@ -2276,7 +2295,7 @@ class MoviesPanel(
         card.title?.text = e.title.name
         card.subline?.text = subline(e.title)
         dress(card, e, badge, defer)
-        card.onFocus = { lit -> if (lit) reveal(card) }
+        card.onFocus = { lit -> if (lit) { reveal(card); prefetchOnRest(card, e) } }
         card.setOnClickListener { if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }
         return card
     }
@@ -2291,7 +2310,7 @@ class MoviesPanel(
         val card = PosterCard(activity, 224, 336, titled = false)
         card.contentDescription = "$rank. ${e.title.name}"
         dress(card, e, defer = defer, holder = box)
-        card.onFocus = { lit -> if (lit) reveal(card) }
+        card.onFocus = { lit -> if (lit) { reveal(card); prefetchOnRest(card, e) } }
         card.setOnClickListener { openDetail(e, related) }
         box.addView(card, FrameLayout.LayoutParams(-2, -2).apply { leftMargin = Cinema.px(activity, 118) })
         box.minimumWidth = Cinema.px(activity, 350)
@@ -2356,6 +2375,7 @@ class MoviesPanel(
         const val CARDS_PER_FRAME = 4
         const val EAGER_POSTERS = 9      // a screen and a half of posters per row; the rest load as the row scrolls
         const val HERO_BACKDROP_PX = 1920
+        const val REST_PREFETCH_MS = 350L   // how long focus rests on a poster before its backdrop is fetched
         const val RETURN_REFRESH_DELAY_MS = 1_500L
         const val EAGER_SHELVES = 2
         const val PREWARM_DELAY_MS = 4_000L

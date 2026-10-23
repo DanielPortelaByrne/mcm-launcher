@@ -21,19 +21,29 @@ class ImageCache<T : Any>(
     private val sizeOf: (T) -> Int,
     private val deliver: (Runnable) -> Unit,
     workers: Int = 3,
-    private val clock: () -> Long = System::currentTimeMillis
+    private val clock: () -> Long = System::currentTimeMillis,
+    /** Room kept for big pictures (backdrops), apart from the posters, so a page of posters cannot push them out. */
+    largeCapBytes: Long = 0L,
+    private val largeBytes: Int = 1_000_000
 ) {
     private val memory = ByteLru<T>(memoryCapBytes.toLong(), sizeOf)
+    private val large = ByteLru<T>(largeCapBytes, sizeOf)
+    private val keepsLarge = largeCapBytes > 0
+
+    private fun inMemory(k: String): T? = memory.get(k) ?: large.get(k)
+    private fun remember(k: String, image: T) { if (keepsLarge && sizeOf(image) >= largeBytes) large.put(k, image) else memory.put(k, image) }
 
     private class Waiter<T>(val tag: Any?, val done: (T) -> Unit)
     private inner class Job(val key: String, val url: String, val headers: Map<String, String>, val maxWidth: Int, val variant: String) {
         val waiters = ArrayList<Waiter<T>>()
         var running = false
+        var urgent = false
     }
 
     private val lock = Object()
     private val jobs = HashMap<String, Job>()
     private val queue = ArrayDeque<Job>()          // front = newest: what was asked for last is on screen now
+    private val urgentQueue = ArrayDeque<Job>()    // ahead of all of [queue]: a backdrop the viewer is looking at
     private var diskBytes = -1L                    // counted on first write
     @Volatile private var closed = false
 
@@ -42,26 +52,30 @@ class ImageCache<T : Any>(
     }
 
     /** The decoded image if it is in memory now, without any work. */
-    fun cached(url: String, maxWidth: Int, variant: String = ""): T? = memory.get(key(url, maxWidth, variant))
+    fun cached(url: String, maxWidth: Int, variant: String = ""): T? = inMemory(key(url, maxWidth, variant))
 
     /**
      * Calls [done] (via [deliver]) with the image at [maxWidth] (0 = as stored), or never when it cannot be had. A
-     * second request for the same image while it loads joins the first. [tag] groups requests for [cancel].
+     * second request for the same image while it loads joins the first. [tag] groups requests for [cancel]. An
+     * [urgent] request goes ahead of every ordinary one, however many were asked for after it.
      */
-    fun load(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, variant: String = "", done: (T) -> Unit) {
+    fun load(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, variant: String = "", urgent: Boolean = false, done: (T) -> Unit) {
         val k = key(url, maxWidth, variant)
-        memory.get(k)?.let { hit -> deliver(Runnable { done(hit) }); return }
+        inMemory(k)?.let { hit -> deliver(Runnable { done(hit) }); return }
         synchronized(lock) {
             val job = jobs[k]
             if (job != null) {
                 job.waiters += Waiter(tag, done)
                 // Asked for again: it is wanted now, so it moves to the front if it has not started.
-                if (!job.running && queue.remove(job)) queue.addFirst(job)
+                if (!job.running && (queue.remove(job) || urgentQueue.remove(job))) {
+                    job.urgent = job.urgent || urgent
+                    (if (job.urgent) urgentQueue else queue).addFirst(job)
+                }
                 return
             }
-            val fresh = Job(k, url, headers, maxWidth, variant).also { it.waiters += Waiter(tag, done) }
+            val fresh = Job(k, url, headers, maxWidth, variant).also { it.waiters += Waiter(tag, done); it.urgent = urgent }
             jobs[k] = fresh
-            queue.addFirst(fresh)
+            (if (urgent) urgentQueue else queue).addFirst(fresh)
             lock.notify()
         }
     }
@@ -69,32 +83,34 @@ class ImageCache<T : Any>(
     /** Forgets every waiting request made with [tag]; downloads nobody else wants are dropped from the queue. */
     fun cancel(tag: Any) {
         synchronized(lock) {
-            val it = queue.iterator()
-            while (it.hasNext()) {
-                val job = it.next()
-                job.waiters.removeAll { w -> w.tag === tag }
-                if (job.waiters.isEmpty()) { it.remove(); jobs.remove(job.key) }
+            for (q in listOf(queue, urgentQueue)) {
+                val it = q.iterator()
+                while (it.hasNext()) {
+                    val job = it.next()
+                    job.waiters.removeAll { w -> w.tag === tag }
+                    if (job.waiters.isEmpty()) { it.remove(); jobs.remove(job.key) }
+                }
             }
             jobs.values.filter { it.running }.forEach { job -> job.waiters.removeAll { w -> w.tag === tag } }
         }
     }
 
     /** Requests still waiting to start (for tests and diagnostics). */
-    val queued: Int get() = synchronized(lock) { queue.size }
+    val queued: Int get() = synchronized(lock) { queue.size + urgentQueue.size }
 
-    fun close() { closed = true; synchronized(lock) { queue.clear(); jobs.clear(); lock.notifyAll() } }
+    fun close() { closed = true; synchronized(lock) { queue.clear(); urgentQueue.clear(); jobs.clear(); lock.notifyAll() } }
 
     private fun work() {
         while (!closed) {
             val job = synchronized(lock) {
-                while (queue.isEmpty() && !closed) lock.wait()
+                while (queue.isEmpty() && urgentQueue.isEmpty() && !closed) lock.wait()
                 if (closed) return
-                queue.removeFirst().also { it.running = true }
+                (urgentQueue.pollFirst() ?: queue.removeFirst()).also { it.running = true }
             }
             val image = try { produce(job) } catch (_: Throwable) { null }
             val waiters = synchronized(lock) { jobs.remove(job.key); ArrayList(job.waiters) }
             if (image != null) {
-                memory.put(job.key, image)
+                remember(job.key, image)
                 waiters.forEach { w -> deliver(Runnable { w.done(image) }) }
             }
         }
