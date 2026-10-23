@@ -39,9 +39,10 @@ class GlowCard(context: Context, private val radiusPx: Float) : LinearLayout(con
     }
 
     override fun draw(canvas: Canvas) {
-        if (isFocused && android.os.Build.VERSION.SDK_INT >= 28) {
-            box.set(0f, 0f, width.toFloat(), height.toFloat())
-            canvas.drawRoundRect(box, radius, radius, glow)
+        if (isFocused && width > 0 && height > 0) {
+            // Painted once per size (Glows), not blurred live every frame.
+            val g = Glows.roundRect(width, height, radius, Cinema.pxf(context, 30), glow.color)
+            canvas.drawBitmap(g.bitmap, -g.pad.toFloat(), -g.pad.toFloat(), null)
         }
         super.draw(canvas)
     }

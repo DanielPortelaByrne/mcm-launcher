@@ -278,7 +278,14 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
             val hw = still.width * s / 2f; val hh = still.height * s / 2f
             val r = radius * s
             box.set(cx - hw, cy - hh, cx + hw, cy + hh)
-            if (android.os.Build.VERSION.SDK_INT >= 28) canvas.drawRoundRect(box, r, r, glow)
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                // The bloom is painted once at the still's resting size (Glows) and scaled with it, not blurred live.
+                val g = com.example.tvlauncher.design.cinema.Glows.roundRect(still.width, still.height, radius, pf(45), glow.color)
+                val save = canvas.save()
+                canvas.scale(s, s, cx, cy)
+                canvas.drawBitmap(g.bitmap, cx - still.width / 2f - g.pad, cy - still.height / 2f - g.pad, null)
+                canvas.restoreToCount(save)
+            }
             // 4 px cream, then 5 px of saffron at 28% beyond it (`box-shadow: 0 0 0 4px cream, 0 0 0 9px`).
             ringPaint.color = Cinema.alpha(Cinema.SAFFRON, 0.28f); ringPaint.strokeWidth = pf(5)
             val o2 = pf(4) + pf(5) / 2f
@@ -336,8 +343,11 @@ class ActionDisc(context: Context, private val discMock: Int, iconRes: Int, priv
         val r = Cinema.pxf(context, discMock / 2f)
         val focused = isFocused
         if (android.os.Build.VERSION.SDK_INT >= 28) {
-            shadow.color = Cinema.alpha(0xFF000000.toInt(), if (focused) 0.6f else 0.4f)
-            canvas.drawCircle(cx, cy + Cinema.pxf(context, if (focused) 12 else 6), r + Cinema.pxf(context, if (focused) 16 else 2), shadow)
+            // The disc's drop shadow, painted once per size (Glows) instead of blurred live for every disc every frame.
+            val sr = r + Cinema.pxf(context, if (focused) 16 else 2)
+            val d = (2 * sr).toInt()
+            val g = com.example.tvlauncher.design.cinema.Glows.roundRect(d, d, sr, Cinema.pxf(context, 18), Cinema.alpha(0xFF000000.toInt(), if (focused) 0.6f else 0.4f))
+            canvas.drawBitmap(g.bitmap, cx - d / 2f - g.pad, cy + Cinema.pxf(context, if (focused) 12 else 6) - d / 2f - g.pad, null)
         }
         if (focused) {
             // Outermost first: red, terracotta, orange, saffron, five mockup pixels each, then the cream disc.
