@@ -188,3 +188,40 @@ and keep-alive; fine to keep the 1 s / 5 s cadence.
 - Unit tests pass (`gradlew testDebugUnitTest`), server tests pass (`python -m pytest server/stream-service`).
 - Installed and checked on the TCL TV: Movies opens with rows showing in < 1 s from cache, with the Deck asleep too;
   scrolling Home has clearly fewer janky frames; Stream now on a pre-warmed title starts noticeably faster.
+
+---
+
+# Measurements (branch `perf/movies`)
+
+Device: the living-room TV over ADB TLS (`ro.product.model` = Chromecast HD, Android 14 / API 34, 1920×1080).
+Note: the TV was asleep at first (activities stay stopped and nothing draws); the script now sends `KEYCODE_WAKEUP`.
+
+Method (`tools/perf/movies_perf.sh <serial> <label> [jellyfin-url]`): force-stop, start the launcher, open Movies with
+the debug intent (`--ez debug_cinema true`) = **cold open**; 15 s later open it again in the same process = **warm
+open**; 10 s later reset `gfxinfo` and run a scripted D-pad pass (Right into the page, Down ×14 through every row,
+Right ×8 / Left ×8 along a row, Up ×14 back to the top, open a title page and Back), ~35 s of input; then dump
+`gfxinfo`. Timings are `Perf` log marks (debug builds only, `ui/Perf.kt`). "Jellyfin unreachable" passes
+`--es debug_jellyfin_server http://10.255.255.1:8096` (debug-only, in-memory, not saved): connections to it time out
+exactly as they do when the Deck is asleep. Perfetto was not used: `perfetto` on this build needs a config file
+pushed to the device and the `gfxinfo` + `Perf` numbers were enough to decide each item; noted as a gap.
+
+## Phase 0 — baseline (main @ 9ee688c + timing marks only)
+
+| | Jellyfin reachable | Jellyfin unreachable |
+|---|---|---|
+| Cold open → first row of posters added | 10 790 ms | nothing within 25 s |
+| Cold open → first poster drawn | 2 082 ms (library row) | nothing within 25 s |
+| Cold open → hero backdrop | 12 154 ms | nothing within 25 s |
+| Cold: `catalog.shelf()` for the first shelf (cache hit, 1.7 MB `catalog.xml` loading) | 9 264 ms | — |
+| Warm open → first row / first poster / hero | 1 543 / 1 105 / 1 807 ms | — |
+| Warm: `catalog.shelf()` per shelf (prefs in memory, JSON parsed twice) | 134–374 ms | — |
+| Main thread: adding one 16-card row | 199–273 ms | |
+| Scroll pass: frames / janky | 640 / 89.1 % | 283 / 78.1 % (page empty) |
+| Scroll pass: p50 / p90 / p95 / p99 frame | 73 / 97 / 125 / 350 ms | 85 / 109 / 117 / 150 ms |
+| Scroll pass: slow UI thread / slow bitmap uploads / slow draw commands | 350 / 502 / 570 | 108 / 0 / 220 |
+
+Library "Watch now" (Toy Story 5, Jellyfin reachable): press → PlayerActivity 170 ms → `prepare()` **+1 990 ms**
+(the `client.item()` fetch in front of `startAttempt(0)`) → first `prepare` fails over to the stereo-audio copy
+(E-AC-3 soundtrack) after 5.9 s → first frame 3.3 s later: **11.3 s press → first frame**.
+
+Shared prefs on the device: `catalog.xml` 1.7 MB, `film_info.xml` 3.4 MB (home screen; out of scope here).

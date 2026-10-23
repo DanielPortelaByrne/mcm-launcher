@@ -19,6 +19,7 @@ object JellyfinPlayback {
      * the viewer left off, and its progress is sent back so the server's "continue watching" stays right.
      */
     fun play(activity: Activity, client: JellyfinClient, item: JellyfinItem, title: String, resumeKey: String) {
+        Perf.mark("library.play")
         val plan = prepare(client, item, title, resumeKey)
         PlayerActivity.launch(activity, plan.streams, plan.title, plan.resumeKey, plan.report)
     }

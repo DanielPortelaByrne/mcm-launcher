@@ -185,6 +185,7 @@ class MoviesPanel(
     private val pageEnd: Int get() = Cinema.px(activity, 96)
 
     fun show() {
+        Perf.begin("movies.open->firstRow"); Perf.begin("movies.open->firstPoster"); Perf.begin("movies.open->hero")
         overlay.visibility = View.VISIBLE
         showAmbient()
         com.example.tvlauncher.design.Motion.enter(overlay, null, 0f)
@@ -525,12 +526,20 @@ class MoviesPanel(
     }
 
     private fun loadShelf(spec: ShelfSpec, row: Row, gen: Int) {
+        val queuedAt = Perf.now()
         worker.execute {
+            val startAt = Perf.now()
             if (jellyfin.isConnected) jellyfin.library()   // loaded once, then every row can badge what you already own
+            val libraryAt = Perf.now()
             // A Top 10 row is exactly that: ten numbered posters, nothing after them.
             val entries = catalog.shelf(spec).titles.take(if (spec.ranked) 10 else SHELF_LIMIT).map { entry(it) }
+            val catalogAt = Perf.now()
             activity.runOnUiThread {
                 if (gen != generation) return@runOnUiThread
+                val uiAt = Perf.now()
+                Perf.took("shelf '${spec.heading}' queued", startAt - queuedAt); Perf.took("shelf '${spec.heading}' library", libraryAt - startAt)
+                Perf.took("shelf '${spec.heading}' catalog", catalogAt - libraryAt)
+                if (entries.isNotEmpty()) Perf.end("movies.open->firstRow", spec.heading)
                 if (entries.isEmpty()) { row.hide(); return@runOnUiThread }
                 val related = entries.map { it.title }
                 entries.forEachIndexed { i, e ->
@@ -538,6 +547,7 @@ class MoviesPanel(
                     row.inner.addView(if (ranked) rankCard(i + 1, e, related) else card(e, related), cardParams(i, wide = ranked))
                 }
                 row.setCount(entries.size)
+                Perf.took("shelf '${spec.heading}' ui add ${entries.size}", Perf.now() - uiAt)
                 if (!heroSet) {
                     val featured = entries.withIndex().filter { it.value.title.backdropUrl != null }.take(3)
                     setHero(featured.map { it.value }, related, featured.map { rankLabel(spec.heading, spec.ranked, it.index) })
@@ -1354,7 +1364,7 @@ class MoviesPanel(
         }
         heroBackdrop.show(null)
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(u, maxWidth = 1280) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400) } }
+            images.load(u, maxWidth = 1280) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400); Perf.end("movies.open->hero") } }
         }
         if (focusedAt >= 0) heroButtons.getChildAt(minOf(focusedAt, heroButtons.childCount - 1))?.requestFocus()
         else if (!detailOpen && overlay.findFocus() == null && current != Dest.Search) requestFocusRobust(overlay as ViewGroup, heroButtons.getChildAt(0))
@@ -1587,6 +1597,7 @@ class MoviesPanel(
     private fun streamNow(e: Entry, button: View, episode: Pair<Int, Int>? = null, shownTitle: String? = null) {
         if (!seerr.isSignedIn) { seerrSheet.show(seerr, jellyfin) { streamNow(e, button, episode, shownTitle) }; return }
         val token = ++streamToken
+        Perf.mark("stream.press"); Perf.begin("stream.press->startReply")
         streamReturnFocus = button
         val label = shownTitle ?: e.title.name
         val screen = StreamLoadingView(activity, label).apply {
@@ -1605,6 +1616,7 @@ class MoviesPanel(
         worker.execute {
             val result = seerr.startStream(e.title.name, e.title.year, episode?.first, episode?.second)
             activity.runOnUiThread {
+                Perf.end("stream.press->startReply", result.status.name)
                 if (token != streamToken) return@runOnUiThread   // cancelled with Back
                 android.util.Log.i("StreamNow", "status=${result.status} for ${e.title.name}")
                 when (result.status) {
@@ -1989,7 +2001,7 @@ class MoviesPanel(
     private fun dress(card: PosterCard, e: Entry, badge: Boolean = true) {
         if (e.title.posterUrl == null) card.placeholder(e.title.name)
         if (badge && e.library != null) card.badge()
-        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> card.image.setImageBitmap(b); frost?.refresh() } }
+        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> card.image.setImageBitmap(b); frost?.refresh(); Perf.end("movies.open->firstPoster") } }
     }
 
     /** A poster with its name beneath; grows and glows on focus; a badge says when it is already in the library. */

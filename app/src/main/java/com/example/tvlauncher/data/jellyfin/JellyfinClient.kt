@@ -31,7 +31,7 @@ class JellyfinClient(context: Context) {
     private val deviceName: String = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
 
     // A saved address from before the default moved to the Deck's name is treated as unset, so the new default applies.
-    val server: String get() = prefs.getString("server", null)?.takeIf { it != LEGACY_JELLYFIN_SERVER } ?: DEFAULT_JELLYFIN_SERVER
+    val server: String get() = debugServer ?: prefs.getString("server", null)?.takeIf { it != LEGACY_JELLYFIN_SERVER } ?: DEFAULT_JELLYFIN_SERVER
     val isConnected: Boolean get() = !prefs.getString("token", null).isNullOrBlank() && !prefs.getString("userId", null).isNullOrBlank()
     private val token: String? get() = prefs.getString("token", null)
     private val userId: String? get() = prefs.getString("userId", null)
@@ -208,9 +208,11 @@ class JellyfinClient(context: Context) {
     /** When a request last found the server unreachable. Rows then stop queuing up behind a server that is not there. */
     @Volatile private var unreachableAt = 0L
 
-    private companion object {
-        const val LIBRARY_TTL_MS = 5 * 60_000L
-        const val UNREACHABLE_BACKOFF_MS = 30_000L
+    companion object {
+        /** Debug builds only: overrides the address for this process, to time the app with the server unreachable. */
+        @Volatile var debugServer: String? = null
+        private const val LIBRARY_TTL_MS = 5 * 60_000L
+        private const val UNREACHABLE_BACKOFF_MS = 30_000L
     }
 
     // --- Plumbing --------------------------------------------------------------------------------

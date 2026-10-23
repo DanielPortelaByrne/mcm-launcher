@@ -150,6 +150,7 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Perf.init(this); Perf.mark("player.create")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         items = parse(intent.getStringExtra(EXTRA_ITEMS))
         imdbId = intent.getStringExtra(EXTRA_IMDB)
@@ -337,6 +338,7 @@ class PlayerActivity : AppCompatActivity() {
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(retries))
             .createMediaSource(MediaItem.fromUri(Uri.parse(item.url))), resume)
         prepareAt = SystemClock.elapsedRealtime()
+        Perf.mark("player.prepare")
         player.prepare()
         player.playWhenReady = true
         handler.removeCallbacks(startupTimeout)
@@ -433,6 +435,7 @@ class PlayerActivity : AppCompatActivity() {
             startupMs = SystemClock.elapsedRealtime() - prepareAt
             handler.removeCallbacks(startupTimeout)
             Log.i(TAG, "First frame after ${startupMs} ms")
+            Perf.mark("player.firstFrame (prepare->frame ${startupMs} ms)")
             reportToJellyfin("Playing")
         }
 
