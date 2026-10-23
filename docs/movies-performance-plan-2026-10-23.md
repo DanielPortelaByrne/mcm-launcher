@@ -193,7 +193,8 @@ and keep-alive; fine to keep the 1 s / 5 s cadence.
 
 # Measurements (branch `perf/movies`)
 
-Device: the living-room TV over ADB TLS (`ro.product.model` = Chromecast HD, Android 14 / API 34, 1920×1080).
+Device: **Chromecast HD** (codename boreal) over ADB TLS, Android 14 / API 34, 1920×1080 — not the TCL TV; the owner
+confirmed it stands in for it. Its TV was switched off, so checks rely on `Perf` marks, `gfxinfo` and `adb screencap`.
 Note: the TV was asleep at first (activities stay stopped and nothing draws); the script now sends `KEYCODE_WAKEUP`.
 
 Method (`tools/perf/movies_perf.sh <serial> <label> [jellyfin-url]`): force-stop, start the launcher, open Movies with
@@ -219,9 +220,38 @@ pushed to the device and the `gfxinfo` + `Perf` numbers were enough to decide ea
 | Scroll pass: frames / janky | 640 / 89.1 % | 283 / 78.1 % (page empty) |
 | Scroll pass: p50 / p90 / p95 / p99 frame | 73 / 97 / 125 / 350 ms | 85 / 109 / 117 / 150 ms |
 | Scroll pass: slow UI thread / slow bitmap uploads / slow draw commands | 350 / 502 / 570 | 108 / 0 / 220 |
+| Scroll pass, run 2 (script fixed to press Right into the page first) | 402 frames, 79.1 % janky, p50/p90/p99 81/109/150 ms | |
 
 Library "Watch now" (Toy Story 5, Jellyfin reachable): press → PlayerActivity 170 ms → `prepare()` **+1 990 ms**
 (the `client.item()` fetch in front of `startAttempt(0)`) → first `prepare` fails over to the stereo-audio copy
 (E-AC-3 soundtrack) after 5.9 s → first frame 3.3 s later: **11.3 s press → first frame**.
 
 Shared prefs on the device: `catalog.xml` 1.7 MB, `film_info.xml` 3.4 MB (home screen; out of scope here).
+
+## Phase 1 — after (commits 29e14f9, 4919120, e3a7b64, c3ae047)
+
+| | Baseline | After Phase 1 |
+|---|---|---|
+| Cold open → first row (reachable) | 10 790 ms (one run: > 15 s) | **1 572 ms** |
+| Cold open → first row (Jellyfin unreachable) | nothing in 25 s | **2 352 ms** |
+| Cold open → first poster / hero (reachable) | 2 082 / 12 154 ms | 3 460 / 3 899 ms (posters still from the network: Phase 2) |
+| Cold open → first poster / hero (unreachable) | nothing in 25 s | 3 812 / 4 574 ms |
+| `catalog.shelf()` cold, from cache | 9 264 ms | 71–134 ms (pre-warmed) / ~2 s without the pre-warm |
+| `catalog.shelf()` warm | 134–374 ms | 0 ms (memory) |
+| Reopen Movies within 5 min (same process) | 1 543 ms to first row (full rebuild) | **96–134 ms** (page kept) |
+| `build()` on the main thread | not measured | 471–514 ms (Phase 3 target) |
+| Library Watch now → first frame (DTS film) | 11 299 ms | 10 849 ms first time; **5 263 ms** once the codec is learned |
+| Scroll jank | 79–89 % janky, p50 73–81 ms | 84–86 % janky, p50 73 ms (unchanged; Phase 3) |
+
+Notes:
+- 1.1/1.2: rows no longer touch Jellyfin; the one library fetch re-badges cards and the hero when it lands.
+- 1.3: the cold 9 s was the 1.7 MB `catalog.xml` being loaded/parsed while the launcher was starting. Files + memory
+  fixed it; the remaining ~2 s on a cold first open was JIT/contention while parsing, removed by reading Home's first
+  four shelves into memory 4 s after the launcher starts. The first two shelves now load without waiting for layout.
+- 1.5: the item fetch now overlaps PlayerActivity's own start (create → prepare is ~1.3 s of activity/ExoPlayer
+  setup either way). The bigger cost turned out to be the soundtrack: this TV cannot decode DTS/E-AC-3, and every
+  film first failed over to the stereo copy (~6.5 s). The codec is now learned once and the stereo copy is chosen up
+  front. Fields=MediaSources was *not* added to the library list (it would bloat a 5 000-item answer with stream
+  lists); the list's item id is the source id for single-version files, and a differing source restarts the attempt.
+- 1.6: Downloads was not a measured hot spot; done cheaply (parallel/persisted title lookups, no rebuild when
+  nothing changed). In-place row updates were left out.
