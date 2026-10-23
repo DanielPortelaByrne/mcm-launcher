@@ -79,7 +79,9 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
     private fun p(n: Number) = Cinema.px(context, n)
 
     // --- Controls & scrubbing (31/32) ---
-    private val controls = FrameLayout(context)
+    // Glows (the focused button's bloom, the playhead's) are drawn past their views' edges, so the layers holding them
+    // must not clip their children: otherwise a glow is cut into a box at the edge of its column or of the scrubber.
+    private val controls = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
     private val eyebrowHolder = FrameLayout(context)
     private val title = Cinema.title(context, "", 60, maxLines = 1)
     private val metaLine = Cinema.text(context, "", 21, Cinema.MUTED).apply { maxLines = 1 }
@@ -110,7 +112,7 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
     private val scrubEnd = Cinema.text(context, "", 18, Cinema.DIM)
 
     // --- Paused (33) ---
-    private val paused = FrameLayout(context)
+    private val paused = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
     private val pausedFrame = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
     private val pausedTitle = Cinema.title(context, "", 104)
     private val pausedMeta = FrameLayout(context)
@@ -211,7 +213,7 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
         left.addView(pausedTitle, LinearLayout.LayoutParams(p(900), -2).apply { topMargin = p(22) })
         left.addView(pausedMeta, LinearLayout.LayoutParams(-2, -2).apply { topMargin = p(22) })
         left.addView(pausedSynopsis, LinearLayout.LayoutParams(p(800), -2).apply { topMargin = p(20) })
-        val buttons = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false }
+        val buttons = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
         resumeButton.setOnClickListener { onPlay(); setState(PlayerUi.Hidden) }
         startOverButton.setOnClickListener { onSeek(0); onPlay(); setState(PlayerUi.Hidden) }
         buttons.addView(resumeButton, LinearLayout.LayoutParams(-2, p(76)))
