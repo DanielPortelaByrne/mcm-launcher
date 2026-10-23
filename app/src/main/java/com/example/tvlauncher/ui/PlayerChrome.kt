@@ -434,8 +434,10 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
             chapters.getOrNull(ch.index + 1)?.takeIf { it.imageTag != null }?.let { nx -> chapterImage(nx) { b -> ghostRight.setImageBitmap(b) } }
             ghostLeft.visibility = if (ch.index > 0) VISIBLE else INVISIBLE; ghostRight.visibility = if (ch.index < chapters.size - 1) VISIBLE else INVISIBLE
         } else {
-            previewCard.image.setImageDrawable(null); ghostLeft.visibility = INVISIBLE; ghostRight.visibility = INVISIBLE
+            // No frames to show (a stream): the film's backdrop, dimmed behind the time, rather than an empty card.
+            previewCard.image.setImageBitmap(backdrop); ghostLeft.visibility = INVISIBLE; ghostRight.visibility = INVISIBLE
         }
+        previewCard.image.alpha = if (frame == null && (ch == null || ch.imageTag == null)) 0.45f else 1f
     }
 
     private fun refreshChips() {

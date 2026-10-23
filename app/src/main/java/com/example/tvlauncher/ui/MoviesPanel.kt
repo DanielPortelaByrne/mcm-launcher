@@ -277,12 +277,15 @@ class MoviesPanel(
             }
             return
         }
-        // "detail-library" / "detail-film": a title page for a library film, or a film not in the library.
+        // "detail-library" / "detail-film": a title page for a library film, or a film not in the library;
+        // "detail-film-3" skips to the fourth such film (a stream test that should not reuse a warm torrent).
         if (name.startsWith("detail-")) {
             go(Dest.Films)
             worker.execute {
+                if (jellyfin.isConnected) jellyfin.library()   // so "not in the library" is really known
+                val skip = name.removePrefix("detail-film-").toIntOrNull() ?: 0
                 val related: List<Entry> = if (name == "detail-library") libraryEntries(jellyfin.library().filter { !it.isSeries })
-                    else catalog.shelf(Catalog.filmsPage().first()).titles.map { entry(it) }.filter { it.library == null }
+                    else catalog.shelf(Catalog.filmsPage().first()).titles.filter { it.kind == Kind.MOVIE }.map { entry(it) }.filter { it.library == null }.drop(skip)
                 // What the player would get for the first few library films (chapters, trickplay), without playing anything.
                 if (name == "detail-library") related.take(5).mapNotNull { it.library }.forEach { lib ->
                     val full = jellyfin.item(lib.id)

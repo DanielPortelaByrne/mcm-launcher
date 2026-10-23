@@ -25,6 +25,28 @@ data class Trickplay(val width: Int, val height: Int, val tileWidth: Int, val ti
 }
 
 object PlayerMath {
+    // --- Streams -----------------------------------------------------------------------------------
+
+    /**
+     * How far forward a stream can be sought: what the player already holds, or the share of the file the server has
+     * downloaded (it downloads in order) less a margin for bitrate swings. Without a duration or a figure from the
+     * server, only the buffer counts.
+     */
+    fun streamSeekLimit(durationMs: Long, downloaded: Float?, bufferedMs: Long): Long {
+        val fromServer = if (durationMs > 0 && downloaded != null) {
+            val share = downloaded.coerceIn(0f, 1f)
+            if (share >= 0.999f) durationMs
+            else (durationMs * share).toLong() - maxOf(STREAM_SEEK_MARGIN_MS, (durationMs * 0.03).toLong())
+        } else 0L
+        return maxOf(bufferedMs, fromServer, 0L)
+    }
+
+    /** Back is always fine; forward stops at [limit] (and never goes backwards because of it). */
+    fun clampStreamSeek(targetMs: Long, positionMs: Long, limit: Long): Long =
+        if (targetMs <= positionMs || targetMs <= limit) targetMs else maxOf(limit, positionMs)
+
+    private const val STREAM_SEEK_MARGIN_MS = 15_000L
+
     // --- Chapters ----------------------------------------------------------------------------------
 
     /** Jellyfin's `Chapters` array (StartPositionTicks, Name, ImageTag), in order; untitled ones are numbered. */
