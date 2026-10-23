@@ -68,11 +68,13 @@ class ShelfCache(
     private class Held(val titles: List<Title>, val savedAt: Long)
     private val memory = ConcurrentHashMap<String, Held>()
     private val refreshing: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val reading = ConcurrentHashMap<String, Any>()
 
     fun titles(body: String, keep: Boolean): List<Title> {
         if (!keep) return fetch(body)?.let(::parse).orEmpty()
         val key = key(body)
-        val held = memory[key] ?: read(key)?.also { memory[key] = it }
+        // One reader per shelf: a row asking while the start-up pre-read is parsing it waits for that parse.
+        val held = memory[key] ?: synchronized(reading.getOrPut(key) { Any() }) { memory[key] ?: read(key)?.also { memory[key] = it } }
         if (held != null) {
             if (clock() - held.savedAt >= ttlMs) refreshLater(key, body)
             return held.titles

@@ -141,7 +141,9 @@ class MoviesPanel(
     private val shelfPool = Executors.newFixedThreadPool(3)
     /** Calls that can take a minute or more (a stream start, the Downloads refresh, deletes): each gets its own thread. */
     private val slowPool = Executors.newCachedThreadPool()
-    private val images = RemoteImages(activity)
+    private val images = RemoteImages.shared(activity)
+    /** Groups this page's picture requests, so a rebuilt page drops the ones the old page still had queued. */
+    private var pageTag = Any()
     private val catalog = CatalogRepository(activity)
     private val ui = Handler(Looper.getMainLooper())
     private var generation = 0
@@ -288,7 +290,7 @@ class MoviesPanel(
                 activity.runOnUiThread {
                     val screen = StreamLoadingView(activity, e.title.name)
                     (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1)); streamLoading = screen
-                    e.title.backdropUrl?.let { u -> images.load(u, maxWidth = 1280) { b -> screen.backdrop(b) } }
+                    e.title.backdropUrl?.let { u -> images.load(u, maxWidth = LOADING_BACKDROP_PX) { b -> screen.backdrop(b) } }
                 }
             }
             return
@@ -540,8 +542,15 @@ class MoviesPanel(
 
     // --- Building a page ---------------------------------------------------------------------------
 
+    /**
+     * The featured title and title pages draw their backdrop at half resolution (about 615 px across), so JustWatch's
+     * 640-wide copy is enough: a fifth of the bytes of the 1440 one and the same picture at that size.
+     */
+    private fun halfBackdrop(url: String) = url.replace("/s1440/", "/s640/")
+
     private fun build() {
         val buildStart = Perf.now()
+        images.cancel(pageTag); pageTag = Any()
         val gen = ++generation
         searchPending?.let { ui.removeCallbacks(it) }
         ui.removeCallbacks(heroTick)
@@ -929,7 +938,7 @@ class MoviesPanel(
         }
         val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         thumb.addView(image, FrameLayout.LayoutParams(-1, -1))
-        posterUrl?.let { u -> images.load(u) { b -> image.setImageBitmap(b) } }
+        posterUrl?.let { u -> images.load(u, maxWidth = 120) { b -> image.setImageBitmap(b) } }
         card.addView(thumb, LinearLayout.LayoutParams(Cinema.px(activity, 68), Cinema.px(activity, 96)))
 
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
@@ -1488,7 +1497,7 @@ class MoviesPanel(
         }
         heroBackdrop.show(null)
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(u, maxWidth = 1280) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400); Perf.end("movies.open->hero") } }
+            images.load(halfBackdrop(u), maxWidth = HALF_BACKDROP_PX) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400); Perf.end("movies.open->hero") } }
         }
         if (focusedAt >= 0) heroButtons.getChildAt(minOf(focusedAt, heroButtons.childCount - 1))?.requestFocus()
         else if (!detailOpen && overlay.findFocus() == null && current != Dest.Search) requestFocusRobust(overlay as ViewGroup, heroButtons.getChildAt(0))
@@ -1531,7 +1540,7 @@ class MoviesPanel(
         detail.addView(backdrop, FrameLayout.LayoutParams(Cinema.px(activity, if (e.library != null) 1060 else 1230), -1, Gravity.END))
         detail.addView(View(activity).apply { background = Scrim.detail() }, FrameLayout.LayoutParams(-1, -1))
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(u, maxWidth = 1280) { b -> if (backdrop.isAttachedToWindow) backdrop.show(b) }
+            images.load(halfBackdrop(u), maxWidth = HALF_BACKDROP_PX) { b -> if (backdrop.isAttachedToWindow) backdrop.show(b) }
         }
 
         val side = Cinema.px(activity, 96)
@@ -1753,7 +1762,7 @@ class MoviesPanel(
         (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1))
         streamLoading = screen
         screen.requestFocus()
-        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u -> images.load(u, maxWidth = 1280) { b -> screen.backdrop(b) } }
+        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u -> images.load(u, maxWidth = LOADING_BACKDROP_PX) { b -> screen.backdrop(b) } }
         fun failed(message: String) {
             screen.message(message); screen.stats(null, null, null, null)
             ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 3500)
@@ -2177,7 +2186,7 @@ class MoviesPanel(
         if (e.title.posterUrl == null) card.placeholder(e.title.name)
         if (badge && e.library != null) card.badge()
         else if (badge) whenInLibrary(e) { card.badge() }
-        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> card.image.setImageBitmap(b); frost?.refresh(); Perf.end("movies.open->firstPoster") } }
+        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332, tag = pageTag) { b: Bitmap -> card.image.setImageBitmap(b); frost?.refresh(); Perf.end("movies.open->firstPoster") } }
     }
 
     /** A poster with its name beneath; grows and glows on focus; a badge says when it is already in the library. */
@@ -2264,6 +2273,8 @@ class MoviesPanel(
         const val RAIL_WIDTH = 92        // mockup px, collapsed
         const val RAIL_WIDTH_OPEN = 420  // mockup px, with labels while the rail has focus
         const val PREWARM_SHELVES = 4
+        const val HALF_BACKDROP_PX = 640
+        const val LOADING_BACKDROP_PX = 960   // the stream loading screen's backdrop is screen-wide, drawn at half
         const val RETURN_REFRESH_DELAY_MS = 1_500L
         const val EAGER_SHELVES = 2
         const val PREWARM_DELAY_MS = 4_000L

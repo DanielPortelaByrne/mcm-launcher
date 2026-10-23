@@ -90,7 +90,6 @@ class PlayerActivity : AppCompatActivity() {
     private var episodeGeneration = 0
     private var foreground = false
     private val episodeLookup = java.util.concurrent.Executors.newSingleThreadExecutor()
-    private var episodeImages: RemoteImages? = null
     private val jellyfin by lazy { JellyfinClient(this) }
     private val cancelNext = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() { cancelAutoplay() }
@@ -336,8 +335,7 @@ class PlayerActivity : AppCompatActivity() {
                 refreshNextHook()
                 autoplay.ready(next.id, SystemClock.elapsedRealtime())
                 nextCard.bind(next)
-                val images = episodeImages ?: RemoteImages(this).also { episodeImages = it }
-                images.load(jellyfin.imageUrl(next.id, 300), jellyfin.playbackHeaders(), maxWidth = 480) { bitmap ->
+                RemoteImages.shared(this).load(jellyfin.imageUrl(next.id, 300), jellyfin.playbackHeaders(), maxWidth = 480) { bitmap ->
                     if (generation == episodeGeneration) nextCard.artwork.setImageBitmap(bitmap)
                 }
                 showNextEpisode()
@@ -558,7 +556,7 @@ class PlayerActivity : AppCompatActivity() {
     private fun buildLoading(): View = com.example.tvlauncher.design.cinema.StreamLoadingView(this, title).also { v ->
         loadingScreen = v
         v.message("Connecting to the sources…")
-        art?.let { url -> com.example.tvlauncher.ui.RemoteImages(this).load(url, maxWidth = 1280) { v.backdrop(it) } }
+        art?.let { url -> RemoteImages.shared(this).load(url, maxWidth = 960) { v.backdrop(it) } }
     }
 
     private var loadingScreen: com.example.tvlauncher.design.cinema.StreamLoadingView? = null
@@ -569,7 +567,7 @@ class PlayerActivity : AppCompatActivity() {
     private var itemChapters: List<com.example.tvlauncher.data.player.Chapter> = emptyList()
     private var itemTrickplay: com.example.tvlauncher.data.player.Trickplay? = null
     private var itemSizeBytes: Long? = null
-    private val chromeImages by lazy { RemoteImages(this) }
+    private val chromeImages by lazy { RemoteImages.shared(this) }
     private val trickplaySheets = android.util.LruCache<Int, Bitmap>(4)
     private val bitrates = com.example.tvlauncher.data.player.BitrateHistory()
     @Volatile private var lastBitrate = 0L
@@ -956,7 +954,6 @@ class PlayerActivity : AppCompatActivity() {
     override fun onDestroy() {
         episodeGeneration++
         episodeLookup.shutdownNow()
-        episodeImages?.close()
         if (chrome != null) chromeImages.close()
         handler.removeCallbacksAndMessages(null)
         if (::player.isInitialized) {
