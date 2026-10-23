@@ -113,10 +113,11 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
 
     // --- Paused (33) ---
     private val paused = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
-    // After a while paused, the picture turns to backlit stained glass behind the paused screen.
-    private val stainedGlass = com.example.tvlauncher.design.cinema.StainedGlassView(context) { blur(it) }
+    // After a while paused, the picture turns to backlit hammered glass behind the paused screen.
+    private val glass = com.example.tvlauncher.design.cinema.HammeredGlassView(context) { blur(it) }
+    private val pausedScrim = View(context)
     private val glassAfterPause = Runnable {
-        if (state == PlayerUi.Paused && !isPlaying()) captureFrame { f -> if (f != null && state == PlayerUi.Paused && !isPlaying()) stainedGlass.start(f) }
+        if (state == PlayerUi.Paused && !isPlaying()) captureFrame { f -> if (f != null && state == PlayerUi.Paused && !isPlaying()) glass.start(f) }
     }
 
     private val pausedTitle = Cinema.title(context, "", 104)
@@ -204,10 +205,12 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
     }
 
     private fun buildPaused() {
-        paused.addView(stainedGlass, LayoutParams(-1, -1))
+        paused.addView(glass, LayoutParams(-1, -1))
+        // The glass is its own shade: the dimming over it eases back by a third as it forms, so it glows.
+        glass.onAmount = { a -> pausedScrim.alpha = 1f - 0.35f * a }
         // The paused picture itself shows through, sharp, with only a light dim: deeper behind the words on the left
         // and the chapters at the foot, barely there on the right.
-        paused.addView(View(context).apply { background = com.example.tvlauncher.design.cinema.Scrim(
+        paused.addView(pausedScrim.apply { background = com.example.tvlauncher.design.cinema.Scrim(
             listOf(0f to 0.80f, 0.30f to 0.62f, 0.58f to 0.22f, 1f to 0.10f), listOf(0f to 0.30f, 0.18f to 0f, 0.48f to 0f, 0.76f to 0.72f, 1f to 0.90f)) }, LayoutParams(-1, -1))
 
         val left = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
@@ -298,7 +301,7 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
         val showControls = next == PlayerUi.Controls || next is PlayerUi.Scrubbing
         controls.visibility = if (showControls) VISIBLE else GONE
         paused.visibility = if (next == PlayerUi.Paused) VISIBLE else GONE
-        if (next != PlayerUi.Paused) { ui.removeCallbacks(glassAfterPause); stainedGlass.stop() }
+        if (next != PlayerUi.Paused) { ui.removeCallbacks(glassAfterPause); glass.stop(); pausedScrim.alpha = 1f }
         val scrubbing = next is PlayerUi.Scrubbing
         transport.visibility = if (scrubbing) INVISIBLE else VISIBLE
         chips.visibility = if (scrubbing) INVISIBLE else VISIBLE
