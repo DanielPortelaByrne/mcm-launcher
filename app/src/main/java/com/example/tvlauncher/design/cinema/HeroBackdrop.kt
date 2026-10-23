@@ -38,12 +38,13 @@ class HeroBackdrop(context: Context, private val focusX: Float = 0.5f, private v
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) = rebuild()
 
     private fun rebuild() {
-        cache?.recycle(); cache = null
-        val src = source ?: return invalidate()
+        val src = source ?: run { cache?.recycle(); cache = null; return invalidate() }
         if (width <= 0 || height <= 0) return
         // Half resolution is plenty for a picture that sits under scrims; it also halves the memory.
         val w = width / 2; val h = height / 2
-        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        // The featured title turns every few seconds: reuse the bitmap rather than allocate 1.3 MB on the main thread.
+        val out = cache?.takeIf { it.width == w && it.height == h && it.isMutable }?.also { it.eraseColor(0) }
+            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { cache?.recycle() }
         val c = Canvas(out)
         val scale = maxOf(w.toFloat() / src.width, h.toFloat() / src.height)
         val dx = (w - src.width * scale) * focusX

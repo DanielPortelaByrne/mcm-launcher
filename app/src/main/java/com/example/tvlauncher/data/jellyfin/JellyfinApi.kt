@@ -32,7 +32,9 @@ data class JellyfinItem(
     val chapters: List<com.example.tvlauncher.data.player.Chapter> = emptyList(),
     val trickplay: com.example.tvlauncher.data.player.Trickplay? = null,
     val sizeBytes: Long? = null,
-    val communityRating: Double? = null
+    val communityRating: Double? = null,
+    /** The default soundtrack's codec ("eac3", "aac"…), when the server listed the file's streams. */
+    val audioCodec: String? = null
 ) {
     val isSeries: Boolean get() = type == "Series"
     val isEpisode: Boolean get() = type == "Episode"
@@ -291,8 +293,18 @@ object JellyfinApi {
             chapters = com.example.tvlauncher.data.player.PlayerMath.parseChapters(o.optJSONArray("Chapters")),
             trickplay = com.example.tvlauncher.data.player.PlayerMath.parseTrickplay(o.optJSONObject("Trickplay"), source),
             sizeBytes = sources?.optJSONObject(0)?.optLong("Size", 0L)?.takeIf { it > 0 },
-            communityRating = o.optDouble("CommunityRating", 0.0).takeIf { it > 0 }
+            communityRating = o.optDouble("CommunityRating", 0.0).takeIf { it > 0 },
+            audioCodec = defaultAudioCodec(sources?.optJSONObject(0))
         )
+    }
+
+    /** The codec of the source's default audio stream (or its first one), lower case; null when streams are not listed. */
+    fun defaultAudioCodec(source: JSONObject?): String? {
+        val streams = source?.optJSONArray("MediaStreams") ?: return null
+        val audio = (0 until streams.length()).mapNotNull { streams.optJSONObject(it) }.filter { it.optString("Type") == "Audio" }
+        val wanted = source.optInt("DefaultAudioStreamIndex", -1)
+        val chosen = audio.firstOrNull { it.optInt("Index", -2) == wanted } ?: audio.firstOrNull { it.optBoolean("IsDefault") } ?: audio.firstOrNull()
+        return chosen?.optString("Codec")?.lowercase()?.ifBlank { null }
     }
 }
 

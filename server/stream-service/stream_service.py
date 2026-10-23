@@ -2,6 +2,7 @@
 """Stream films straight to the TV from the same indexers that feed the library.
 
 POST /start   {"title": "...", "year": 1999}  -> {"path": "/stream/<hash>", "label": "...", "bytes": n}
+POST /prepare {"title": "...", "year": 1999}  -> 202 at once; searches in the background so a later /start is quick
 GET  /stream/<hash>                           -> the film's bytes, with Range support while it downloads
 GET  /health                                  -> {"ok": true}
 
@@ -52,6 +53,11 @@ READY_BYTES = 16 * 1024 * 1024  # how much must be ready before the loading scre
 FFMPEG = shutil.which('ffmpeg') or '/usr/bin/ffmpeg'
 IDLE_SECONDS = 4 * 3600     # an unwatched stream is removed after this long
 START_TIMEOUT = 90          # waiting for qBittorrent to fetch torrent metadata
+SEARCH_TTL = 20 * 60        # a search answer is reused this long (a /prepare, then the /start that follows it)
+FILM_MINUTES = 110          # running times assumed when the request does not say
+EPISODE_MINUTES = 45
+MBPS_PER_SEEDER = 1.5       # roughly what one seeder sustains for a sequential download over a home line
+STREAM_HEADROOM = 0.5       # a release should need at most this share of what its seeders can sustain
 VIDEO_EXTENSIONS = ('.mkv', '.mp4', '.m4v', '.webm', '.avi', '.mov')
 BAD_RELEASE = re.compile(r'\b(cam|camrip|hdcam|ts|telesync|tc|telecine|screener|scr|r5|dvdscr|workprint)\b', re.I)
 RESOLUTIONS = (('2160', 2.5), ('1080', 3.0), ('720', 2.0), ('480', 0.5))
@@ -151,10 +157,98 @@ def score(result):
     return resolution * 2 + source + seeds - oversize - silent
 
 
-def pick(results, title, year, episode=None):
-    """Best acceptable result, or None."""
+def stream_score(result, runtime_minutes=None, episode=None):
+    """Like score(), but for playing while it downloads: a release must arrive faster than it plays.
+
+    The bitrate is estimated from size and running time and set against what its seeders can typically sustain. A
+    heavy release with few seeders, which would win on resolution alone and then stop to buffer, is pushed down; seeders
+    count for more than in score(). The download pipeline keeps score() unchanged.
+    """
+    info = parse_release(result.get('title'))
+    resolution = dict(RESOLUTIONS).get(info['resolution'], 1.0)
+    source = dict(SOURCES).get(info['source'], 0.0)
+    seeders = max(result.get('seeders') or 0, 1)
+    minutes = runtime_minutes or (EPISODE_MINUTES if episode is not None else FILM_MINUTES)
+    mbps = (result.get('size') or 0) * 8 / (minutes * 60) / 1e6
+    comfortable = seeders * MBPS_PER_SEEDER * STREAM_HEADROOM
+    starved = 3.0 * math.log2(mbps / comfortable) if mbps > comfortable > 0 else 0.0
+    silent = AUDIO_PENALTY if audio_unplayable(result.get('title')) else 0.0
+    return resolution * 2 + source + 2 * math.log10(seeders) - starved - silent
+
+
+def pick(results, title, year, episode=None, runtime_minutes=None):
+    """Best acceptable result to stream, or None."""
     kept = [r for r in results if acceptable(r, title, year, episode)[0]]
-    return max(kept, key=score) if kept else None
+    return max(kept, key=lambda r: stream_score(r, runtime_minutes, episode)) if kept else None
+
+
+class SearchCache:
+    """Search answers per (title, year, episode) for SEARCH_TTL seconds, with one search in flight per key.
+
+    A /prepare when a title page opens fills it; the /start that follows a moment later then skips the indexers.
+    """
+
+    def __init__(self, search, ttl=SEARCH_TTL, clock=time.time):
+        self.search = search
+        self.ttl = ttl
+        self.clock = clock
+        self.lock = threading.Lock()
+        self.answers = {}    # key -> (when, results)
+        self.running = {}    # key -> threading.Event
+
+    @staticmethod
+    def key(title, year, episode=None):
+        return (normalize(title), str(year or ''), tuple(int(x) for x in episode) if episode else None)
+
+    def fresh(self, k):
+        hit = self.answers.get(k)
+        return hit[1] if hit and self.clock() - hit[0] < self.ttl else None
+
+    def get(self, title, year, episode=None):
+        """Results for the key: from the cache when fresh, from the search already running for it, or searched now."""
+        k = self.key(title, year, episode)
+        while True:
+            with self.lock:
+                hit = self.fresh(k)
+                if hit is not None:
+                    return hit
+                running = self.running.get(k)
+                mine = running is None
+                if mine:
+                    running = self.running[k] = threading.Event()
+            if not mine:
+                running.wait(70)
+                with self.lock:
+                    hit = self.fresh(k)
+                if hit is not None:
+                    return hit
+                continue   # that search failed: try again ourselves
+            try:
+                results = self.search(title, year, episode)
+                with self.lock:
+                    now = self.clock()
+                    self.answers = {x: v for x, v in self.answers.items() if now - v[0] < self.ttl}
+                    self.answers[k] = (now, results)
+                return results
+            finally:
+                with self.lock:
+                    self.running.pop(k, None)
+                running.set()
+
+    def warm(self, title, year, episode=None):
+        """Starts the search in the background (unless fresh or already running). Returns at once: True if it started."""
+        k = self.key(title, year, episode)
+        with self.lock:
+            if self.fresh(k) is not None or k in self.running:
+                return False
+
+        def run():
+            try:
+                self.get(title, year, episode)
+            except Exception:   # noqa: BLE001 - a failed warm-up is simply retried by /start itself
+                pass
+        threading.Thread(target=run, daemon=True).start()
+        return True
 
 
 def hash_from_magnet(url):
@@ -224,6 +318,7 @@ class Streams:
         self.client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.jar))
         self.qbit_ready = False
         self.pending = {}   # hash -> {"label", "error"} for films whose metadata has not arrived yet
+        self.searches = SearchCache(lambda title, year, episode: self.search(title, year, episode))
 
     # --- Prowlarr ---------------------------------------------------------------------------------
 
@@ -328,14 +423,18 @@ class Streams:
 
     # --- Starting a film --------------------------------------------------------------------------
 
-    def start(self, title, year, episode=None):
+    def prepare(self, title, year, episode=None):
+        """Searches for the title in the background, so a /start that follows skips the indexers. Returns at once."""
+        return self.searches.warm(title, year, episode)
+
+    def start(self, title, year, episode=None, runtime_minutes=None):
         """Finds the best copy and adds it to qBittorrent. Returns at once; the film's details arrive in the background.
 
         episode is (season, episode) for a TV episode, or None for a film.
         Returns (hash, label, phase) where phase is 'ready' or 'connecting'.
         """
-        results = self.search(title, year, episode)
-        choice = pick(results, title, year, episode)
+        results = self.searches.get(title, year, episode)
+        choice = pick(results, title, year, episode, runtime_minutes)
         if choice is None:
             raise LookupError('no source')
         link = magnet_for(choice, title)
@@ -516,30 +615,45 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.reply(404, {'error': 'Not found'})
 
+    def read_request(self):
+        """(title, year or None, (season, episode) or None, runtime minutes or None); None once it has replied 400."""
+        length = min(int(self.headers.get('Content-Length', '0')), 4096)
+        body = json.loads(self.rfile.read(length) or b'{}')
+        title = str(body.get('title', '')).strip()[:200]
+        year = str(body.get('year', '')).strip()[:4]
+        if not title:
+            self.reply(400, {'error': 'Title missing'})
+            return None
+        season, episode = body.get('season'), body.get('episode')
+        episode_key = None
+        if season is not None or episode is not None:
+            if not (isinstance(season, int) and isinstance(episode, int) and 0 < season < 100 and 0 < episode < 1000):
+                self.reply(400, {'error': 'Season and episode must be numbers'})
+                return None
+            episode_key = (season, episode)
+        runtime = body.get('runtime')
+        runtime = runtime if isinstance(runtime, int) and 0 < runtime < 1000 else None
+        return title, (year if year.isdigit() else None), episode_key, runtime
+
     def do_POST(self):
-        if self.path != '/start':
+        if self.path not in ('/start', '/prepare'):
             self.reply(404, {'error': 'Not found'})
             return
         if not self.authenticate():
             return
         title = year = ''
+        episode_key = None
         try:
-            length = min(int(self.headers.get('Content-Length', '0')), 4096)
-            body = json.loads(self.rfile.read(length) or b'{}')
-            title = str(body.get('title', '')).strip()[:200]
-            year = str(body.get('year', '')).strip()[:4]
-            if not title:
-                self.reply(400, {'error': 'Title missing'})
+            asked = self.read_request()
+            if asked is None:
                 return
-            season, episode = body.get('season'), body.get('episode')
-            episode_key = None
-            if season is not None or episode is not None:
-                if not (isinstance(season, int) and isinstance(episode, int) and 0 < season < 100 and 0 < episode < 1000):
-                    self.reply(400, {'error': 'Season and episode must be numbers'})
-                    return
-                episode_key = (season, episode)
+            title, year, episode_key, runtime = asked
+            if self.path == '/prepare':
+                searching = self.server.streams.prepare(title, year, episode_key)
+                self.reply(202, {'ok': True, 'searching': searching})
+                return
             started = time.time()
-            hash_, label, phase = self.server.streams.start(title, year if year.isdigit() else None, episode_key)
+            hash_, label, phase = self.server.streams.start(title, year, episode_key, runtime)
             LOG.info('start %s: %r %s %s in %.1fs as %s', phase, title, year, episode_key or '', time.time() - started, label)
             self.reply(200, {'path': '/stream/' + hash_, 'label': label, 'phase': phase})
         except LookupError as error:

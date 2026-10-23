@@ -154,4 +154,24 @@ class PlayerUiStateTest {
     @Test fun liveStreamsWithNoLengthNeverScrub() {
         assertEquals(PlayerUi.Controls, PlayerUi.Hidden.onKey(PlayerUi.Key.LEFT, 0, 0, 0, true, false).state)
     }
+
+    @Test fun a_stream_can_seek_forward_only_into_what_has_downloaded() {
+        val hour = 3_600_000L
+        // A quarter downloaded: up to 15 min less the larger of 15 s and 3 % (108 s).
+        assertEquals(hour / 4 - 108_000, PlayerMath.streamSeekLimit(hour, 0.25f, 30_000))
+        // The player's own buffer counts when it is further.
+        assertEquals(20 * 60_000L, PlayerMath.streamSeekLimit(hour, 0.25f, 20 * 60_000L))
+        // Fully downloaded: anywhere.
+        assertEquals(hour, PlayerMath.streamSeekLimit(hour, 1f, 0))
+        // Nothing known from the server, or no duration: only the buffer.
+        assertEquals(40_000L, PlayerMath.streamSeekLimit(hour, null, 40_000))
+        assertEquals(40_000L, PlayerMath.streamSeekLimit(0, 0.5f, 40_000))
+    }
+
+    @Test fun clamping_never_blocks_going_back_and_never_moves_backwards() {
+        assertEquals(10_000L, PlayerMath.clampStreamSeek(10_000, 60_000, 30_000))   // back: always
+        assertEquals(50_000L, PlayerMath.clampStreamSeek(50_000, 40_000, 90_000))   // forward, inside: as asked
+        assertEquals(90_000L, PlayerMath.clampStreamSeek(600_000, 40_000, 90_000))  // too far: held at the limit
+        assertEquals(40_000L, PlayerMath.clampStreamSeek(600_000, 40_000, 20_000))  // limit behind us: stay put
+    }
 }

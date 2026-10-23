@@ -129,6 +129,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.example.tvlauncher.ui.Perf.init(this)
         bootMark("onCreate")
         bootMark("layout")
         setContentView(R.layout.activity_main)
@@ -379,6 +380,7 @@ class MainActivity : AppCompatActivity() {
         refreshApps()
         bootMark("refreshApps")
         collection.homeReturned()
+        if (::moviesPanel.isInitialized) moviesPanel.onResume()
         artModeOverlay.resume()
         if (!hasResumedOnce && accountsRepo.pickerBoot != bootCount() && accountsRepo.accounts().size > 1) {
             if (whoPicker.show()) accountsRepo.pickerBoot = bootCount()
@@ -434,6 +436,8 @@ class MainActivity : AppCompatActivity() {
         // Debug builds only: `am start ... --ez debug_cinema true` opens Movies directly, so screenshots for the UI
         // review never have to press their way across the home screen.
         if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 && intent.getBooleanExtra("debug_cinema", false)) {
+            // Debug builds only: an address that never answers, to time the page with Jellyfin unreachable. Not saved.
+            if (intent.hasExtra("debug_jellyfin_server")) com.example.tvlauncher.data.jellyfin.JellyfinClient.debugServer = intent.getStringExtra("debug_jellyfin_server")?.ifBlank { null }
             onNavTabSelected(NavTab.MOVIES)
             intent.getStringExtra("debug_cinema_dest")?.let { moviesPanel.debugGo(it) }
         }

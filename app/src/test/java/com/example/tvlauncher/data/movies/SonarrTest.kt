@@ -68,4 +68,25 @@ class SonarrTest {
         val c = JSONObject(SonarrApi.searchBody(listOf(5)))
         assertEquals("EpisodeSearch", c.getString("name")); assertEquals(5, c.getJSONArray("episodeIds").getInt(0))
     }
+
+    private val now = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US)
+        .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.parse("2026-10-22T12:00:00")!!.time
+
+    @Test fun episodes_not_yet_aired_are_monitored_but_never_searched_for() {
+        val eps = """[{"id":11,"seasonNumber":2,"episodeNumber":4,"airDateUtc":"2026-10-15T02:00:00Z"},
+                      {"id":12,"seasonNumber":2,"episodeNumber":5,"airDateUtc":"2026-12-21T02:00:00Z"},
+                      {"id":13,"seasonNumber":2,"episodeNumber":6}]"""
+        val plan = SonarrApi.requestPlan(eps, 2, listOf(4, 5, 6), now)
+        assertEquals(listOf(11, 12, 13), plan.monitor)
+        assertEquals(listOf(11), plan.search)                                        // only the one that is out
+        assertTrue(SonarrApi.requestPlan(eps, 2, listOf(5, 6), now).search.isEmpty())   // nothing to search: no command is sent
+    }
+
+    @Test fun reads_episodes_asked_for_ahead_from_the_calendar() {
+        val cal = """[{"id":40,"seasonNumber":2,"episodeNumber":5,"airDate":"2026-12-21","airDateUtc":"2026-12-21T02:00:00Z","monitored":true,"hasFile":false,"series":{"title":"The Pitt","tmdbId":2}},
+                      {"id":41,"seasonNumber":2,"episodeNumber":6,"airDate":"2026-12-28","airDateUtc":"2026-12-28T02:00:00Z","monitored":false,"hasFile":false,"series":{"title":"The Pitt","tmdbId":2}},
+                      {"id":42,"seasonNumber":2,"episodeNumber":3,"airDate":"2026-10-20","airDateUtc":"2026-10-20T02:00:00Z","monitored":true,"hasFile":false,"series":{"title":"The Pitt","tmdbId":2}}]"""
+        assertEquals(listOf(WantedEpisode(40, 2L, "The Pitt", 2, 5, "2026-12-21")), SonarrApi.upcomingEpisodes(cal, now))
+        assertTrue(SonarrApi.upcomingEpisodes("junk", now).isEmpty())
+    }
 }

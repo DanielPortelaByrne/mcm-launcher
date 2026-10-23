@@ -74,10 +74,11 @@ class CinemaButton(context: Context, kind: Kind, label: CharSequence, iconRes: I
     }
 
     override fun draw(canvas: Canvas) {
-        if (isFocused) {
-            haloBox.set(-haloWidth, -haloWidth, width + haloWidth, height + haloWidth)
-            val r = height / 2f + haloWidth
-            canvas.drawRoundRect(haloBox, r, r, halo)
+        if (isFocused && width > 0 && height > 0) {
+            // Painted once per size and colour (Glows), not blurred live every frame.
+            val hw = haloWidth.toInt()
+            val g = Glows.roundRect(width + 2 * hw, height + 2 * hw, height / 2f + hw, Cinema.pxf(context, 22), halo.color)
+            canvas.drawBitmap(g.bitmap, (-hw - g.pad).toFloat(), (-hw - g.pad).toFloat(), null)
         }
         super.draw(canvas)
     }

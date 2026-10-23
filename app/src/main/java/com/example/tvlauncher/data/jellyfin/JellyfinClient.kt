@@ -31,7 +31,7 @@ class JellyfinClient(context: Context) {
     private val deviceName: String = "${Build.MANUFACTURER} ${Build.MODEL}".trim()
 
     // A saved address from before the default moved to the Deck's name is treated as unset, so the new default applies.
-    val server: String get() = prefs.getString("server", null)?.takeIf { it != LEGACY_JELLYFIN_SERVER } ?: DEFAULT_JELLYFIN_SERVER
+    val server: String get() = debugServer ?: prefs.getString("server", null)?.takeIf { it != LEGACY_JELLYFIN_SERVER } ?: DEFAULT_JELLYFIN_SERVER
     val isConnected: Boolean get() = !prefs.getString("token", null).isNullOrBlank() && !prefs.getString("userId", null).isNullOrBlank()
     private val token: String? get() = prefs.getString("token", null)
     private val userId: String? get() = prefs.getString("userId", null)
@@ -87,16 +87,33 @@ class JellyfinClient(context: Context) {
     @Volatile private var library: List<JellyfinItem> = emptyList()
     @Volatile private var libraryAt = 0L
 
-    /** Every film and series, newest first, kept for a few minutes so flicking through picks costs one request, not many. */
-    @Synchronized fun library(force: Boolean = false): List<JellyfinItem> {   // one fetch at a time: several rows ask at once
+    private val libraryFlight = SingleFlight<List<JellyfinItem>>()
+
+    /** When the library was last fetched (0 = never). Lets a page tell whether badges need another look. */
+    val libraryLoadedAt: Long get() = libraryAt
+
+    /**
+     * Every film and series, newest first, kept for a few minutes so flicking through picks costs one request, not many.
+     * One fetch at a time: callers arriving while it runs share its answer, and no lock is held across the network.
+     */
+    fun library(force: Boolean = false): List<JellyfinItem> {
         val uid = userId ?: return emptyList()
         if (!force && libraryAt != 0L && System.currentTimeMillis() - libraryAt < LIBRARY_TTL_MS) return library
-        // The server was unreachable a moment ago: answer from what we have rather than making every row wait again.
-        if (!force && System.currentTimeMillis() - unreachableAt < UNREACHABLE_BACKOFF_MS) return library
-        val body = request("GET", JellyfinApi.libraryUrl(JellyfinApi.cleanBase(server), uid)) ?: return library
-        library = JellyfinApi.parseItems(body); libraryAt = System.currentTimeMillis()
-        return library
+        // The server was unreachable a moment ago: answer from what we have rather than making every caller wait again.
+        if (!force && reachability.backingOff) return library
+        return libraryFlight.run {
+            request("GET", JellyfinApi.libraryUrl(JellyfinApi.cleanBase(server), uid))?.let { body ->
+                library = JellyfinApi.parseItems(body); libraryAt = System.currentTimeMillis()
+            }
+            library
+        }
     }
+
+    /** The library as last fetched, without asking the server. */
+    fun loadedLibrary(): List<JellyfinItem> = library
+
+    /** Forgets when the library was fetched, so the next [library] call asks the server (after playback or a delete). */
+    fun invalidateLibrary() { libraryAt = 0L }
 
     fun movies(force: Boolean = false): List<JellyfinItem> = library(force).filter { it.isMovie }
 
@@ -104,7 +121,7 @@ class JellyfinClient(context: Context) {
      * Fetches the library from the server now, replaces the cached copy with it, and says whether it still holds [itemId].
      * Null when the server cannot be asked. Used after a delete, so the cache does not keep showing what was removed.
      */
-    @Synchronized fun stillInLibrary(itemId: String): Boolean? {
+    fun stillInLibrary(itemId: String): Boolean? {
         val uid = userId ?: return null
         val body = request("GET", JellyfinApi.libraryUrl(JellyfinApi.cleanBase(server), uid)) ?: return null
         library = JellyfinApi.parseItems(body); libraryAt = System.currentTimeMillis()
@@ -205,12 +222,17 @@ class JellyfinClient(context: Context) {
     /** An episode's still from the library. Load it with [playbackHeaders], like any other image from this server. */
     fun episodeImageUrl(id: String) = JellyfinApi.episodeImageUrl(JellyfinApi.cleanBase(server), id)
 
-    /** When a request last found the server unreachable. Rows then stop queuing up behind a server that is not there. */
-    @Volatile private var unreachableAt = 0L
+    /** When a request last found the server unreachable. Callers then stop queuing up behind a server that is not there. */
+    private val reachability = Reachability(UNREACHABLE_BACKOFF_MS)
 
-    private companion object {
-        const val LIBRARY_TTL_MS = 5 * 60_000L
-        const val UNREACHABLE_BACKOFF_MS = 30_000L
+    /** True for a short while after the server could not be reached. */
+    val backingOff: Boolean get() = reachability.backingOff
+
+    companion object {
+        /** Debug builds only: overrides the address for this process, to time the app with the server unreachable. */
+        @Volatile var debugServer: String? = null
+        private const val LIBRARY_TTL_MS = 5 * 60_000L
+        private const val UNREACHABLE_BACKOFF_MS = 30_000L
     }
 
     // --- Plumbing --------------------------------------------------------------------------------
@@ -220,33 +242,41 @@ class JellyfinClient(context: Context) {
      * refuses the connection or cannot be routed to will not answer a second try any sooner.
      */
     private fun request(method: String, url: String, authed: Boolean = true, json: String? = null): String? {
+        // Signed-in reads give up at once while the server is known to be unreachable (asleep, off the network).
+        if (method == "GET" && authed && reachability.backingOff) return null
         val first = requestOnce(method, url, authed, json)
-        if (first != null || lastFailureWasUnreachable) return first
-        return if (method == "GET" && (!authed || isConnected)) requestOnce(method, url, authed, json) else null
+        if (first.body != null || first.unreachable) return first.body
+        return if (method == "GET" && (!authed || isConnected)) requestOnce(method, url, authed, json).body else null
     }
 
-    /** Set when the last request failed to reach the server at all, rather than failing on the server's answer. */
-    @Volatile private var lastFailureWasUnreachable = false
+    /** [unreachable] when the request never reached the server, rather than failing on the server's answer. */
+    private class Outcome(val body: String?, val unreachable: Boolean = false)
 
-    private fun requestOnce(method: String, url: String, authed: Boolean, json: String?): String? = try {
-        val connection = URL(url).openConnection() as HttpURLConnection
-        connection.requestMethod = method
-        connection.connectTimeout = 6000
-        connection.readTimeout = 10000
-        connection.setRequestProperty("Authorization", JellyfinApi.authHeader(deviceId, deviceName, if (authed) token else null))
-        connection.setRequestProperty("Accept", "application/json")
-        if (json != null) { connection.doOutput = true; connection.setRequestProperty("Content-Type", "application/json") }
-        try {
-            if (json != null) connection.outputStream.use { it.write(json.toByteArray()) }
-            val code = connection.responseCode
-            if (code == 401 && authed) { Log.w(TAG, "Token rejected; signing out"); disconnect(); null }
-            else if (code !in 200..299) { Log.w(TAG, "$method ${url.substringBefore('?')} -> HTTP $code"); null }
-            else connection.inputStream.bufferedReader().use { it.readText() }
-        } finally { connection.disconnect() }
-    } catch (e: Exception) {
-        lastFailureWasUnreachable = e is java.net.ConnectException || e is java.net.NoRouteToHostException || e is java.net.UnknownHostException
-        if (lastFailureWasUnreachable) unreachableAt = System.currentTimeMillis()
-        Log.w(TAG, "$method ${url.substringBefore('?')} failed: ${e.javaClass.simpleName}")
-        null
+    private fun requestOnce(method: String, url: String, authed: Boolean, json: String?): Outcome {
+        var connected = false
+        return try {
+            val connection = URL(url).openConnection() as HttpURLConnection
+            connection.requestMethod = method
+            connection.connectTimeout = 6000
+            connection.readTimeout = 10000
+            connection.setRequestProperty("Authorization", JellyfinApi.authHeader(deviceId, deviceName, if (authed) token else null))
+            connection.setRequestProperty("Accept", "application/json")
+            if (json != null) { connection.doOutput = true; connection.setRequestProperty("Content-Type", "application/json") }
+            try {
+                // Connecting separately tells a server that never answers (asleep) from one that is only slow to reply.
+                connection.connect(); connected = true; reachability.reached()
+                if (json != null) connection.outputStream.use { it.write(json.toByteArray()) }
+                val code = connection.responseCode
+                Outcome(when {
+                    code == 401 && authed -> { Log.w(TAG, "Token rejected; signing out"); disconnect(); null }
+                    code !in 200..299 -> { Log.w(TAG, "$method ${url.substringBefore('?')} -> HTTP $code"); null }
+                    else -> connection.inputStream.bufferedReader().use { it.readText() }
+                })
+            } finally { connection.disconnect() }
+        } catch (e: Exception) {
+            val unreachable = reachability.failed(e, duringConnect = !connected)
+            Log.w(TAG, "$method ${url.substringBefore('?')} failed: ${e.javaClass.simpleName}" + if (unreachable) " (unreachable)" else "")
+            Outcome(null, unreachable)
+        }
     }
 }

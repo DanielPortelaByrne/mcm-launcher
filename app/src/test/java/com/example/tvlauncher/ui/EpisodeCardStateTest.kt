@@ -48,12 +48,36 @@ class EpisodeCardStateTest {
         assertEquals(CardState.DOWNLOADING, unknown.state); assertEquals("DOWNLOADING", unknown.badge); assertNull(unknown.progress)
     }
 
-    @Test fun a_future_episode_is_unaired_with_no_buttons() {
+    @Test fun a_future_episode_not_asked_for_can_be_requested_ahead_but_not_played() {
         val look = state(airDate = "2026-12-21")
-        assertEquals(CardState.UNAIRED, look.state); assertFalse(look.playShown); assertFalse(look.downloadShown)
+        assertEquals(CardState.UNAIRED, look.state); assertTrue(look.unaired); assertNull(look.badge)
+        assertFalse(look.playShown); assertTrue(look.downloadShown); assertTrue(look.downloadFocusable)
         assertEquals(CardState.REQUEST, state(airDate = today).state)   // airs today: it is out
         assertEquals(CardState.LIBRARY, state(inLibrary = true, airDate = "2027-01-01").state)
-        assertEquals(CardState.REQUEST, state(airDate = null).state)
+        // Without a way to request it, nothing on it can be pressed (the card itself takes focus).
+        val stuck = state(airDate = "2026-12-21", canRequest = false)
+        assertFalse(stuck.downloadShown); assertFalse(stuck.playShown)
+    }
+
+    @Test fun a_future_episode_already_asked_for_says_so_and_keeps_its_air_date() {
+        val look = state(airDate = "2026-12-21", sonarr = EpisodeState.REQUESTED)
+        assertEquals(CardState.UNAIRED_REQUESTED, look.state); assertTrue(look.unaired)
+        assertEquals("REQUESTED", look.badge); assertFalse(look.playShown); assertTrue(look.downloadFocusable)   // pressing offers to cancel
+        assertEquals("Airs 21 Dec 2026", EpisodeCards.airsLabel("2026-12-21"))
+    }
+
+    @Test fun an_aired_episode_asked_for_is_plainly_requested() {
+        val look = state(airDate = "2025-03-30", sonarr = EpisodeState.REQUESTED)
+        assertEquals(CardState.REQUESTED, look.state); assertFalse(look.unaired); assertTrue(look.playShown)
+    }
+
+    @Test fun no_air_date_is_airs_tba_and_can_be_asked_for() {
+        val look = state(airDate = null)
+        assertEquals(CardState.UNAIRED, look.state); assertTrue(look.downloadFocusable)
+        assertEquals("Airs TBA", EpisodeCards.airsLabel(null))
+        assertEquals("Get S2 E5 when it airs", EpisodeCards.preRequestTip(2, 5))
+        assertEquals("S2 E5 will download when it airs on 21 Dec", EpisodeCards.preRequestDone(2, 5, "2026-12-21"))
+        assertEquals("S2 E5 will download when it airs", EpisodeCards.preRequestDone(2, 5, null))
     }
 
     @Test fun dates_read_as_day_month_year() {

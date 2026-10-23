@@ -31,7 +31,6 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.extractor.DefaultExtractorsFactory
-import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 import androidx.media3.ui.PlayerView
 import androidx.media3.common.C
@@ -91,7 +90,6 @@ class PlayerActivity : AppCompatActivity() {
     private var episodeGeneration = 0
     private var foreground = false
     private val episodeLookup = java.util.concurrent.Executors.newSingleThreadExecutor()
-    private var episodeImages: RemoteImages? = null
     private val jellyfin by lazy { JellyfinClient(this) }
     private val cancelNext = object : OnBackPressedCallback(false) {
         override fun handleOnBackPressed() { cancelAutoplay() }
@@ -112,6 +110,8 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var history: PlaybackStore
     private lateinit var continueStore: ContinueWatching
     private var payload: String? = null
+    /** Restart was pressed: play from 0:00 and let neither the server's nor this TV's resume point move it. */
+    private var forcedStart = false
     private lateinit var network: NetworkEstimator
     private lateinit var bandwidth: DefaultBandwidthMeter
     private val resumePrefs by lazy { getSharedPreferences("resume_positions", MODE_PRIVATE) }
@@ -150,11 +150,13 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Perf.init(this); Perf.mark("player.create")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         items = parse(intent.getStringExtra(EXTRA_ITEMS))
         imdbId = intent.getStringExtra(EXTRA_IMDB)
         live = intent.getBooleanExtra(EXTRA_LIVE, false)
         jf = com.example.tvlauncher.data.jellyfin.JellyfinReport.fromJson(intent.getStringExtra(EXTRA_JF))
+        forcedStart = intent.getBooleanExtra(EXTRA_FROM_START, false)
         title =intent.getStringExtra(EXTRA_TITLE).orEmpty()
         art = intent.getStringExtra(EXTRA_ART)
         history = PlaybackStore(this)
@@ -234,18 +236,88 @@ class PlayerActivity : AppCompatActivity() {
         intent.getStringExtra(EXTRA_META)?.let { m -> runCatching { chrome?.setMeta(metaFrom(JSONObject(m))) } }
         val report = jf
         if (report == null) startAttempt(0) else {
+            // Start loading at once from what the library list already said (source and resume point), held paused; the
+            // item's details (chapters, trickplay, the server's latest resume point) are fetched alongside. Playback
+            // begins when they arrive, or after ITEM_WAIT_MS at most, so a slow answer never holds up the film.
+            startAttempt(0, play = false)
+            val release = Runnable { if (!isFinishing && !isDestroyed) player.playWhenReady = true }
+            handler.postDelayed(release, ITEM_WAIT_MS)
             val client = jellyfin
             reporter.execute {
                 val fresh = client.item(report.itemId)
                 handler.post {
                     if (isFinishing || isDestroyed) return@post
-                    jf = fresh?.let { report.copy(sourceId = it.sourceId, startMs = if (it.played) 0L else it.resumeMs) } ?: report
-                    fresh?.let { showItem(it) }
-                    startAttempt(0)
+                    if (fresh != null) applyFreshItem(report, fresh)
+                    handler.removeCallbacks(release); player.playWhenReady = true
                     prefetchNextEpisode(fresh)
                 }
             }
         }
+    }
+
+    /**
+     * The full item arrived after loading started from the list's copy. Another version of the file means starting
+     * again with it; a resume point that moved (watched elsewhere, or the list was a few minutes old) means a seek.
+     */
+    private fun applyFreshItem(report: com.example.tvlauncher.data.jellyfin.JellyfinReport, fresh: JellyfinItem) {
+        val start = if (fresh.played) 0L else fresh.resumeMs
+        val updated = report.copy(sourceId = fresh.sourceId, startMs = if (forcedStart) 0L else start)
+        jf = updated
+        itemAudioCodec = fresh.audioCodec
+        if (!started && index == 0 && fresh.audioCodec != null && fresh.audioCodec in stereoCodecs() && items.firstOrNull()?.label != STEREO_LABEL) {
+            // This TV could not play this soundtrack last time: go straight to the stereo copy instead of finding out again.
+            Perf.mark("player.stereoFirst ${fresh.audioCodec}")
+            if (fresh.sourceId != report.sourceId) {
+                val plan = JellyfinPlayback.prepare(jellyfin, fresh, title, imdbId ?: "jf:${fresh.id}")
+                items = parse(playbackIntent(this, plan.streams, plan.title, plan.resumeKey, updated).getStringExtra(EXTRA_ITEMS))
+            }
+            items = listOf(stereoItem(updated)) + items
+            startAttempt(0, play = false)
+        } else if (fresh.sourceId != report.sourceId) {
+            Perf.mark("player.sourceChanged")
+            val plan = JellyfinPlayback.prepare(jellyfin, fresh, title, imdbId ?: "jf:${fresh.id}")
+            items = parse(playbackIntent(this, plan.streams, plan.title, plan.resumeKey, updated).getStringExtra(EXTRA_ITEMS))
+            startAttempt(0, play = false)
+        } else if (!started && kotlin.math.abs(updated.startMs - report.startMs) > RESUME_DRIFT_MS) {
+            player.seekTo(updated.startMs)
+        }
+        showItem(fresh)
+    }
+
+    /** The audio codec of the library file playing, once its full item has arrived. */
+    private var itemAudioCodec: String? = null
+
+    /** Soundtrack codecs this TV has had to convert to stereo before. */
+    private fun stereoCodecs(): Set<String> = captionPrefs.getStringSet(STEREO_CODECS, null).orEmpty()
+
+    /** The library file with its soundtrack converted to stereo AAC and the picture untouched. */
+    private fun stereoItem(report: com.example.tvlauncher.data.jellyfin.JellyfinReport) = items[0].copy(
+        url = com.example.tvlauncher.data.jellyfin.JellyfinApi.stereoStreamUrl(report.base, report.itemId, report.sourceId, "mcm-stereo-${jfSession.id}"),
+        label = STEREO_LABEL)
+
+    /** How much of a stream's file the server has, 0..1, from its status; null before the first answer. */
+    @Volatile private var streamDownloaded: Float? = null
+
+    /**
+     * Every seek from the chrome. Media that cannot seek (a stream whose soundtrack is converted on the fly) would go
+     * back to the start, so the seek is refused with a word instead. A stream can only go forward as far as the server
+     * has downloaded (sequentially) or the player has buffered; further is held there, with a word.
+     */
+    private fun seekChecked(ms: Long) {
+        val from = player.currentPosition
+        if (!player.isCurrentMediaItemSeekable && ms != 0L) {
+            Toast.makeText(this, "Skipping isn't available for this stream", Toast.LENGTH_SHORT).show()
+            Perf.mark("player.seek refused (unseekable)")
+            return
+        }
+        val target = if (!streamOnly()) ms else {
+            val limit = com.example.tvlauncher.data.player.PlayerMath.streamSeekLimit(player.duration, streamDownloaded, player.bufferedPosition)
+            com.example.tvlauncher.data.player.PlayerMath.clampStreamSeek(ms, from, limit)
+        }
+        if (target != ms) Toast.makeText(this, "Not downloaded yet", Toast.LENGTH_SHORT).show()
+        if (target != from) player.seekTo(target)
+        Perf.mark("player.seek $from -> $ms (to $target, seekable=${player.isCurrentMediaItemSeekable})")
+        handler.postDelayed({ if (!isFinishing) Perf.mark("player.seek landed at ${player.currentPosition}") }, 3000)
     }
 
     private fun prefetchNextEpisode(current: JellyfinItem?) {
@@ -263,8 +335,7 @@ class PlayerActivity : AppCompatActivity() {
                 refreshNextHook()
                 autoplay.ready(next.id, SystemClock.elapsedRealtime())
                 nextCard.bind(next)
-                val images = episodeImages ?: RemoteImages(this).also { episodeImages = it }
-                images.load(jellyfin.imageUrl(next.id, 300), jellyfin.playbackHeaders(), maxWidth = 480) { bitmap ->
+                RemoteImages.shared(this).load(jellyfin.imageUrl(next.id, 300), jellyfin.playbackHeaders(), maxWidth = 480) { bitmap ->
                     if (generation == episodeGeneration) nextCard.artwork.setImageBitmap(bitmap)
                 }
                 showNextEpisode()
@@ -308,14 +379,14 @@ class PlayerActivity : AppCompatActivity() {
         items = parse(nextIntent.getStringExtra(EXTRA_ITEMS))
         imdbId = plan.resumeKey; title = plan.title; jf = plan.report
         payload = nextIntent.getStringExtra(EXTRA_PAYLOAD)
-        nextItem = null; nextPlan = null; autoplay = EpisodeAutoplay(); episodeGeneration++
+        nextItem = null; nextPlan = null; autoplay = EpisodeAutoplay(); episodeGeneration++; forcedStart = false
         startAttempt(0)
         prefetchNextEpisode(next)
     }
 
     // --- attempts ---------------------------------------------------------------------------------
 
-    private fun startAttempt(i: Int) {
+    private fun startAttempt(i: Int, play: Boolean = true) {
         index = i
         if (i == 0) audioFallbackQueued = false
         val item = items[i]
@@ -330,15 +401,16 @@ class PlayerActivity : AppCompatActivity() {
             .setConnectTimeoutMs(if (slow) 60_000 else 15_000).setReadTimeoutMs(if (slow) 60_000 else 15_000)
         // A Jellyfin title picks up where the server says the viewer left off; anything else, where this TV last did.
         val serverStart = jf?.startMs
-        val resume = com.example.tvlauncher.data.jellyfin.JellyfinApi.resumePosition(serverStart, resumePrefs.getLong(imdbId ?: "", 0L))
+        val resume = if (forcedStart) 0L else com.example.tvlauncher.data.jellyfin.JellyfinApi.resumePosition(serverStart, resumePrefs.getLong(imdbId ?: "", 0L))
         // Retry transient network errors more patiently for streams: a stalled torrent recovers far more often than it dies.
         val retries = if (slow) STREAM_LOAD_RETRIES else DEFAULT_LOAD_RETRIES
         player.setMediaSource(DefaultMediaSourceFactory(this, extractorsFor(item)).setDataSourceFactory(http)
             .setLoadErrorHandlingPolicy(DefaultLoadErrorHandlingPolicy(retries))
             .createMediaSource(MediaItem.fromUri(Uri.parse(item.url))), resume)
         prepareAt = SystemClock.elapsedRealtime()
+        Perf.mark("player.prepare")
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = play
         handler.removeCallbacks(startupTimeout)
         handler.postDelayed(startupTimeout, if (slow) ENGINE_STARTUP_TIMEOUT_MS else STARTUP_TIMEOUT_MS)
     }
@@ -361,12 +433,13 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     /**
-     * Most MKV files keep their seek index (Cues) at the very end. A torrent delivers that last, so waiting for it would
-     * delay playback until the download was nearly finished. A stream plays without it; seeking is then approximate.
+     * Streams keep the Matroska seek index (Cues). It usually sits at the end of the file, but the stream service adds
+     * torrents with first-and-last-piece priority, so it arrives within the first seconds. Without it (the old
+     * FLAG_DISABLE_SEEK_FOR_CUES) the file was unseekable, and Media3 turns every seek in unseekable media into a seek
+     * to the start: scrubbing and the 10 s buttons jumped back to 0:00.
      */
-    private fun extractorsFor(item: PlayItem): DefaultExtractorsFactory = DefaultExtractorsFactory().apply {
-        if (item.provider == STREAM_PROVIDER) setMatroskaExtractorFlags(MatroskaExtractor.FLAG_DISABLE_SEEK_FOR_CUES)
-    }
+    @Suppress("UNUSED_PARAMETER")
+    private fun extractorsFor(item: PlayItem): DefaultExtractorsFactory = DefaultExtractorsFactory()
 
     /** Streams from the home service never hand over to Stremio: the viewer asked for the film in this player. */
     private fun streamOnly(): Boolean = items.isNotEmpty() && items.all { it.provider == STREAM_PROVIDER }
@@ -411,15 +484,13 @@ class PlayerActivity : AppCompatActivity() {
             // A valid picture does not mean its soundtrack can play. For example, Chromecast HD
             // cannot decode AC-3/E-AC-3 when the connected TV only accepts stereo PCM.
             val report = jf ?: return
-            if (index != 0 || audioFallbackQueued || audio.isEmpty() || tracks.isTypeSelected(C.TRACK_TYPE_AUDIO)) return
+            if (index != 0 || audioFallbackQueued || audio.isEmpty() || tracks.isTypeSelected(C.TRACK_TYPE_AUDIO) || items[0].label == STEREO_LABEL) return
             audioFallbackQueued = true
+            // Remember the codec, so the next film with this soundtrack starts on the stereo copy straight away.
+            itemAudioCodec?.let { c -> captionPrefs.edit().putStringSet(STEREO_CODECS, stereoCodecs() + c).apply() }
             handler.post {
                 if (!foreground || releasingPlayer || isFinishing || isDestroyed || index != 0 || jf?.itemId != report.itemId) return@post
-                val stereo = items[0].copy(
-                    url = com.example.tvlauncher.data.jellyfin.JellyfinApi.stereoStreamUrl(
-                        report.base, report.itemId, report.sourceId, "mcm-stereo-${jfSession.id}"),
-                    label = "Stereo audio")
-                items = listOf(items[0], stereo) + items.drop(1)
+                items = listOf(items[0], stereoItem(report)) + items.drop(1)
                 fail("Soundtrack is unsupported; converting audio to stereo")
             }
         }
@@ -433,6 +504,7 @@ class PlayerActivity : AppCompatActivity() {
             startupMs = SystemClock.elapsedRealtime() - prepareAt
             handler.removeCallbacks(startupTimeout)
             Log.i(TAG, "First frame after ${startupMs} ms")
+            Perf.mark("player.firstFrame (prepare->frame ${startupMs} ms, seekable=${player.isCurrentMediaItemSeekable}, at ${player.currentPosition} ms)")
             reportToJellyfin("Playing")
         }
 
@@ -484,7 +556,7 @@ class PlayerActivity : AppCompatActivity() {
     private fun buildLoading(): View = com.example.tvlauncher.design.cinema.StreamLoadingView(this, title).also { v ->
         loadingScreen = v
         v.message("Connecting to the sources…")
-        art?.let { url -> com.example.tvlauncher.ui.RemoteImages(this).load(url, maxWidth = 1280) { v.backdrop(it) } }
+        art?.let { url -> RemoteImages.shared(this).load(url, maxWidth = 960) { v.backdrop(it) } }
     }
 
     private var loadingScreen: com.example.tvlauncher.design.cinema.StreamLoadingView? = null
@@ -495,7 +567,7 @@ class PlayerActivity : AppCompatActivity() {
     private var itemChapters: List<com.example.tvlauncher.data.player.Chapter> = emptyList()
     private var itemTrickplay: com.example.tvlauncher.data.player.Trickplay? = null
     private var itemSizeBytes: Long? = null
-    private val chromeImages by lazy { RemoteImages(this) }
+    private val chromeImages by lazy { RemoteImages.shared(this) }
     private val trickplaySheets = android.util.LruCache<Int, Bitmap>(4)
     private val bitrates = com.example.tvlauncher.data.player.BitrateHistory()
     @Volatile private var lastBitrate = 0L
@@ -508,6 +580,10 @@ class PlayerActivity : AppCompatActivity() {
     private val bandwidthListener = object : androidx.media3.exoplayer.analytics.AnalyticsListener {
         override fun onBandwidthEstimate(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, totalLoadTimeMs: Int, totalBytesLoaded: Long, bitrateEstimate: Long) {
             lastBitrate = bitrateEstimate
+        }
+        // Debug builds: where in the file each read starts, to see whether start-up waits on the seek index at the end.
+        override fun onLoadStarted(eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime, load: androidx.media3.exoplayer.source.LoadEventInfo, media: androidx.media3.exoplayer.source.MediaLoadData) {
+            if (!started) Perf.mark("player.load from byte ${load.dataSpec.position}")
         }
     }
 
@@ -524,20 +600,17 @@ class PlayerActivity : AppCompatActivity() {
         override fun run() {
             if (isFinishing) return
             val url = items.firstOrNull()?.url?.replace("/stream/", "/status/") ?: return
-            Thread {
-                val info = try {
-                    val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                    c.connectTimeout = 4000; c.readTimeout = 4000
-                    try { if (c.responseCode == 200) JSONObject(c.inputStream.bufferedReader().use { it.readText() }) else null } finally { c.disconnect() }
-                } catch (_: Exception) { null }
+            statusPoller.execute {
+                val info = fetchStatus(url)
                 runOnUiThread {
                     info?.let { i ->
                         streamSeeds = i.takeIf { it.has("seeds") }?.optInt("seeds"); streamPeers = i.takeIf { it.has("peers") }?.optInt("peers")
+                        i.takeIf { it.has("progress") }?.let { streamDownloaded = it.optDouble("progress").toFloat() }
                         streamSpeed = i.takeIf { it.has("speed") }?.optLong("speed"); i.takeIf { it.has("size") }?.optLong("size")?.takeIf { it > 0 }?.let { itemSizeBytes = it }
                     }
                     handler.postDelayed(this, 5000)
                 }
-            }.start()
+            }
         }
     }
 
@@ -578,7 +651,7 @@ class PlayerActivity : AppCompatActivity() {
         c.isPlaying = { player.playWhenReady }
         c.onPlay = { player.play() }
         c.onPause = { player.pause() }
-        c.onSeek = { ms -> player.seekTo(ms) }
+        c.onSeek = { ms -> seekChecked(ms) }
         c.onCaptions = { toggleCaptions() }
         c.onTracks = { type ->
             val label = when (type) { C.TRACK_TYPE_AUDIO -> "Audio"; C.TRACK_TYPE_VIDEO -> "Quality"; else -> "Subtitles" }
@@ -593,7 +666,7 @@ class PlayerActivity : AppCompatActivity() {
                 pos - now.startMs > 5000 -> now.startMs
                 else -> itemChapters.getOrNull(now.index - 1)?.startMs ?: 0L
             }
-            player.seekTo(target)
+            seekChecked(target)
         }
         c.onNext = { nextTarget()?.invoke() }
         c.captureFrame = { done -> captureFrame(done) }
@@ -672,17 +745,27 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     /** Asks the home server where the film is, once a second, until the first frame is on screen. */
+    /** One thread for the stream service's /status polls (every second while loading, every five while playing). */
+    private val statusPoller = java.util.concurrent.Executors.newSingleThreadExecutor()   // its thread starts on first use
+
+    /**
+     * One /status answer, or null. The body is read to the end and the stream closed rather than the connection
+     * dropped, so the next poll reuses the same keep-alive connection instead of opening a new one.
+     */
+    private fun fetchStatus(url: String): JSONObject? = try {
+        val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+        c.connectTimeout = 4000; c.readTimeout = 4000
+        if (c.responseCode == 200) JSONObject(c.inputStream.bufferedReader().use { it.readText() })
+        else { c.errorStream?.use { it.readBytes() }; null }
+    } catch (_: Exception) { null }
+
     private fun pollStatus() {
         if (started || isFinishing || !streamOnly()) return
         val url = items.firstOrNull()?.url?.replace("/stream/", "/status/") ?: return
-        Thread {
-            val info = try {
-                val c = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                c.connectTimeout = 4000; c.readTimeout = 4000
-                try { if (c.responseCode == 200) JSONObject(c.inputStream.bufferedReader().use { it.readText() }) else null } finally { c.disconnect() }
-            } catch (_: Exception) { null }
+        statusPoller.execute {
+            val info = fetchStatus(url)
             runOnUiThread { applyStatus(info) }
-        }.start()
+        }
     }
 
     private fun applyStatus(info: JSONObject?) {
@@ -694,6 +777,7 @@ class PlayerActivity : AppCompatActivity() {
         // `speed` and `size` come from newer stream services only; without them the chips show a dash.
         val speed = info?.takeIf { it.has("speed") }?.optLong("speed")
         val progress = info?.takeIf { it.has("progress") }?.optDouble("progress")?.toFloat()
+        progress?.let { streamDownloaded = it }
         if (phase == "failed") {
             screen?.message("Couldn't start this film. Try again in a minute.")
             handler.postDelayed({ if (!isFinishing) finish() }, 3500)
@@ -875,8 +959,7 @@ class PlayerActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         episodeGeneration++
-        episodeLookup.shutdownNow()
-        episodeImages?.close()
+        episodeLookup.shutdownNow(); statusPoller.shutdownNow()
         if (chrome != null) chromeImages.close()
         handler.removeCallbacksAndMessages(null)
         if (::player.isInitialized) {
@@ -907,15 +990,23 @@ class PlayerActivity : AppCompatActivity() {
         private const val EXTRA_LIVE = "live"
         private const val EXTRA_ART = "art"
         private const val EXTRA_JF = "jf"
+        private const val EXTRA_FROM_START = "fromStart"
         /** The film's details for the chrome (year, genres, runtime, certificate, rating, overview), as JSON. */
         private const val EXTRA_META = "meta"
         private const val STARTUP_TIMEOUT_MS = 25_000L
+        /** How long a library film waits, paused and loading, for its full item before playing anyway. */
+        private const val ITEM_WAIT_MS = 1_500L
+        private const val STEREO_LABEL = "Stereo audio"
+        private const val STEREO_CODECS = "stereo_codecs"
+        /** A fresher resume point further than this from the list's one is worth a seek before playback starts. */
+        private const val RESUME_DRIFT_MS = 5_000L
         /** A torrent has to find peers and buffer first. */
         private const val ENGINE_STARTUP_TIMEOUT_MS = 75_000L
 
         /** Starts playback of [ranked] in order, capped at three attempts. */
-        fun launch(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?, report: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null, artUrl: String? = null, meta: PlayerMeta? = null) {
-            context.startActivity(playbackIntent(context, ranked, title, imdbId, report).putExtra(EXTRA_ART, artUrl).putExtra(EXTRA_META, meta?.let { metaJson(it) }))
+        fun launch(context: Activity, ranked: List<RankedStream>, title: String, imdbId: String?, report: com.example.tvlauncher.data.jellyfin.JellyfinReport? = null, artUrl: String? = null, meta: PlayerMeta? = null, fromStart: Boolean = false) {
+            context.startActivity(playbackIntent(context, ranked, title, imdbId, report).putExtra(EXTRA_ART, artUrl).putExtra(EXTRA_META, meta?.let { metaJson(it) })
+                .putExtra(EXTRA_FROM_START, fromStart))
         }
 
         private fun metaJson(m: PlayerMeta): String = JSONObject().put("title", m.title).put("year", m.year ?: 0)

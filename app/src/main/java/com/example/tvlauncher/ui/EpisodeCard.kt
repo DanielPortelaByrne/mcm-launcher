@@ -51,8 +51,9 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
     private val badgeText = Cinema.text(context, "", 13, Cinema.SAFFRON, weight = 700, tracking = 0.14f).apply { maxLines = 1 }
     private val actions = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; clipChildren = false; clipToPadding = false }
     private val airs = Cinema.text(context, "", 18, Cinema.CREAM, weight = 600, tracking = 0.12f, caps = true).apply { visibility = GONE }
-    private val track = View(context).apply { setBackgroundColor(Cinema.alpha(Cinema.CREAM, 0.2f)); visibility = GONE }
-    private val fill = View(context).apply { background = StripeDrawable(horizontalBands = true, radius = 0f); visibility = GONE }
+    // Watch progress along the still's foot, saffron over a dark track like the Continue row.
+    private val track = View(context).apply { setBackgroundColor(0x66000000); visibility = GONE }
+    private val fill = View(context).apply { setBackgroundColor(Cinema.SAFFRON); visibility = GONE }
     private val texts = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val title = Cinema.text(context, name, 23, Cinema.CARD_TITLE, weight = 500).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
     private val meta = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -76,6 +77,8 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
     private val box = RectF()
     private var lit = false
     private var unaired = false
+    /** Unaired with nothing to press: the card itself takes focus. */
+    private var cardStop = false
 
     init {
         clipChildren = false; clipToPadding = false; setWillNotDraw(false)
@@ -105,8 +108,8 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         still.addView(actions, LayoutParams(-1, -1))
         airs.setPadding(p(18), p(10), p(18), p(10)); airs.background = Cinema.glass(context, 22f, 0xA80C0806.toInt())
         still.addView(airs, LayoutParams(-2, -2, Gravity.CENTER))
-        still.addView(track, LayoutParams(-1, p(7), Gravity.BOTTOM))
-        still.addView(fill, LayoutParams(0, p(7), Gravity.BOTTOM or Gravity.START))
+        still.addView(track, LayoutParams(-1, p(6), Gravity.BOTTOM))
+        still.addView(fill, LayoutParams(0, p(6), Gravity.BOTTOM or Gravity.START))
         column.addView(still, LinearLayout.LayoutParams(stillW, stillH))
 
         texts.addView(title, LinearLayout.LayoutParams(stillW, -2))
@@ -122,8 +125,17 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         buildPlaceholder()
     }
 
+    /** Watched all the way through: the Play disc shows a tick instead (it still plays the episode again). */
+    var watched = false
+        set(value) { field = value; showPlayIcon() }
+
+    private fun showPlayIcon() {
+        if (watched) play.set(R.drawable.ic_cin_check, Cinema.SAFFRON, ring = false, progress = null) else play.set(R.drawable.ic_cin_play, Cinema.CREAM, ring = false, progress = null)
+        play.contentDescription = if (watched) "Watched. Play episode $number again" else "Play episode $number"
+    }
+
     /** Every focus stop on the card, left to right. */
-    val focusStops: List<View> get() = if (unaired) listOf(this) else listOfNotNull(
+    val focusStops: List<View> get() = if (cardStop) listOf(this) else listOfNotNull(
         play.takeIf { it.visibility == VISIBLE && it.isFocusable }, download.takeIf { it.visibility == VISIBLE && it.isFocusable })
 
     /** Where Down from the season bar lands. */
@@ -131,8 +143,9 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
 
     /** Shows [look]: the badge, the discs, and for an unaired episode the greyed still and [airsLabel]. */
     fun bind(look: CardLook, airsLabel: String?) {
-        unaired = look.state == CardState.UNAIRED
-        isFocusable = unaired; isClickable = unaired
+        unaired = look.unaired
+        cardStop = unaired && !look.downloadFocusable && !look.playShown
+        isFocusable = cardStop; isClickable = cardStop
         badge.visibility = if (look.badge != null) VISIBLE else GONE
         badgeText.text = look.badge.orEmpty()
         val accent = if (look.badgeAccent) Cinema.SAFFRON else Cinema.MUTED
@@ -143,7 +156,7 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
             setStroke(Math.max(1, p(1)), if (look.badgeAccent) Cinema.alpha(Cinema.SAFFRON, 0.5f) else Cinema.alpha(Cinema.CREAM, 0.2f))
         }
 
-        actions.visibility = if (unaired) GONE else VISIBLE
+        actions.visibility = if (cardStop) GONE else VISIBLE
         play.visibility = if (look.playShown) VISIBLE else GONE
         play.isFocusable = look.playShown
         download.visibility = if (look.downloadShown) VISIBLE else GONE
@@ -151,19 +164,27 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         download.isClickable = look.downloadFocusable
         when (look.state) {
             CardState.LIBRARY -> download.set(R.drawable.ic_cin_check, Cinema.SAFFRON, ring = false, progress = null, alpha = 0.9f)
-            CardState.REQUESTED -> download.set(R.drawable.ic_cin_clock, Cinema.SAFFRON, ring = false, progress = null)
+            CardState.REQUESTED, CardState.UNAIRED_REQUESTED -> download.set(R.drawable.ic_cin_clock, Cinema.SAFFRON, ring = false, progress = null)
             CardState.DOWNLOADING -> download.set(R.drawable.ic_cin_dl, Cinema.SAFFRON, ring = true, progress = look.progress, iconMock = 26)
             else -> download.set(R.drawable.ic_cin_dl, Cinema.CREAM, ring = false, progress = null)
         }
-        play.contentDescription = "Play episode $number"
+        showPlayIcon()
         download.contentDescription = when (look.state) {
             CardState.LIBRARY -> "In your library"
             CardState.REQUESTED -> "Requested"
+            CardState.UNAIRED_REQUESTED -> "Requested. Downloads when it airs"
+            CardState.UNAIRED -> "Download episode $number when it airs"
             CardState.DOWNLOADING -> look.badge?.lowercase() ?: "Downloading"
             else -> "Download episode $number"
         }
 
         airs.visibility = if (unaired && airsLabel != null) VISIBLE else GONE
+        // With a disc to press, the label moves to the still's foot so the two do not overlap; alone, it stays centred.
+        (airs.layoutParams as LayoutParams).let { lp ->
+            lp.gravity = if (cardStop) Gravity.CENTER else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            lp.bottomMargin = if (cardStop) 0 else p(16)
+            airs.layoutParams = lp
+        }
         airs.text = airsLabel?.let { "Airs $it" }.orEmpty()
         val filter = if (unaired) ColorMatrixColorFilter(ColorMatrix().apply {
             setSaturation(0.15f); postConcat(ColorMatrix().apply { setScale(0.55f, 0.55f, 0.55f, 1f) })
@@ -188,7 +209,7 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
         val on = fraction != null && fraction > 0f
         track.visibility = if (on) VISIBLE else GONE
         fill.visibility = if (on) VISIBLE else GONE
-        if (on) (fill.layoutParams as LayoutParams).width = (stillW * fraction!!.coerceIn(0f, 1f)).toInt().coerceAtLeast(p(7))
+        if (on) (fill.layoutParams as LayoutParams).width = (stillW * fraction!!.coerceIn(0f, 1f)).toInt().coerceAtLeast(p(6))
         fill.requestLayout()
     }
 
@@ -257,7 +278,14 @@ class EpisodeCard(context: Context, val number: Int, name: String, overview: Str
             val hw = still.width * s / 2f; val hh = still.height * s / 2f
             val r = radius * s
             box.set(cx - hw, cy - hh, cx + hw, cy + hh)
-            if (android.os.Build.VERSION.SDK_INT >= 28) canvas.drawRoundRect(box, r, r, glow)
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                // The bloom is painted once at the still's resting size (Glows) and scaled with it, not blurred live.
+                val g = com.example.tvlauncher.design.cinema.Glows.roundRect(still.width, still.height, radius, pf(45), glow.color)
+                val save = canvas.save()
+                canvas.scale(s, s, cx, cy)
+                canvas.drawBitmap(g.bitmap, cx - still.width / 2f - g.pad, cy - still.height / 2f - g.pad, null)
+                canvas.restoreToCount(save)
+            }
             // 4 px cream, then 5 px of saffron at 28% beyond it (`box-shadow: 0 0 0 4px cream, 0 0 0 9px`).
             ringPaint.color = Cinema.alpha(Cinema.SAFFRON, 0.28f); ringPaint.strokeWidth = pf(5)
             val o2 = pf(4) + pf(5) / 2f
@@ -315,8 +343,11 @@ class ActionDisc(context: Context, private val discMock: Int, iconRes: Int, priv
         val r = Cinema.pxf(context, discMock / 2f)
         val focused = isFocused
         if (android.os.Build.VERSION.SDK_INT >= 28) {
-            shadow.color = Cinema.alpha(0xFF000000.toInt(), if (focused) 0.6f else 0.4f)
-            canvas.drawCircle(cx, cy + Cinema.pxf(context, if (focused) 12 else 6), r + Cinema.pxf(context, if (focused) 16 else 2), shadow)
+            // The disc's drop shadow, painted once per size (Glows) instead of blurred live for every disc every frame.
+            val sr = r + Cinema.pxf(context, if (focused) 16 else 2)
+            val d = (2 * sr).toInt()
+            val g = com.example.tvlauncher.design.cinema.Glows.roundRect(d, d, sr, Cinema.pxf(context, 18), Cinema.alpha(0xFF000000.toInt(), if (focused) 0.6f else 0.4f))
+            canvas.drawBitmap(g.bitmap, cx - d / 2f - g.pad, cy + Cinema.pxf(context, if (focused) 12 else 6) - d / 2f - g.pad, null)
         }
         if (focused) {
             // Outermost first: red, terracotta, orange, saffron, five mockup pixels each, then the cream disc.

@@ -126,17 +126,35 @@ class MoviesPanel(
     }
 
     /** A poster on the page: the title, and the library copy of it when there is one. */
-    private class Entry(val title: Title, val library: JellyfinItem?, val posterHeaders: Map<String, String>)
+    private class Entry(val title: Title, var library: JellyfinItem?, val posterHeaders: Map<String, String>)
 
     /** A heading with its scrolling row. Hidden when the row turns out to be empty. */
     private class Row(val heading: View?, val scroller: View, val inner: LinearLayout) {
+        /** Posters not loaded yet because they sit far along the row; loaded as the row scrolls towards them. */
+        val deferred = ArrayList<Pair<View, () -> Unit>>()
+
+        /** Loads the deferred posters within one and a half screens of what the row shows. */
+        fun loadNear() {
+            if (deferred.isEmpty()) return
+            val limit = scroller.scrollX + scroller.width * 3 / 2
+            val due = deferred.filter { (v, _) -> v.left < limit || scroller.width == 0 }
+            deferred.removeAll(due.toSet()); due.forEach { it.second() }
+        }
+
         fun hide() { heading?.visibility = View.GONE; scroller.visibility = View.GONE }
         /** Shows how many titles the row holds beside its heading ("History films  9"). */
         fun setCount(n: Int) { (heading?.findViewWithTag<TextView>(Cinema.COUNT_TAG))?.let { it.text = "$n"; it.visibility = View.VISIBLE } }
     }
 
+    /** Short calls: library, storage, title states, requests. */
     private val worker = Executors.newFixedThreadPool(3)
-    private val images = RemoteImages(activity)
+    /** Catalogue shelves and search: never queued behind a slow Jellyfin or a stream start. */
+    private val shelfPool = Executors.newFixedThreadPool(3)
+    /** Calls that can take a minute or more (a stream start, the Downloads refresh, deletes): each gets its own thread. */
+    private val slowPool = Executors.newCachedThreadPool()
+    private val images = RemoteImages.shared(activity)
+    /** Groups this page's picture requests, so a rebuilt page drops the ones the old page still had queued. */
+    private var pageTag = Any()
     private val catalog = CatalogRepository(activity)
     private val ui = Handler(Looper.getMainLooper())
     private var generation = 0
@@ -150,6 +168,15 @@ class MoviesPanel(
     private var navigationFocusListener: android.view.ViewTreeObserver.OnGlobalFocusChangeListener? = null
     private var topBuilt = false
     private var searchPending: Runnable? = null
+
+    init {
+        // A few seconds after the launcher starts, read Home's first shelves into memory (from disk; the network only
+        // when there is no copy yet), so the first open of Movies does not pay for reading and parsing them.
+        ui.postDelayed({
+            shelfPool.execute { Catalog.homePage().take(PREWARM_SHELVES).forEach { catalog.shelf(it) } }
+            if (jellyfin.isConnected) worker.execute { jellyfin.library() }
+        }, PREWARM_DELAY_MS)
+    }
 
     private lateinit var storageView: TextView
     private lateinit var heroTitle: TextView
@@ -185,18 +212,72 @@ class MoviesPanel(
     private val pageEnd: Int get() = Cinema.px(activity, 96)
 
     fun show() {
+        Perf.mark("movies.show")
+        Perf.begin("movies.open->firstRow"); Perf.begin("movies.open->firstPoster"); Perf.begin("movies.open->hero")
         overlay.visibility = View.VISIBLE
         showAmbient()
         com.example.tvlauncher.design.Motion.enter(overlay, null, 0f)
         if (!topBuilt) { buildTop(); topBuilt = true }
+        val reuse = current === Dest.Home && trail.isEmpty() && content.childCount > 0 && heroSet &&
+            Perf.now() - builtAt < REUSE_MS && jellyfin.isConnected == builtConnected
         trail.clear(); current = Dest.Home
-        styleTabs(); build(); loadStorage()
+        styleTabs()
+        if (reuse) reopen() else build()
+        loadStorage()
     }
 
-    fun hide() { if (voiceActive) voice?.cancel(); closeStreamLoading(); closeDetail(restoreFocus = false); overlay.visibility = View.GONE; generation++; ui.removeCallbacks(heroTick) }
+    /** The Home page as it was left, back at the top with the featured title focused; nothing is rebuilt or refetched. */
+    private fun reopen() {
+        page.scrollTo(0, 0)
+        (0 until content.childCount).map { content.getChildAt(it) }.forEach { row -> (row as? android.widget.HorizontalScrollView)?.scrollTo(0, 0) }
+        lastContentFocus = null
+        heroButtons.getChildAt(0)?.let { requestFocusRobust(overlay as ViewGroup, it) }
+        ui.removeCallbacks(heroTick)
+        if (heroEntries.size > 1) ui.postDelayed(heroTick, HERO_TURN_MS)
+        frost?.post { frost?.refresh(500); updateEdgeFade() }
+        page.post { fillNear() }
+        Perf.end("movies.open->firstRow", "reused"); Perf.end("movies.open->firstPoster", "reused"); Perf.end("movies.open->hero", "reused")
+        // Badges may have changed while the page was away (a download finished).
+        if (jellyfin.isConnected) worker.execute { jellyfin.library(); ui.post { rebadge(generation) } }
+    }
+
+    /** When the current page was built, and whether Jellyfin was signed in then; a reopen within [REUSE_MS] keeps it. */
+    private var builtAt = 0L
+    private var builtConnected = false
+
+    fun hide() {
+        if (voiceActive) voice?.cancel(); closeStreamLoading(); closeDetail(restoreFocus = false); overlay.visibility = View.GONE; ui.removeCallbacks(heroTick)
+        // Home is kept for a quick reopen, so its rows keep loading; any other page is dropped.
+        if (current !== Dest.Home || trail.isNotEmpty()) { generation++; builtAt = 0L }
+    }
     fun close() {
         navigationFocusListener?.let { if (top.viewTreeObserver.isAlive) top.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
-        worker.shutdownNow(); images.close()
+        worker.shutdownNow(); shelfPool.shutdownNow(); slowPool.shutdownNow(); infoPool.shutdownNow(); images.close()
+    }
+
+    /**
+     * The launcher is back in front. After playing something from the library, ask Jellyfin where the viewer got to (a
+     * moment later, so the player's last report has landed) and redo the buttons that depend on it: the title page's
+     * Continue / Restart, the featured title's, and a series' episode cards (by reopening its page).
+     */
+    fun onResume() {
+        if (!playbackStarted || !isVisible || !jellyfin.isConnected) return
+        playbackStarted = false
+        val gen = generation
+        ui.postDelayed({
+            worker.execute {
+                val items = jellyfin.library(force = true)
+                ui.post { if (isVisible) refreshWatchState(gen, items) }
+            }
+        }, RETURN_REFRESH_DELAY_MS)
+    }
+
+    private fun refreshWatchState(gen: Int, items: List<JellyfinItem>) {
+        val byId = items.associateBy { it.id }
+        fun renew(e: Entry) { e.library?.let { old -> byId[old.id]?.let { e.library = it } } }
+        heroEntries.forEach(::renew)
+        detailEntry?.let { e -> renew(e); detailButtons?.invoke() }
+        if (gen == generation && heroSet) showHero(heroIndex)
     }
 
     /** Back closes a title's page, then steps back through where the viewer has been, then lets the panel close. */
@@ -220,7 +301,7 @@ class MoviesPanel(
                 activity.runOnUiThread {
                     val screen = StreamLoadingView(activity, e.title.name)
                     (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1)); streamLoading = screen
-                    e.title.backdropUrl?.let { u -> images.load(u, maxWidth = 1280) { b -> screen.backdrop(b) } }
+                    e.title.backdropUrl?.let { u -> images.load(u, maxWidth = LOADING_BACKDROP_PX) { b -> screen.backdrop(b) } }
                 }
             }
             return
@@ -234,12 +315,17 @@ class MoviesPanel(
             }
             return
         }
-        // "detail-library" / "detail-film": a title page for a library film, or a film not in the library.
+        // "detail-library" / "detail-film": a title page for a library film, or a film not in the library;
+        // "detail-film-3" skips to the fourth such film (a stream test that should not reuse a warm torrent).
         if (name.startsWith("detail-")) {
             go(Dest.Films)
             worker.execute {
-                val related: List<Entry> = if (name == "detail-library") libraryEntries(jellyfin.library().filter { !it.isSeries })
-                    else catalog.shelf(Catalog.filmsPage().first()).titles.map { entry(it) }.filter { it.library == null }
+                if (jellyfin.isConnected) jellyfin.library()   // so "not in the library" is really known
+                val skip = name.removePrefix("detail-film-").toIntOrNull() ?: 0
+                // "detail-library-series": the newest series in the library (its episode cards).
+                val related: List<Entry> = if (name.startsWith("detail-library")) libraryEntries(jellyfin.library().filter { it.isSeries == name.startsWith("detail-library-series") })
+                    .drop(name.removePrefix("detail-library-series-").toIntOrNull() ?: 0)
+                    else catalog.shelf(Catalog.filmsPage().first()).titles.filter { it.kind == Kind.MOVIE }.map { entry(it) }.filter { it.library == null }.drop(skip)
                 // What the player would get for the first few library films (chapters, trickplay), without playing anything.
                 if (name == "detail-library") related.take(5).mapNotNull { it.library }.forEach { lib ->
                     val full = jellyfin.item(lib.id)
@@ -467,7 +553,15 @@ class MoviesPanel(
 
     // --- Building a page ---------------------------------------------------------------------------
 
+    /**
+     * The featured title and title pages draw their backdrop at half resolution (about 615 px across), so JustWatch's
+     * 640-wide copy is enough: a fifth of the bytes of the 1440 one and the same picture at that size.
+     */
+    private fun halfBackdrop(url: String) = url.replace("/s1440/", "/s640/")
+
     private fun build() {
+        val buildStart = Perf.now()
+        images.cancel(pageTag); pageTag = Any()
         val gen = ++generation
         searchPending?.let { ui.removeCallbacks(it) }
         ui.removeCallbacks(heroTick)
@@ -479,7 +573,9 @@ class MoviesPanel(
         content.setPadding(0, if (opensOnHero || current === Dest.Search) 0 else Cinema.px(activity, 52), 0, dp(48))
         if (current !== Dest.Search) { if (voiceActive) voice?.cancel(); searchUi = null }
         frost?.post { frost?.refresh(500); updateEdgeFade() }
-        jellyfin.takeIf { it.isConnected }?.let { j -> worker.execute { j.library() } }   // so poster badges are ready without waiting
+        builtAt = Perf.now(); builtConnected = jellyfin.isConnected; awaitingLibrary.clear()
+        // Rows never wait for the library: they draw from the catalogue at once, and this one fetch badges them when it lands.
+        jellyfin.takeIf { it.isConnected }?.let { j -> worker.execute { j.library(); ui.post { rebadge(gen) } } }
         when (val d = current) {
             Dest.Home -> { buildHero(); libraryRow(gen, "My library", 18); serviceTiles(); genreTiles(); shelves(Catalog.homePage(), gen) }
             Dest.Films -> { buildHero(); shelves(Catalog.filmsPage(), gen) }
@@ -491,6 +587,7 @@ class MoviesPanel(
             is Dest.OnService -> { pageTitle("On ${d.service.label}"); buildHero(); shelves(Catalog.servicePage(d.service), gen) }
             is Dest.InGenre -> { pageTitle(d.genre.label); buildHero(); shelves(Catalog.genrePage(d.genre), gen) }
         }
+        Perf.took("movies.build (main thread)", Perf.now() - buildStart)
     }
 
     private fun pageTitle(text: String) {
@@ -515,39 +612,62 @@ class MoviesPanel(
     private fun shelves(specs: List<ShelfSpec>, gen: Int) {
         // Every row gets its place on the page now, with room reserved so the page does not jump; its titles are fetched
         // and drawn only when it is about to be seen, which is what keeps opening the page quick.
-        specs.forEach { spec ->
+        specs.forEachIndexed { i, spec ->
             val row = row(spec.heading, null)
             // Room for the row before it loads, so the page does not jump: a poster row, or a shorter Top 10 row.
             row.inner.minimumHeight = Cinema.px(activity, if (spec.ranked) 368 else 488)
-            pending += Lazy(row) { loadShelf(spec, row, gen) }
+            // The first rows are always near the top: fetch them now rather than after the page's first layout (a second
+            // or more on a cold start), so they are ready the moment the main thread is free to draw them.
+            if (i < EAGER_SHELVES) loadShelf(spec, row, gen) else pending += Lazy(row) { loadShelf(spec, row, gen) }
         }
         page.post { fillNear() }
     }
 
     private fun loadShelf(spec: ShelfSpec, row: Row, gen: Int) {
-        worker.execute {
-            if (jellyfin.isConnected) jellyfin.library()   // loaded once, then every row can badge what you already own
+        val queuedAt = Perf.now()
+        Perf.mark("shelf '${spec.heading}' queued")
+        shelfPool.execute {
+            val startAt = Perf.now()
+            val libraryAt = Perf.now()
             // A Top 10 row is exactly that: ten numbered posters, nothing after them.
             val entries = catalog.shelf(spec).titles.take(if (spec.ranked) 10 else SHELF_LIMIT).map { entry(it) }
+            val catalogAt = Perf.now()
             activity.runOnUiThread {
                 if (gen != generation) return@runOnUiThread
+                val uiAt = Perf.now()
+                Perf.took("shelf '${spec.heading}' queued", startAt - queuedAt); Perf.took("shelf '${spec.heading}' library", libraryAt - startAt)
+                Perf.took("shelf '${spec.heading}' catalog", catalogAt - libraryAt)
+                if (entries.isNotEmpty()) Perf.end("movies.open->firstRow", spec.heading)
                 if (entries.isEmpty()) { row.hide(); return@runOnUiThread }
                 val related = entries.map { it.title }
-                entries.forEachIndexed { i, e ->
-                    val ranked = spec.ranked && i < 10
-                    row.inner.addView(if (ranked) rankCard(i + 1, e, related) else card(e, related), cardParams(i, wide = ranked))
-                }
                 row.setCount(entries.size)
                 if (!heroSet) {
                     val featured = entries.withIndex().filter { it.value.title.backdropUrl != null }.take(3)
                     setHero(featured.map { it.value }, related, featured.map { rankLabel(spec.heading, spec.ranked, it.index) })
                 }
-                page.post { fillNear() }
+                // A few cards a frame, not sixteen in one go (each is a small tree of views): the page keeps moving while a
+                // row fills. Posters further along than the screen wait until the row scrolls near them.
+                fun addFrom(from: Int) {
+                    if (gen != generation) return
+                    val to = minOf(from + CARDS_PER_FRAME, entries.size)
+                    for (i in from until to) {
+                        val e = entries[i]
+                        val ranked = spec.ranked && i < 10
+                        val defer = if (i >= EAGER_POSTERS) row else null
+                        row.inner.addView(if (ranked) rankCard(i + 1, e, related, defer) else card(e, related, defer = defer), cardParams(i, wide = ranked))
+                    }
+                    if (to < entries.size) android.view.Choreographer.getInstance().postFrameCallback { addFrom(to) }
+                    else { Perf.took("shelf '${spec.heading}' ui add ${entries.size} (spread)", Perf.now() - uiAt); row.scroller.post { row.loadNear() }; page.post { fillNear() } }
+                }
+                addFrom(0)
             }
         }
     }
 
-    /** Never waits for the network: it only looks at the library already loaded, so it is safe to call while drawing. */
+    /**
+     * Never waits for the network: it only looks at the library already loaded, so it is safe to call while drawing.
+     * A title the library has not been checked for yet is badged later by [rebadge].
+     */
     private fun entry(t: Title): Entry =
         Entry(t, if (jellyfin.isConnected) jellyfin.findLoaded(t.imdbId, t.tmdbId, t.kind == Kind.SHOW) else null, emptyMap())
 
@@ -623,7 +743,31 @@ class MoviesPanel(
     // --- Downloads ---------------------------------------------------------------------------------
 
     private var requestDiagnostics: Map<Int, RequestDiagnostic> = emptyMap()
-    private val knownTitles = HashMap<Long, Pair<String, String?>>()   // keyed by TMDB id, doubled, plus one for a series
+    /** Name and poster per title, keyed by TMDB id, doubled, plus one for a series. Kept on disk between sessions. */
+    private val knownTitles: java.util.concurrent.ConcurrentHashMap<Long, Pair<String, String?>> by lazy {
+        java.util.concurrent.ConcurrentHashMap<Long, Pair<String, String?>>().also { map ->
+            try {
+                val saved = org.json.JSONObject(activity.getSharedPreferences("downloads", Context.MODE_PRIVATE).getString("titles", "{}") ?: "{}")
+                saved.keys().forEach { k -> saved.optJSONArray(k)?.let { a -> map[k.toLong()] = a.optString(0) to a.optString(1).ifBlank { null } } }
+            } catch (_: Exception) { }
+        }
+    }
+    private val infoPool = Executors.newFixedThreadPool(4)   // threads start only when first used
+
+    /** Looks up every title not yet known, four at a time instead of one after another, and keeps them for next time. */
+    private fun learnTitles(wanted: List<Pair<Kind, Long>>) {
+        val missing = wanted.filter { (kind, tmdb) -> tmdb > 0 && !knownTitles.containsKey(tmdb * 2 + if (kind == Kind.SHOW) 1 else 0) }.distinct()
+        if (missing.isEmpty()) return
+        val found = try {
+            infoPool.invokeAll(missing.map { (kind, tmdb) -> java.util.concurrent.Callable { seerr.titleInfo(kind, tmdb)?.let { (tmdb * 2 + if (kind == Kind.SHOW) 1 else 0) to it } } }, 30, java.util.concurrent.TimeUnit.SECONDS)
+                .mapNotNull { f -> try { f.get() } catch (_: Exception) { null } }
+        } catch (_: InterruptedException) { emptyList() }
+        if (found.isEmpty()) return
+        found.forEach { (k, v) -> knownTitles[k] = v }
+        val json = org.json.JSONObject()
+        knownTitles.forEach { (k, v) -> json.put(k.toString(), org.json.JSONArray().put(v.first).put(v.second ?: "")) }
+        activity.getSharedPreferences("downloads", Context.MODE_PRIVATE).edit().putString("titles", json.toString()).apply()
+    }
 
     private fun titleKey(r: SeerrRequest) = r.tmdbId * 2 + if (r.kind == Kind.SHOW) 1 else 0
 
@@ -683,12 +827,13 @@ class MoviesPanel(
         holder.addView(note("Loading…").apply { setPadding(margin, dp(10), 0, 0) })
         var firstLoad = true
         var loading = false
+        var lastSignature: String? = null
         var scheduled: Runnable? = null
         fun refresh() {
             scheduled?.let { ui.removeCallbacks(it) }
             if (loading || gen != generation || !isVisible) return
             loading = true
-            worker.execute {
+            slowPool.execute {
                 val queue = queueClient.items()
                 val inQueue = queue.orEmpty().map { it.tmdbId * 2 + if (it.source == QueueSource.SONARR) 1 else 0 }.toSet()
                 val snapshot = seerr.pipelineStatus()
@@ -696,27 +841,37 @@ class MoviesPanel(
                 val rawRequests = seerr.requestsOrNull()
                 // One queued season must not hide another season of the same show.
                 val requests = rawRequests.orEmpty().filter { !RequestPipelineApi.covered(it, queue.orEmpty()) }
-                queue.orEmpty().forEach { q -> val k = q.tmdbId * 2 + if (q.source == QueueSource.SONARR) 1 else 0; if (q.tmdbId > 0 && !knownTitles.containsKey(k)) seerr.titleInfo(if (q.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE, q.tmdbId)?.let { knownTitles[k] = it } }
-                requests.forEach { r -> if (!knownTitles.containsKey(titleKey(r))) seerr.titleInfo(r.kind, r.tmdbId)?.let { knownTitles[titleKey(r)] = it } }
                 // Single episodes asked for one at a time: monitored in Sonarr with nothing grabbed yet. A series already listed above is not repeated.
                 val listed = inQueue + requests.map { titleKey(it) }
                 val wanted = sonarr.wanted().orEmpty().groupBy { it.seriesTmdbId }.filterKeys { it * 2 + 1 !in listed }
-                wanted.keys.forEach { tmdb -> if (!knownTitles.containsKey(tmdb * 2 + 1)) seerr.titleInfo(Kind.SHOW, tmdb)?.let { knownTitles[tmdb * 2 + 1] = it } }
-                val wantedEpisodes = wanted.values.flatten()
+                // Episodes asked for before they air: Sonarr's wanted list leaves them out, its calendar has them.
+                val upcoming = sonarr.upcoming().orEmpty().groupBy { it.seriesTmdbId }.filterKeys { it * 2 + 1 !in inQueue }
+                learnTitles(queue.orEmpty().map { q -> (if (q.source == QueueSource.SONARR) Kind.SHOW else Kind.MOVIE) to q.tmdbId } +
+                    requests.map { it.kind to it.tmdbId } + wanted.keys.map { Kind.SHOW to it } + upcoming.keys.map { Kind.SHOW to it })
+                val wantedEpisodes = wanted.values.flatten() + upcoming.values.flatten()
+                // Nothing moved since the last look: leave the rows as they are (no rebuild, focus untouched).
+                val signature = listOf(queue, rawRequests == null, snapshot?.healthy, requests, diagnostics, wanted, upcoming, knownTitles.size,
+                    if (diagnostics.isNotEmpty()) System.currentTimeMillis() / 60_000 else 0).toString()
                 activity.runOnUiThread {
                     loading = false
                     if (gen != generation) return@runOnUiThread
+                    if (signature == lastSignature) {
+                        scheduled = Runnable { if (gen == generation && current == Dest.Downloads && !detailOpen) refresh() }
+                        ui.postDelayed(scheduled!!, 15_000)
+                        return@runOnUiThread
+                    }
+                    lastSignature = signature
                     val focused = (0 until holder.childCount).firstOrNull { holder.getChildAt(it).hasFocus() }
                     holder.removeAllViews()
                     requestDiagnostics = diagnostics
                     if (rawRequests == null) holder.addView(note("Couldn't read your requests. Showing the download queue only.").apply { setPadding(margin, dp(4), margin, dp(4)) })
                     if (snapshot?.healthy != true) holder.addView(note("Automatic search status is unavailable. Download-client progress is shown below.").apply { setPadding(margin, dp(4), margin, dp(4)) })
                     val rows = queue.orEmpty().map { q -> queueRow(q) { refresh() } } + requests.map { downloadRow(it) { refresh() } } +
-                        wanted.map { (tmdb, eps) -> wantedRow(tmdb, eps) { refresh() } }
+                        wanted.map { (tmdb, eps) -> wantedRow(tmdb, eps) { refresh() } } + upcoming.map { (tmdb, eps) -> upcomingRow(tmdb, eps) { refresh() } }
                     if (rows.isEmpty()) holder.addView(note(if (queue == null) "Couldn't reach the download queue just now." else "Nothing requested yet. Open any title and press Queue download.").apply { setPadding(margin, dp(10), 0, 0) })
                     val q = queue.orEmpty()
                     updateStats(stats, listOf(q.count { it.isDownloading }, q.count { it.isWaiting }, q.count { it.status in setOf("metadata", "stalled") },
-                        requests.count { it.stage == Stage.SEARCHING && diagnostics[it.id]?.stopped != true }))
+                        requests.count { it.stage == Stage.SEARCHING && diagnostics[it.id]?.stopped != true } + upcoming.values.sumOf { it.size }))
                     rows.forEachIndexed { i, r -> holder.addView(r, LinearLayout.LayoutParams(-1, Cinema.px(activity, 128)).apply { setMargins(margin, Cinema.px(activity, if (i > 0) 14 else 28), pageEnd, 0) }) }
                     // Everything not yet finished, including requests no release has been found for. Kept last so first focus stays on the top row.
                     val pendingQueue = queue.orEmpty().filter { it.canCancel && (it.isActive || it.isWaiting) }
@@ -747,15 +902,16 @@ class MoviesPanel(
         val ref = LibraryRef(e.title.name, e.title.year, e.title.tmdbId?.toLongOrNull(), e.title.imdbId)
         infoSheet.show("DELETE", e.title.name, null, listOf("Removes every file for this title from the storage, and from Radarr or Sonarr so it is not downloaded again. Titles those do not hold are removed from Jellyfin. This cannot be undone."), null, listOf(
             SheetAction("Delete", "Remove it from disk", primary = true) {
-                worker.execute {
+                slowPool.execute {
                     // Radarr or Sonarr first, so nothing fetches it again. A title they do not hold (added some other way, such as
                     // public-domain films) is deleted from Jellyfin, which removes its files.
                     val managed = libraryRemover.delete(e.title.kind, ref)
-                    val removed = managed || (e.library != null && jellyfin.deleteItem(e.library.id))
+                    val lib = e.library
+                    val removed = managed || (lib != null && jellyfin.deleteItem(lib.id))
                     if (removed) jellyfin.refreshLibrary()
                     // Fetch the library now, so the page does not keep showing what has gone. Only a title Jellyfin removed itself can
                     // be checked straight away; one Radarr or Sonarr removed reappears in Jellyfin only after its scan.
-                    val stillThere = if (removed && e.library != null) jellyfin.stillInLibrary(e.library.id) else null
+                    val stillThere = if (removed && lib != null) jellyfin.stillInLibrary(lib.id) else null
                     activity.runOnUiThread {
                         val message = when {
                             !removed -> "Couldn't delete ${e.title.name} right now"
@@ -778,7 +934,7 @@ class MoviesPanel(
             "Stops everything in the queue, takes it out of the download client and deletes anything already downloaded for it. " +
                 "Requests and episodes that have no release yet are withdrawn. Finished titles are not touched."), null, listOf(
             SheetAction("Cancel all", "Stop every pending download", primary = true) {
-                worker.execute {
+                slowPool.execute {
                     val failed = items.count { !queueClient.cancel(it) } + requests.count { !queueClient.cancelRequest(it) } +
                         if (sonarr.unwant(wanted.map { it.id })) 0 else 1
                     activity.runOnUiThread {
@@ -804,7 +960,7 @@ class MoviesPanel(
         }
         val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
         thumb.addView(image, FrameLayout.LayoutParams(-1, -1))
-        posterUrl?.let { u -> images.load(u) { b -> image.setImageBitmap(b) } }
+        posterUrl?.let { u -> images.load(u, maxWidth = 120) { b -> image.setImageBitmap(b) } }
         card.addView(thumb, LinearLayout.LayoutParams(Cinema.px(activity, 68), Cinema.px(activity, 96)))
 
         val column = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
@@ -889,6 +1045,29 @@ class MoviesPanel(
                     worker.execute {
                         val done = sonarr.unwant(episodes.map { it.id })
                         activity.runOnUiThread { Toast.makeText(activity, if (done) "Stopped looking for $title" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
+                    }
+                },
+                SheetAction("Keep them") { }
+            ))
+        }
+        return row
+    }
+
+    /** Episodes of one series asked for before they air. Pressing it offers to stop waiting for them. */
+    private fun upcomingRow(tmdb: Long, episodes: List<WantedEpisode>, refresh: () -> Unit): View {
+        val info = knownTitles[tmdb * 2 + 1]
+        val title = info?.first ?: episodes.first().seriesTitle.ifBlank { "Title $tmdb" }
+        val sorted = episodes.sortedWith(compareBy({ it.season }, { it.number }))
+        val first = sorted.first()
+        val listed = sorted.take(3).joinToString(", ") { "S${it.season} E${it.number}" } + if (sorted.size > 3) " +${sorted.size - 3}" else ""
+        val status = "Waiting to air · S${first.season} E${first.number} · " + (EpisodeCards.formatDate(first.airDate)?.substringBeforeLast(' ') ?: "TBA")
+        val row = requestCard(info?.second, title, listed, status, active = false, progress = null, sweeping = false)
+        row.setOnClickListener {
+            infoSheet.show("UPCOMING", title, null, listOf(status, "These download by themselves once they air. Cancelling stops waiting for them."), null, listOf(
+                SheetAction("Cancel", "Stop waiting for them", primary = true) {
+                    slowPool.execute {
+                        val done = sonarr.unwant(episodes.map { it.id })
+                        activity.runOnUiThread { Toast.makeText(activity, if (done) "Stopped waiting for $title" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show(); if (done) refresh() }
                     }
                 },
                 SheetAction("Keep them") { }
@@ -1124,7 +1303,7 @@ class MoviesPanel(
         val list = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false }
         s.side.addView(list)
         val gen = generation
-        worker.execute {
+        shelfPool.execute {
             val top = catalog.shelf(Catalog.homePage().first()).titles.take(3).map { entry(it) }
             activity.runOnUiThread {
                 if (gen != generation || searchText.isNotBlank()) return@runOnUiThread
@@ -1150,8 +1329,9 @@ class MoviesPanel(
         val g = ++generation
         s.results.removeAllViews()
         if (query.length < 2) { showTrending(s); return }
-        worker.execute {
-            val mine = if (jellyfin.isConnected) jellyfin.library().filter { it.name.contains(query, ignoreCase = true) } else emptyList()
+        shelfPool.execute {
+            // Only what is already loaded: a slow or sleeping Jellyfin must not hold up the catalogue's results.
+            val mine = if (jellyfin.isConnected) jellyfin.loadedLibrary().filter { it.name.contains(query, ignoreCase = true) } else emptyList()
             val found = Catalog.searchSpecs(query).map { catalog.shelf(it) }
             activity.runOnUiThread {
                 if (g != generation || searchUi !== s) return@runOnUiThread
@@ -1303,6 +1483,7 @@ class MoviesPanel(
         if (entries.isEmpty()) return
         heroSet = true
         heroEntries = entries.take(3); heroRelated = related; heroLabels = labels.take(3)
+        heroEntries.forEach { e -> whenInLibrary(e) { } }
         heroDots.removeAllViews()
         if (heroEntries.size > 1) heroEntries.indices.forEach { i ->
             heroDots.addView(View(activity), LinearLayout.LayoutParams(Cinema.px(activity, 64), Cinema.px(activity, 10)).apply { if (i > 0) marginStart = Cinema.px(activity, 8) })
@@ -1344,7 +1525,14 @@ class MoviesPanel(
             b.setOnFocusChangeListener { _, f -> if (f && !detailOpen) page.post { page.smoothScrollTo(0, 0) } }
             heroButtons.addView(b, LinearLayout.LayoutParams(-2, Cinema.px(activity, 76)).apply { if (heroButtons.childCount > 0) marginStart = gap })
         }
-        e.library?.let { lib -> add(CinemaButton(activity, CinemaButton.Kind.PRIMARY, "Watch now", R.drawable.ic_cin_play).apply { setOnClickListener { watch(lib, t) } }) }
+        e.library?.let { lib ->
+            val state = if (lib.isSeries) WatchState.NotStarted else WatchProgress.of(lib.played, lib.resumeMs, lib.runtimeMin)
+            WatchProgress.filmActions(state).forEach { action ->
+                val restart = action == FilmAction.RESTART
+                add(CinemaButton(activity, if (restart) CinemaButton.Kind.GLASS else CinemaButton.Kind.PRIMARY, WatchProgress.label(action, state), R.drawable.ic_cin_play)
+                    .apply { setOnClickListener { watch(lib, t, fromStart = restart) } })
+            }
+        }
             ?: if (t.kind == Kind.MOVIE) add(CinemaButton(activity, CinemaButton.Kind.PRIMARY, "Stream now", R.drawable.ic_cin_play).apply { setOnClickListener { streamNow(e, this) } }) else Unit
         add(CinemaButton(activity, CinemaButton.Kind.GLASS, "More info", R.drawable.ic_cin_info).apply { setOnClickListener { openDetail(e, heroRelated) } })
         heroButtons.visibility = View.VISIBLE
@@ -1354,7 +1542,7 @@ class MoviesPanel(
         }
         heroBackdrop.show(null)
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(u, maxWidth = 1280) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400) } }
+            images.load(halfBackdrop(u), maxWidth = HALF_BACKDROP_PX) { b -> if (heroEntries.getOrNull(heroIndex) === e) { heroBackdrop.show(b); frost?.refresh(400); Perf.end("movies.open->hero") } }
         }
         if (focusedAt >= 0) heroButtons.getChildAt(minOf(focusedAt, heroButtons.childCount - 1))?.requestFocus()
         else if (!detailOpen && overlay.findFocus() == null && current != Dest.Search) requestFocusRobust(overlay as ViewGroup, heroButtons.getChildAt(0))
@@ -1397,7 +1585,7 @@ class MoviesPanel(
         detail.addView(backdrop, FrameLayout.LayoutParams(Cinema.px(activity, if (e.library != null) 1060 else 1230), -1, Gravity.END))
         detail.addView(View(activity).apply { background = Scrim.detail() }, FrameLayout.LayoutParams(-1, -1))
         (t.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u ->
-            images.load(u, maxWidth = 1280) { b -> if (backdrop.isAttachedToWindow) backdrop.show(b) }
+            images.load(halfBackdrop(u), maxWidth = HALF_BACKDROP_PX) { b -> if (backdrop.isAttachedToWindow) backdrop.show(b) }
         }
 
         val side = Cinema.px(activity, 96)
@@ -1416,6 +1604,8 @@ class MoviesPanel(
         val inLibrary = e.library != null
         val primary = CinemaButton(activity, if (inLibrary) CinemaButton.Kind.PRIMARY else CinemaButton.Kind.TERRA, "Checking…", if (inLibrary) R.drawable.ic_cin_play else R.drawable.ic_cin_dl)
         val clearStale = CinemaButton(activity, CinemaButton.Kind.GLASS, "Clear stale request").apply { visibility = View.GONE }
+        // A part-watched library film: Continue (the primary) and Restart from the beginning.
+        val restart = CinemaButton(activity, CinemaButton.Kind.GLASS, "Restart", R.drawable.ic_cin_play).apply { visibility = View.GONE }
         // Not in the library: play a seeded copy now, instead of waiting for a download to finish.
         val stream = CinemaButton(activity, CinemaButton.Kind.GLASS, "Stream now", R.drawable.ic_cin_play).apply {
             visibility = if (!inLibrary && t.kind == Kind.MOVIE) View.VISIBLE else View.GONE
@@ -1423,6 +1613,7 @@ class MoviesPanel(
         }
         val gap = Cinema.px(activity, 20); val h = Cinema.px(activity, 76)
         buttons.addView(primary, LinearLayout.LayoutParams(-2, h))
+        buttons.addView(restart, LinearLayout.LayoutParams(-2, h).apply { marginStart = gap })
         buttons.addView(stream, LinearLayout.LayoutParams(-2, h).apply { marginStart = gap })
         buttons.addView(clearStale, LinearLayout.LayoutParams(-2, h).apply { marginStart = gap })
         // Anything on disk can be taken off it, a series or a film, from its own page.
@@ -1457,7 +1648,13 @@ class MoviesPanel(
             column.setPadding(column.paddingLeft, column.paddingTop, column.paddingRight, Cinema.px(activity, 520))
             detailScrolledState(scroll, moreHeading!!, r.scroller, t, topRow)
         }
-        setupPrimary(primary, e, clearStale) { openDetail(e, related) }
+        setupPrimary(primary, e, clearStale, restart) { openDetail(e, related) }
+        // A film that can only be streamed: have the stream service search for it now, so Stream now starts quicker.
+        if (!inLibrary && t.kind == Kind.MOVIE && seerr.isSignedIn) slowPool.execute { seerr.prepareStream(t.name, t.year, runtimeMin = t.runtimeMin) }
+        detailEntry = e
+        // A series' progress lives on its episode cards, so its page is drawn again; a film just redoes its buttons.
+        detailButtons = if (t.kind == Kind.SHOW) ({ val back = returnFocus; closeDetail(restoreFocus = false); openDetail(e, related); returnFocus = back })
+            else ({ setupPrimary(primary, e, clearStale, restart) { openDetail(e, related) } })
         // The title page covers the screen, so the page beneath it is not drawn at all while it is open (it keeps its
         // place and its scroll position, so Back returns to exactly where it was).
         body.visibility = View.INVISIBLE
@@ -1496,6 +1693,7 @@ class MoviesPanel(
         if (!detailOpen) return
         detailFocusListener?.let { if (detail.viewTreeObserver.isAlive) detail.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
         detailFocusListener = null
+        detailEntry = null; detailButtons = null
         detail.visibility = View.GONE; detail.removeAllViews()
         body.visibility = View.VISIBLE
         body.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
@@ -1503,7 +1701,11 @@ class MoviesPanel(
     }
 
     /** Watch now for what is in the library; for the rest, queue it, or say where its request has got to. */
-    private fun setupPrimary(button: CinemaButton, e: Entry, clearStale: CinemaButton, refresh: () -> Unit) {
+    /** The title page on screen, and how to redo its buttons when the viewer's place in it changes. */
+    private var detailEntry: Entry? = null
+    private var detailButtons: (() -> Unit)? = null
+
+    private fun setupPrimary(button: CinemaButton, e: Entry, clearStale: CinemaButton, restart: CinemaButton? = null, refresh: () -> Unit) {
         fun set(label: String, enabled: Boolean, action: (() -> Unit)?) {
             button.setText(label); button.isEnabled = enabled
             // Terracotta only while there is something to queue; a request already on its way rests as glass.
@@ -1511,7 +1713,16 @@ class MoviesPanel(
             button.setOnClickListener { action?.invoke() }
         }
         val lib = e.library
-        if (lib != null) { set("Watch now", true) { watch(lib, e.title) }; return }
+        if (lib != null) {
+            // A film part-way through: "Continue · 42 min left" and Restart; otherwise Watch now. Series keep Watch now
+            // (the episode list below carries their progress).
+            val state = if (lib.isSeries) WatchState.NotStarted else WatchProgress.of(lib.played, lib.resumeMs, lib.runtimeMin)
+            val actions = WatchProgress.filmActions(state)
+            set(WatchProgress.label(actions.first(), state), true) { watch(lib, e.title) }
+            restart?.visibility = if (FilmAction.RESTART in actions) View.VISIBLE else View.GONE
+            restart?.setOnClickListener { watch(lib, e.title, fromStart = true) }
+            return
+        }
         val tmdb = e.title.tmdbId?.toLongOrNull()
         if (tmdb == null) { set("Can't be requested", false, null); return }
         fun queue() {
@@ -1535,7 +1746,7 @@ class MoviesPanel(
             activity.runOnUiThread {
                 if (!detailOpen || !button.isAttachedToWindow) return@runOnUiThread
                 if (state == null) {
-                    set("Retry status check", true) { setupPrimary(button, e, clearStale, refresh) }
+                    set("Retry status check", true) { setupPrimary(button, e, clearStale, restart, refresh) }
                     return@runOnUiThread
                 }
                 if (state.staleCandidate) {
@@ -1587,6 +1798,7 @@ class MoviesPanel(
     private fun streamNow(e: Entry, button: View, episode: Pair<Int, Int>? = null, shownTitle: String? = null) {
         if (!seerr.isSignedIn) { seerrSheet.show(seerr, jellyfin) { streamNow(e, button, episode, shownTitle) }; return }
         val token = ++streamToken
+        Perf.mark("stream.press"); Perf.begin("stream.press->startReply")
         streamReturnFocus = button
         val label = shownTitle ?: e.title.name
         val screen = StreamLoadingView(activity, label).apply {
@@ -1597,14 +1809,15 @@ class MoviesPanel(
         (overlay as ViewGroup).addView(screen, FrameLayout.LayoutParams(-1, -1))
         streamLoading = screen
         screen.requestFocus()
-        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u -> images.load(u, maxWidth = 1280) { b -> screen.backdrop(b) } }
+        (e.title.backdropUrl ?: e.library?.takeIf { it.hasBackdrop }?.let { jellyfin.backdropUrl(it.id) })?.let { u -> images.load(u, maxWidth = LOADING_BACKDROP_PX) { b -> screen.backdrop(b) } }
         fun failed(message: String) {
             screen.message(message); screen.stats(null, null, null, null)
             ui.postDelayed({ if (token == streamToken) closeStreamLoading() }, 3500)
         }
-        worker.execute {
-            val result = seerr.startStream(e.title.name, e.title.year, episode?.first, episode?.second)
+        slowPool.execute {
+            val result = seerr.startStream(e.title.name, e.title.year, episode?.first, episode?.second, if (episode == null) e.title.runtimeMin else null)
             activity.runOnUiThread {
+                Perf.end("stream.press->startReply", result.status.name)
                 if (token != streamToken) return@runOnUiThread   // cancelled with Back
                 android.util.Log.i("StreamNow", "status=${result.status} for ${e.title.name}")
                 when (result.status) {
@@ -1634,8 +1847,12 @@ class MoviesPanel(
         streamReturnFocus?.takeIf { it.isAttachedToWindow }?.requestFocus()
     }
 
-    private fun watch(item: JellyfinItem, title: Title) {
-        if (!item.isSeries) { JellyfinPlayback.play(activity, jellyfin, item, title.name, title.imdbId ?: "jf:${item.id}"); return }
+    /** Set when a library title starts playing, so the page asks Jellyfin where the viewer got to once they are back. */
+    private var playbackStarted = false
+
+    private fun watch(item: JellyfinItem, title: Title, fromStart: Boolean = false) {
+        playbackStarted = true
+        if (!item.isSeries) { JellyfinPlayback.play(activity, jellyfin, item, title.name, title.imdbId ?: "jf:${item.id}", fromStart); return }
         Toast.makeText(activity, "Finding the next episode…", Toast.LENGTH_SHORT).show()
         worker.execute {
             val ep = jellyfin.episodeToPlay(item.id)
@@ -1695,7 +1912,7 @@ class MoviesPanel(
         val ep = owned.filter { it.resumeMs > 0 && !it.played && it.season != null && it.episode != null }
             .maxWithOrNull(compareBy<JellyfinItem> { it.season }.thenBy { it.episode }) ?: return
         primary.setText("Resume S${ep.season} E${ep.episode}")
-        primary.setOnClickListener { JellyfinPlayback.play(activity, jellyfin, ep, "${e.title.name} · S${ep.season} E${ep.episode}", "jf:${ep.id}") }
+        primary.setOnClickListener { playbackStarted = true; JellyfinPlayback.play(activity, jellyfin, ep, "${e.title.name} · S${ep.season} E${ep.episode}", "jf:${ep.id}") }
     }
 
     private fun drawSeasons(box: LinearLayout, e: Entry, tmdb: Long?, seasons: List<SeasonState>, owned: List<JellyfinItem>,
@@ -1786,14 +2003,20 @@ class MoviesPanel(
             var look = episodeCardState(mine != null, states[s.number to ep.number], s.availability, ep.airDate, today, tmdb != null,
                 EpisodeCards.download(downloads, tmdb, s.number, ep.number))
             fun rebind() {
-                card.bind(look, EpisodeCards.formatDate(ep.airDate)?.uppercase())
-                card.tipText = if (look.state == CardState.REQUEST) "Download S${s.number} E${ep.number}" else null
+                card.bind(look, EpisodeCards.formatDate(ep.airDate)?.uppercase() ?: "TBA")
+                card.tipText = when (look.state) {
+                    CardState.REQUEST -> "Download S${s.number} E${ep.number}"
+                    CardState.UNAIRED -> EpisodeCards.preRequestTip(s.number, ep.number)
+                    else -> null
+                }
             }
             rebind()
             val runtime = mine?.runtimeMin ?: ep.runtime
             val resume = mine?.takeIf { !it.played }?.let { EpisodeCards.resume(it.resumeMs, runtime) }
             card.setMeta(EpisodeCards.metaParts(runtime, resume?.second, ep.airDate))
-            card.setResume(resume?.first)
+            val progress = mine?.let { WatchProgress.of(it.played, it.resumeMs, runtime) } ?: WatchState.NotStarted
+            card.setResume(WatchProgress.episodeBar(progress))
+            card.watched = WatchProgress.episodeShowsTick(progress)
             // The library's own still when it has one (sent with the Jellyfin sign-in), otherwise TMDB's.
             val (url, headers) = when {
                 mine?.hasPrimaryImage == true -> jellyfin.episodeImageUrl(mine.id) to jellyfin.playbackHeaders()
@@ -1804,14 +2027,31 @@ class MoviesPanel(
             else images.load(url, headers, maxWidth = Cinema.px(activity, 400)) { b -> if (token == loading) card.setStill(b) }
 
             card.play.setOnClickListener { v ->
-                if (mine != null) JellyfinPlayback.play(activity, jellyfin, mine, label, "jf:${mine.id}")
+                if (mine != null) { playbackStarted = true; JellyfinPlayback.play(activity, jellyfin, mine, label, "jf:${mine.id}") }
                 else streamNow(e, v, s.number to ep.number, label)
             }
             card.download.setOnClickListener {
                 when (look.state) {
                     CardState.REQUESTED -> Toast.makeText(activity, "Requested, waiting for a release", Toast.LENGTH_SHORT).show()
                     CardState.DOWNLOADING -> Toast.makeText(activity, look.progress?.let { "Downloading, ${Math.round(it * 100)}% so far" } ?: "Downloading", Toast.LENGTH_SHORT).show()
-                    CardState.REQUEST -> when {
+                    // Asked for before it aired: offer to stop waiting for it.
+                    CardState.UNAIRED_REQUESTED -> if (tmdb != null) infoSheet.show("REQUESTED", label, EpisodeCards.airsLabel(ep.airDate),
+                        listOf("It will download by itself once it airs."), null, listOf(
+                            SheetAction("Cancel request", "Stop waiting for this episode", primary = true) {
+                                worker.execute {
+                                    val done = sonarr.unwantEpisodes(tmdb, s.number, listOf(ep.number))
+                                    activity.runOnUiThread {
+                                        if (done) {
+                                            states[s.number to ep.number] = EpisodeState.NONE
+                                            look = episodeCardState(mine != null, EpisodeState.NONE, s.availability, ep.airDate, today, true, null)
+                                            if (token == loading) rebind()
+                                        }
+                                        Toast.makeText(activity, if (done) "Cancelled S${s.number} E${ep.number}" else "Couldn't cancel it right now", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            },
+                            SheetAction("Keep it") { }))
+                    CardState.REQUEST, CardState.UNAIRED -> when {
                         tmdb == null -> Unit
                         !seerr.isSignedIn -> seerrSheet.show(seerr, jellyfin) { }
                         else -> {
@@ -1825,7 +2065,8 @@ class MoviesPanel(
                                             states[s.number to ep.number] = EpisodeState.REQUESTED
                                             look = episodeCardState(mine != null, EpisodeState.REQUESTED, s.availability, ep.airDate, today, true, null)
                                             if (token == loading) rebind()
-                                            Toast.makeText(activity, "${e.title.name} S${s.number} E${ep.number} is queued", Toast.LENGTH_LONG).show()
+                                            Toast.makeText(activity, if (look.unaired) EpisodeCards.preRequestDone(s.number, ep.number, ep.airDate)
+                                                else "${e.title.name} S${s.number} E${ep.number} is queued", Toast.LENGTH_LONG).show()
                                         }
                                         EpisodeOutcome.NOT_CONFIGURED -> Toast.makeText(activity, "Sonarr's details aren't available, so only whole seasons can be requested here", Toast.LENGTH_LONG).show()
                                         EpisodeOutcome.NOT_FOUND -> Toast.makeText(activity, "Sonarr couldn't find that episode yet. Try again in a moment", Toast.LENGTH_LONG).show()
@@ -1838,7 +2079,11 @@ class MoviesPanel(
                     else -> Unit
                 }
             }
-            card.onLit = { lit -> if (lit) FastFocus.reveal(card, null, dp(24), dp(56), 0) }
+            card.onLit = { lit ->
+                if (lit) FastFocus.reveal(card, null, dp(24), dp(56), 0)
+                // An episode that would be streamed: search for it while the viewer looks at it.
+                if (lit && mine == null && !look.unaired && seerr.isSignedIn) slowPool.execute { seerr.prepareStream(e.title.name, e.title.year, s.number, ep.number) }
+            }
             return card to look
         }
 
@@ -1969,13 +2214,17 @@ class MoviesPanel(
             isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false
             setPadding(margin, 0, end, 0)
             isHorizontalFadingEdgeEnabled = false
-            setOnScrollChangeListener { _, _, _, _, _ -> frost?.refresh() }   // posters slide beneath the frosted rail
+            // Posters slide beneath the frosted rail; the row's far posters load as it nears them.
+            setOnScrollChangeListener { _, _, _, _, _ -> frost?.refresh(); rowOf[this]?.loadNear() }
             leftLeavesToRail = inset   // a page row hands Left at its start to the rail (title pages have no rail)
             addView(inner)
         }
         into.addView(scroller, LinearLayout.LayoutParams(-1, -2))
-        return Row(head, scroller, inner)
+        return Row(head, scroller, inner).also { rowOf[scroller] = it }
     }
+
+    /** Each row's scroller to its row, for loading far posters as it scrolls. Weak, so a dropped page frees its rows. */
+    private val rowOf = java.util.WeakHashMap<View, Row>()
 
     /** Card spacing from the mockup: posters 28px apart (64px for the small ones on a title page); Top 10 items abut. */
     private fun cardParams(index: Int, small: Boolean = false, wide: Boolean = false) =
@@ -1985,27 +2234,55 @@ class MoviesPanel(
     private fun subline(t: Title) = listOfNotNull(t.year?.toString(), t.genres.firstOrNull(),
         t.runtimeMin?.takeIf { it > 0 && t.kind == Kind.MOVIE }?.let { if (it >= 60) "${it / 60}h ${it % 60}m" else "$it min" }).joinToString(" · ")
 
+    /** Cards whose titles the library had not been checked for when they were drawn, with what to do if one is found. */
+    private val awaitingLibrary = ArrayList<Pair<Entry, () -> Unit>>()
+
+    /** Runs [found] once [e] turns out to be in the library: now, if the library is already loaded, or when it arrives. */
+    private fun whenInLibrary(e: Entry, found: () -> Unit) {
+        if (e.library != null || !jellyfin.isConnected) return
+        jellyfin.findLoaded(e.title.imdbId, e.title.tmdbId, e.title.kind == Kind.SHOW)?.let { e.library = it; found(); return }
+        awaitingLibrary += e to found
+    }
+
+    /** The library has arrived: badge every card on the page that is in it, and give the featured title Watch now. */
+    private fun rebadge(gen: Int) {
+        if (gen != generation || awaitingLibrary.isEmpty()) return
+        var heroChanged = false
+        val it = awaitingLibrary.iterator()
+        while (it.hasNext()) {
+            val (e, found) = it.next()
+            val item = e.library ?: jellyfin.findLoaded(e.title.imdbId, e.title.tmdbId, e.title.kind == Kind.SHOW) ?: continue
+            e.library = item; found(); it.remove()
+            if (heroSet && heroEntries.any { h -> h === e }) heroChanged = true
+        }
+        if (heroChanged && !detailOpen) showHero(heroIndex)
+    }
+
     /** Fills [card]'s poster: the picture, initials when there is none, and the IN LIBRARY badge. */
-    private fun dress(card: PosterCard, e: Entry, badge: Boolean = true) {
+    private fun dress(card: PosterCard, e: Entry, badge: Boolean = true, defer: Row? = null, holder: View = card) {
         if (e.title.posterUrl == null) card.placeholder(e.title.name)
         if (badge && e.library != null) card.badge()
-        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332) { b: Bitmap -> card.image.setImageBitmap(b); frost?.refresh() } }
+        else if (badge) whenInLibrary(e) { card.badge() }
+        e.title.posterUrl?.let { u ->
+            val load = { images.loadShadedPoster(u, e.posterHeaders, 332, pageTag) { b: Bitmap -> card.setShadedPoster(b); frost?.refresh(); Perf.end("movies.open->firstPoster") } }
+            if (defer != null) defer.deferred += holder to load else load()
+        }
     }
 
     /** A poster with its name beneath; grows and glows on focus; a badge says when it is already in the library. */
-    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true): View {
+    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true, defer: Row? = null): View {
         val card = PosterCard(activity, if (small) 200 else 260, if (small) 300 else 390)
         card.contentDescription = e.title.name
         card.title?.text = e.title.name
         card.subline?.text = subline(e.title)
-        dress(card, e, badge)
+        dress(card, e, badge, defer)
         card.onFocus = { lit -> if (lit) reveal(card) }
         card.setOnClickListener { if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }
         return card
     }
 
     /** A Top 10 item: an outlined Fraunces numeral tucked behind the left of the poster (`.top10`). */
-    private fun rankCard(rank: Int, e: Entry, related: List<Title>): View {
+    private fun rankCard(rank: Int, e: Entry, related: List<Title>, defer: Row? = null): View {
         val box = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
         val numeral = Cinema.text(activity, "$rank", 210, Cinema.alpha(Cinema.SAFFRON, 0.6f), serif = true, weight = 600, tracking = -0.06f).apply {
             paint.style = Paint.Style.STROKE; paint.strokeWidth = Cinema.pxf(activity, 2.5f); maxLines = 1
@@ -2013,7 +2290,7 @@ class MoviesPanel(
         box.addView(numeral, FrameLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 28) })
         val card = PosterCard(activity, 224, 336, titled = false)
         card.contentDescription = "$rank. ${e.title.name}"
-        dress(card, e)
+        dress(card, e, defer = defer, holder = box)
         card.onFocus = { lit -> if (lit) reveal(card) }
         card.setOnClickListener { openDetail(e, related) }
         box.addView(card, FrameLayout.LayoutParams(-2, -2).apply { leftMargin = Cinema.px(activity, 118) })
@@ -2075,6 +2352,15 @@ class MoviesPanel(
         const val HERO_TURN_MS = 9_000L  // the featured title turns this often
         const val RAIL_WIDTH = 92        // mockup px, collapsed
         const val RAIL_WIDTH_OPEN = 420  // mockup px, with labels while the rail has focus
+        const val PREWARM_SHELVES = 4
+        const val CARDS_PER_FRAME = 4
+        const val EAGER_POSTERS = 9      // a screen and a half of posters per row; the rest load as the row scrolls
+        const val HALF_BACKDROP_PX = 640
+        const val LOADING_BACKDROP_PX = 960   // the stream loading screen's backdrop is screen-wide, drawn at half
+        const val RETURN_REFRESH_DELAY_MS = 1_500L
+        const val EAGER_SHELVES = 2
+        const val PREWARM_DELAY_MS = 4_000L
+        const val REUSE_MS = 5 * 60_000L // reopening Movies within this keeps the Home page as it was
     }
 
     // --- The page's own marks ----------------------------------------------------------------------

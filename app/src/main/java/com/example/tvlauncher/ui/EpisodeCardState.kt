@@ -5,7 +5,7 @@ import com.example.tvlauncher.data.movies.EpisodeState
 import com.example.tvlauncher.data.movies.QueueItem
 
 /** Where one episode stands, as its title card shows it. */
-enum class CardState { LIBRARY, DOWNLOADING, REQUESTED, REQUEST, STREAM_ONLY, UNAIRED }
+enum class CardState { LIBRARY, DOWNLOADING, REQUESTED, REQUEST, STREAM_ONLY, UNAIRED, UNAIRED_REQUESTED }
 
 /**
  * What an episode card draws for its [state]: the badge top right ([badgeAccent] is saffron, otherwise muted), whether
@@ -19,13 +19,18 @@ data class CardLook(
     val playShown: Boolean,
     val downloadShown: Boolean,
     val downloadFocusable: Boolean,
-    val progress: Float? = null
+    val progress: Float? = null,
+    /** Not out yet (a future or unknown air date): the still is greyed and the "Airs …" label shows. */
+    val unaired: Boolean = false
 )
 
 /**
- * Pure so it can be tested. [airDate] and [today] are ISO dates ("2026-12-21"), compared as text. [download] is this
- * episode's entry in the download queue, when it has one. What Sonarr says about the episode itself wins over what
- * Seerr says about its season.
+ * Pure so it can be tested. [airDate] and [today] are ISO dates ("2026-12-21"), compared as text; no date at all means
+ * "airs TBA", which counts as not out yet. [download] is this episode's entry in the download queue, when it has one.
+ * What Sonarr says about the episode itself wins over what Seerr says about its season.
+ *
+ * An episode that has not aired can still be asked for: Sonarr then watches for it and grabs it once it is out. It
+ * keeps its greyed still and "Airs …" label either way; it has no Play (there is nothing to stream yet).
  */
 fun episodeCardState(
     inLibrary: Boolean,
@@ -36,10 +41,12 @@ fun episodeCardState(
     canRequest: Boolean,
     download: QueueItem? = null
 ): CardLook {
+    val unaired = EpisodeCards.unaired(airDate, today)
     val state = when {
         inLibrary -> CardState.LIBRARY
-        airDate != null && airDate.length >= 10 && airDate.take(10) > today.take(10) -> CardState.UNAIRED
         sonarrState == EpisodeState.DOWNLOADED -> CardState.LIBRARY
+        unaired && sonarrState == EpisodeState.REQUESTED -> CardState.UNAIRED_REQUESTED
+        unaired -> CardState.UNAIRED
         download != null -> CardState.DOWNLOADING
         sonarrState == EpisodeState.REQUESTED -> CardState.REQUESTED
         seasonAvailability == Availability.AVAILABLE -> CardState.LIBRARY
@@ -56,7 +63,8 @@ fun episodeCardState(
         CardState.REQUESTED -> CardLook(state, "REQUESTED", false, playShown = true, downloadShown = true, downloadFocusable = true)
         CardState.REQUEST -> CardLook(state, null, false, playShown = true, downloadShown = true, downloadFocusable = true)
         CardState.STREAM_ONLY -> CardLook(state, null, false, playShown = true, downloadShown = false, downloadFocusable = false)
-        CardState.UNAIRED -> CardLook(state, null, false, playShown = false, downloadShown = false, downloadFocusable = false)
+        CardState.UNAIRED -> CardLook(state, null, false, playShown = false, downloadShown = canRequest, downloadFocusable = canRequest, unaired = true)
+        CardState.UNAIRED_REQUESTED -> CardLook(state, "REQUESTED", false, playShown = false, downloadShown = true, downloadFocusable = true, unaired = true)
     }
 }
 
@@ -72,6 +80,19 @@ object EpisodeCards {
         val d = iso.substring(8, 10).toIntOrNull()?.takeIf { it in 1..31 } ?: return null
         return "$d ${MONTHS[m - 1]} $y"
     }
+
+    /** Not out yet: aired after [today], or no air date known at all ("Airs TBA"). */
+    fun unaired(airDate: String?, today: String): Boolean = airDate == null || (airDate.length >= 10 && airDate.take(10) > today.take(10))
+
+    /** The label on an unaired episode's still: "Airs 21 Dec 2026", or "Airs TBA" with no date. */
+    fun airsLabel(airDate: String?): String = "Airs " + (formatDate(airDate) ?: "TBA")
+
+    /** The tip over an unaired episode's Download disc. */
+    fun preRequestTip(season: Int, episode: Int) = "Get S$season E$episode when it airs"
+
+    /** What the toast says once an unaired episode is asked for. */
+    fun preRequestDone(season: Int, episode: Int, airDate: String?) =
+        "S$season E$episode will download when it airs" + (formatDate(airDate)?.let { " on ${it.substringBeforeLast(' ')}" } ?: "")
 
     /** Today in the TV's own time zone, as an ISO date. */
     fun today(): String = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
