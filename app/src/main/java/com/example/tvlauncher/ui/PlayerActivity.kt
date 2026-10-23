@@ -171,11 +171,14 @@ class PlayerActivity : AppCompatActivity() {
         player = ExoPlayer.Builder(this, DefaultRenderersFactory(this).setEnableDecoderFallback(true))
             .setTrackSelector(trackSelector).setBandwidthMeter(bandwidth).setSeekBackIncrementMs(10_000).setSeekForwardIncrementMs(10_000)
             .apply {
+                // The buffer lives in this app's own memory. Left to itself it can grow to ~131 MB for video, more than the
+                // whole heap on a small TV, which a 4K remux reaches in seconds: always cap it to what the heap can spare.
+                setLoadControl(DefaultLoadControl.Builder().setTargetBufferBytes(bufferBytes()).build())
                 // Library playback starts promptly over the LAN. Keep the normal
                 // long-term and rebuffer reserves; only the first-picture threshold changes.
                 if (jf != null && !live) setLoadControl(DefaultLoadControl.Builder().setBufferDurationsMs(
                     DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
-                    750, DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS).build())
+                    750, DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS).setTargetBufferBytes(bufferBytes()).build())
                 // A torrent stream arrives unevenly: start quickly, then hold a deep buffer so one slow stretch doesn't stop playback.
                 if (streamOnly()) setLoadControl(streamLoadControl())
             }.build()
@@ -447,8 +450,14 @@ class PlayerActivity : AppCompatActivity() {
     /** Start quickly, hold up to 90 s ahead, and rebuild after a rebuffer only once 6 s are buffered again. */
     private fun streamLoadControl(): DefaultLoadControl = DefaultLoadControl.Builder()
         .setBufferDurationsMs(STREAM_MIN_BUFFER_MS, STREAM_MAX_BUFFER_MS, STREAM_START_BUFFER_MS, STREAM_REBUFFER_BUFFER_MS)
-        .setTargetBufferBytes(STREAM_TARGET_BUFFER_BYTES)
+        .setTargetBufferBytes(bufferBytes())
         .build()
+
+    /**
+     * The most the player may buffer: a quarter of this app's heap (the Movies page and everything else share it), between
+     * 24 and 96 MB. 64 MB with the large heap on a Chromecast: several seconds even of a 4K remux, which the LAN refills fast.
+     */
+    private fun bufferBytes(): Int = (Runtime.getRuntime().maxMemory() / 4).coerceIn(24L * 1024 * 1024, STREAM_TARGET_BUFFER_BYTES.toLong()).toInt()
 
     private fun fallBackToStremio(reason: String) {
         if (streamOnly()) {
@@ -979,7 +988,7 @@ class PlayerActivity : AppCompatActivity() {
         private const val STREAM_MAX_BUFFER_MS = 90_000
         private const val STREAM_START_BUFFER_MS = 1_500
         private const val STREAM_REBUFFER_BUFFER_MS = 6_000
-        private const val STREAM_TARGET_BUFFER_BYTES = 96 * 1024 * 1024
+        private const val STREAM_TARGET_BUFFER_BYTES = 96 * 1024 * 1024   // the ceiling; see bufferBytes()
         private const val STREAM_LOAD_RETRIES = 8
         private const val DEFAULT_LOAD_RETRIES = 3
 
