@@ -175,3 +175,25 @@ class PlayerUiStateTest {
         assertEquals(40_000L, PlayerMath.clampStreamSeek(600_000, 40_000, 20_000))  // limit behind us: stay put
     }
 }
+
+class CreditsStartTest {
+    private val hour = 60 * 60_000L
+    private fun ch(i: Int, name: String, min: Int) = Chapter(i, name, min * 60_000L, null)
+
+    @Test fun a_credits_chapter_near_the_end_is_where_the_card_comes_up() {
+        val chapters = listOf(ch(0, "Scene 1", 0), ch(1, "Intro", 2), ch(2, "Scene 2", 5), ch(3, "Credits", 52))
+        assertEquals(52 * 60_000L, PlayerMath.creditsStartMs(chapters, 55 * 60_000L))
+        assertEquals(50 * 60_000L, PlayerMath.creditsStartMs(listOf(ch(0, "Start", 0), ch(1, "End Credits", 50)), hour))
+    }
+
+    @Test fun without_one_it_is_thirty_seconds_before_the_end() {
+        assertEquals(hour - 30_000L, PlayerMath.creditsStartMs(listOf(ch(0, "Chapter 1", 0), ch(1, "Chapter 2", 30)), hour))
+        // "Credits" right at the start (an opening titles chapter) is not the end credits.
+        assertEquals(hour - 30_000L, PlayerMath.creditsStartMs(listOf(ch(0, "Opening credits", 1)), hour))
+    }
+
+    @Test fun short_or_unknown_lengths_give_nothing() {
+        assertNull(PlayerMath.creditsStartMs(emptyList(), 5 * 60_000L))
+        assertNull(PlayerMath.creditsStartMs(emptyList(), 0L))
+    }
+}

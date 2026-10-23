@@ -77,6 +77,14 @@ class PosterCard(context: Context, posterW: Int, posterH: Int, titled: Boolean =
         poster.addView(Cinema.text(context, initials, 52, Cinema.alpha(Cinema.CREAM, 0.5f), serif = true).apply { gravity = Gravity.CENTER }, 0, FrameLayout.LayoutParams(-1, -1))
     }
 
+    /** A small dark pill top left ("EVA", "#3"): whose diary a poster came from, or its place in a list. */
+    fun chip(text: String) {
+        poster.addView(Cinema.text(context, text, 14, Cinema.CREAM, weight = 700, tracking = 0.14f, caps = true).apply {
+            setPadding(Cinema.px(context, 11), Cinema.px(context, 5), Cinema.px(context, 11), Cinema.px(context, 5))
+            background = GradientDrawable().apply { cornerRadius = Cinema.pxf(context, 16); setColor(0xC70C0806.toInt()) }
+        }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(Cinema.px(context, 10), Cinema.px(context, 10), 0, 0) })
+    }
+
     /** The "IN LIBRARY" badge (`.badge`): dark glass pill, saffron tracked capitals and a check, bottom left. */
     fun badge() {
         val pill = LinearLayout(context).apply {

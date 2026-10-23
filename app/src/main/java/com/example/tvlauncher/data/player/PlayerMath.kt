@@ -25,6 +25,19 @@ data class Trickplay(val width: Int, val height: Int, val tileWidth: Int, val ti
 }
 
 object PlayerMath {
+    private val CREDITS = Regex("(?i)\\b(end\\s*)?credits?\\b|\\boutro\\b|\\bclosing\\b")
+
+    /**
+     * Where an episode's credits begin, for the next-episode card: a chapter named for them ("Credits", "End
+     * credits", "Outro") in the last part of the file, or failing that 30 seconds before the end. Null for anything
+     * too short to tell, or with no known length.
+     */
+    fun creditsStartMs(chapters: List<Chapter>, durationMs: Long): Long? {
+        if (durationMs < 10 * 60_000L) return null
+        chapters.lastOrNull { CREDITS.containsMatchIn(it.name) && it.startMs >= durationMs * 0.6 && it.startMs < durationMs - 5_000 }?.let { return it.startMs }
+        return durationMs - 30_000L
+    }
+
     // --- Streams -----------------------------------------------------------------------------------
 
     /**

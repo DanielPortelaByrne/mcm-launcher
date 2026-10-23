@@ -135,9 +135,39 @@ class PlayerActivity : AppCompatActivity() {
     private val saveTick = object : Runnable {
         override fun run() { saveResume(); snapshotToContinue(); reportToJellyfin("Progress"); handler.postDelayed(this, 15_000) }
     }
+    /** The next-episode card is up while the credits still play (it appears as they begin, not at the file's end). */
+    private var creditsCard = false
+
+    /** Once a second: when an episode with a next one reaches its credits, the next-episode card comes up. */
+    private val creditsTick = object : Runnable {
+        override fun run() {
+            if (isFinishing || isDestroyed) return
+            if (::player.isInitialized && !ended && !creditsCard && nextPlan != null && nextItem != null && !autoplay.cancelled && foreground && player.isPlaying) {
+                val duration = player.duration.takeIf { it != C.TIME_UNSET } ?: 0L
+                val start = com.example.tvlauncher.data.player.PlayerMath.creditsStartMs(itemChapters, duration)
+                if (start != null && player.currentPosition >= start) showCreditsCard()
+            }
+            handler.postDelayed(this, 1000)
+        }
+    }
+
+    private fun showCreditsCard() {
+        val next = nextItem ?: return
+        val now = SystemClock.elapsedRealtime()
+        creditsCard = true
+        autoplay = EpisodeAutoplay(CREDITS_COUNTDOWN_MS).also { it.ready(next.id, now); it.end(now) }
+        Perf.mark("player.creditsCard at ${player.currentPosition} of ${player.duration}")
+        view.hideController()
+        chrome?.setState(com.example.tvlauncher.data.player.PlayerUi.Hidden)
+        nextCard.showCard()
+        cancelNext.isEnabled = true
+        handler.removeCallbacks(autoplayTick)
+        autoplayTick.run()
+    }
+
     private val autoplayTick = object : Runnable {
         override fun run() {
-            if (!foreground || isFinishing || isDestroyed || !ended) return
+            if (!foreground || isFinishing || isDestroyed || !(ended || creditsCard)) return
             val now = SystemClock.elapsedRealtime()
             nextCard.countdown(autoplay.remainingMs(now), autoplay.fraction(now))
             if (autoplay.takeNext(now) != null) {
@@ -238,9 +268,12 @@ class PlayerActivity : AppCompatActivity() {
         player.addAnalyticsListener(bandwidthListener)
         handler.postDelayed(saveTick, 15_000)
         handler.postDelayed(bitrateTick, 1000)
+        handler.postDelayed(creditsTick, 1000)
         if (streamOnly()) handler.postDelayed(statsTick, 5000)
         intent.getStringExtra(EXTRA_META)?.let { m -> runCatching { chrome?.setMeta(metaFrom(JSONObject(m))) } }
         val report = jf
+        // A stream or a JustWatch title carries its IMDb id; a library item's ids arrive with its details below.
+        loadLetterboxd(imdbId, null, episode = false)
         if (report == null) startAttempt(0) else {
             // Start loading at once from what the library list already said (source and resume point), held paused; the
             // item's details (chapters, trickplay, the server's latest resume point) are fetched alongside. Playback
@@ -253,11 +286,38 @@ class PlayerActivity : AppCompatActivity() {
                 val fresh = client.item(report.itemId)
                 handler.post {
                     if (isFinishing || isDestroyed) return@post
-                    if (fresh != null) applyFreshItem(report, fresh)
+                    if (fresh != null) { applyFreshItem(report, fresh); loadLetterboxd(fresh.imdbId, fresh.tmdbId, fresh.isEpisode) }
                     handler.removeCallbacks(release); player.playWhenReady = true
                     prefetchNextEpisode(fresh)
                 }
             }
+        }
+    }
+
+    private val lbRepo by lazy { com.example.tvlauncher.data.letterboxd.LetterboxdRepository(this, allowBrowser = false) }
+    private val lbWorker by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
+    private var lbAsked = false
+
+    /**
+     * The paused screen's Letterboxd card: the film's page (by IMDb or TMDB id), its chart and what the followed
+     * members made of it. Plain requests and what the Movies page saved only, so the player never starts a browser.
+     * Films only: an episode keeps the Stream card.
+     */
+    private fun loadLetterboxd(imdb: String?, tmdb: String?, episode: Boolean) {
+        if (lbAsked || live || chrome == null || episode) return
+        val path = imdb?.takeIf { it.startsWith("tt") }?.let { "/imdb/$it/" } ?: tmdb?.toLongOrNull()?.let { "/tmdb/$it/" } ?: return
+        lbAsked = true
+        lbWorker.execute {
+            val L = com.example.tvlauncher.data.letterboxd.Lb
+            val H = com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR
+            val info = lbRepo.pageNow(path, 72 * H)?.let { L.film(it) } ?: return@execute
+            val chart = lbRepo.pageNow("/csi/film/${info.slug}/rating-histogram/", 24 * 7 * H)?.let { L.histogram(it) }.orEmpty()
+            val circle = lbRepo.following.map { u ->
+                val name = lbRepo.pageNow("/$u/", 24 * 7 * H)?.let { L.profile(it, u)?.name?.substringBefore(' ') } ?: u
+                val mine = lbRepo.pageNow("/$u/film/${info.slug}/", 6 * H)?.let { h -> if (lbRepo.missing(h)) null else L.memberFilm(h, u) }
+                name to (mine?.rating?.let { L.stars(it) } ?: if (mine != null) "watched" else null)
+            }
+            handler.post { if (!isFinishing && !isDestroyed) chrome?.setLetterboxd(info.copy(histogram = chart), circle) }
         }
     }
 
@@ -360,6 +420,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     private fun cancelAutoplay() {
+        creditsCard = false
         autoplay.cancel()
         handler.removeCallbacks(autoplayTick)
         if (::nextCard.isInitialized) nextCard.hideCard()
@@ -378,6 +439,9 @@ class PlayerActivity : AppCompatActivity() {
         val next = nextItem ?: return
         handler.removeCallbacks(autoplayTick)
         nextCard.hideCard(); cancelNext.isEnabled = false
+        // Leaving during the credits: this episode is finished, so Jellyfin and the resume list should say so.
+        if (creditsCard && !ended) { reportToJellyfin("Stopped", atEnd = true); resumePrefs.edit().remove(imdbId ?: "").apply() }
+        creditsCard = false
         record(failed = false)
         // Reuse the player and activity: a long viewing session never builds an activity stack.
         val nextIntent = playbackIntent(this, plan.streams, plan.title, plan.resumeKey, plan.report)
@@ -540,6 +604,14 @@ class PlayerActivity : AppCompatActivity() {
             // Seeking is the viewer's choice, not a network fault: never count the wait that follows it.
             if (reason == Player.DISCONTINUITY_REASON_SEEK || reason == Player.DISCONTINUITY_REASON_SEEK_ADJUSTMENT) {
                 seeking = true; closeBuffer(discard = true)
+                if (creditsCard && !ended) {
+                    // Back before the credits: the card goes, and comes back when they begin again.
+                    val start = com.example.tvlauncher.data.player.PlayerMath.creditsStartMs(itemChapters, player.duration.takeIf { it != C.TIME_UNSET } ?: 0L)
+                    if (start == null || new.positionMs < start) {
+                        creditsCard = false; handler.removeCallbacks(autoplayTick); nextCard.hideCard(); cancelNext.isEnabled = false
+                        autoplay = EpisodeAutoplay().also { state -> nextItem?.let { state.ready(it.id, SystemClock.elapsedRealtime()) } }
+                    }
+                }
                 if (ended && new.positionMs < player.duration) {
                     ended = false; handler.removeCallbacks(autoplayTick); nextCard.hideCard(); cancelNext.isEnabled = false
                     autoplay = EpisodeAutoplay().also { state -> nextItem?.let { state.ready(it.id, SystemClock.elapsedRealtime()) } }
@@ -970,6 +1042,7 @@ class PlayerActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        if (lbAsked) lbWorker.shutdownNow()
         episodeGeneration++
         episodeLookup.shutdownNow(); statusPoller.shutdownNow()
         if (chrome != null) chromeImages.close()
@@ -987,6 +1060,8 @@ class PlayerActivity : AppCompatActivity() {
     companion object {
         /** Provider name for films from the home stream service. */
         const val STREAM_PROVIDER = "Stream"
+        /** How long the next-episode card counts down when it comes up with the credits. */
+        private const val CREDITS_COUNTDOWN_MS = 10_000L
         private const val STREAM_MIN_BUFFER_MS = 30_000
         private const val STREAM_MAX_BUFFER_MS = 90_000
         private const val STREAM_START_BUFFER_MS = 1_500

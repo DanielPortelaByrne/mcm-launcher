@@ -79,6 +79,10 @@ import com.example.tvlauncher.design.cinema.StripePoster
 import com.example.tvlauncher.design.cinema.StreamLoadingView
 import com.example.tvlauncher.design.cinema.CinemaBar
 import com.example.tvlauncher.design.cinema.GlowCard
+import com.example.tvlauncher.design.cinema.MemberCard
+import com.example.tvlauncher.design.cinema.FollowCard
+import com.example.tvlauncher.design.cinema.ListCard
+import com.example.tvlauncher.design.cinema.ReviewCard
 import com.example.tvlauncher.design.cinema.QwertyKeyboard
 import com.example.tvlauncher.design.cinema.VoiceListeningView
 import com.example.tvlauncher.data.search.Qwerty
@@ -123,6 +127,19 @@ class MoviesPanel(
         object Search : Dest()
         class OnService(val service: Service) : Dest()
         class InGenre(val genre: Genre) : Dest()
+        /** Letterboxd: the followed members' page, one member, one list, list search, and following someone new. */
+        object Letterboxd : Dest()
+        class LbPerson(val user: String) : Dest()
+        class LbListPage(val path: String) : Dest()
+        object LbSearch : Dest()
+        object LbFollow : Dest()
+    }
+
+    /** The rail item a page belongs to: a service or genre page is part of Home, every Letterboxd page of Letterboxd. */
+    private fun railOf(d: Dest): Dest = when (d) {
+        is Dest.OnService, is Dest.InGenre -> Dest.Home
+        is Dest.LbPerson, is Dest.LbListPage, Dest.LbSearch, Dest.LbFollow -> Dest.Letterboxd
+        else -> d
     }
 
     /** A poster on the page: the title, and the library copy of it when there is one. */
@@ -253,7 +270,7 @@ class MoviesPanel(
     }
     fun close() {
         navigationFocusListener?.let { if (top.viewTreeObserver.isAlive) top.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
-        worker.shutdownNow(); shelfPool.shutdownNow(); slowPool.shutdownNow(); infoPool.shutdownNow(); images.close()
+        worker.shutdownNow(); shelfPool.shutdownNow(); slowPool.shutdownNow(); infoPool.shutdownNow(); images.close(); if (lbStarted) lb.close()
     }
 
     /**
@@ -294,6 +311,17 @@ class MoviesPanel(
 
     /** Debug builds only (see MainActivity): opens a destination by name for UI-review screenshots. */
     fun debugGo(name: String) {
+        // "lbtest:/path/": fetch one Letterboxd page and log what came back (checks the browser fallback on a device).
+        if (name.startsWith("lbtest:")) {
+            val web = com.example.tvlauncher.data.letterboxd.LetterboxdWeb(activity)
+            slowPool.execute {
+                val t = System.currentTimeMillis()
+                val html = web.page(name.removePrefix("lbtest:"))
+                android.util.Log.i("Letterboxd", "TEST ${name.removePrefix("lbtest:")}: ${html?.length ?: -1} chars, posters=${html?.let { Regex("data-item-slug=").findAll(it).count() } ?: 0}, ${System.currentTimeMillis() - t} ms")
+                html?.let { h -> java.io.File(activity.cacheDir, "lbdump").apply { mkdirs() }.resolve(name.removePrefix("lbtest:").trim('/').replace(Regex("[^a-zA-Z0-9]+"), "_") + ".html").writeText(h) }
+            }
+            return
+        }
         // "loading": the stream loading screen as it first appears, without asking the server for anything.
         if (name == "loading") {
             go(Dest.Films)
@@ -338,7 +366,13 @@ class MoviesPanel(
         }
         val dest = when (name) {
             "search" -> Dest.Search; "films" -> Dest.Films; "series" -> Dest.Series; "docs" -> Dest.Docs
-            "library" -> Dest.Library; "downloads" -> Dest.Downloads; else -> Dest.Home
+            "library" -> Dest.Library; "downloads" -> Dest.Downloads
+            "letterboxd" -> Dest.Letterboxd; "lb-search" -> Dest.LbSearch; "lb-follow" -> Dest.LbFollow
+            else -> when {
+                name.startsWith("lb-person:") -> Dest.LbPerson(name.removePrefix("lb-person:"))
+                name.startsWith("lb-list:") -> Dest.LbListPage(name.removePrefix("lb-list:"))
+                else -> Dest.Home
+            }
         }
         overlay.findFocus()?.clearFocus()
         go(dest)
@@ -401,6 +435,7 @@ class MoviesPanel(
             Triple("Films", R.drawable.ic_cin_film, Dest.Films),
             Triple("Series", R.drawable.ic_cin_tv, Dest.Series),
             Triple("Documentaries", R.drawable.ic_cin_doc, Dest.Docs),
+            Triple("Letterboxd", R.drawable.ic_cin_lb, Dest.Letterboxd),
             Triple("My library", R.drawable.ic_cin_lib, Dest.Library),
             Triple("Downloads", R.drawable.ic_cin_dl, Dest.Downloads)
         )
@@ -486,9 +521,7 @@ class MoviesPanel(
         candidates.firstOrNull { it.isShown && it.isEnabled }?.requestFocus()
     }
 
-    private fun activeNavigationItem(): View? = tabs.entries.firstOrNull {
-        it.value === current || (it.value === Dest.Home && (current is Dest.OnService || current is Dest.InGenre))
-    }?.key
+    private fun activeNavigationItem(): View? = tabs.entries.firstOrNull { it.value === railOf(current) }?.key
 
     private fun isWithin(view: View?, parent: View): Boolean {
         var node = view
@@ -517,7 +550,7 @@ class MoviesPanel(
      * glass circle, a saffron icon and the stripe bar at the pill's edge; the rest are quiet.
      */
     private fun styleTabs() = tabs.forEach { (view, dest) ->
-        val selected = dest === current || (dest === Dest.Home && (current is Dest.OnService || current is Dest.InGenre))
+        val selected = dest === railOf(current)
         view.isSelected = selected
         val focused = view.hasFocus()
         val item = view as RailItem
@@ -529,7 +562,10 @@ class MoviesPanel(
         } else null
         val colour = when { focused -> Cinema.INK; selected -> Cinema.SAFFRON; else -> Cinema.RAIL_ICON }
         navigationLabels[view]?.let { (image, name) ->
-            image.setColorFilter(colour); name.setTextColor(colour)
+            // Letterboxd keeps its own three colours; quieter at rest, like the other icons.
+            if (dest === Dest.Letterboxd) { image.clearColorFilter(); image.alpha = if (focused || selected) 1f else 0.62f }
+            else image.setColorFilter(colour)
+            name.setTextColor(colour)
             Cinema.weight(name, 24, serif = false, weight = if (focused) 600 else 500)
         }
     }
@@ -605,6 +641,11 @@ class MoviesPanel(
             Dest.Search -> buildSearch()
             is Dest.OnService -> { pageTitle("On ${d.service.label}"); buildHero(); shelves(Catalog.servicePage(d.service), gen) }
             is Dest.InGenre -> { pageTitle(d.genre.label); buildHero(); shelves(Catalog.genrePage(d.genre), gen) }
+            Dest.Letterboxd -> buildLetterboxd(gen)
+            is Dest.LbPerson -> buildLbPerson(d.user, gen)
+            is Dest.LbListPage -> buildLbList(d.path, gen)
+            Dest.LbSearch -> buildLbSearch(gen)
+            Dest.LbFollow -> buildLbFollow(gen)
         }
         Perf.took("movies.build (main thread)", Perf.now() - buildStart)
     }
@@ -703,6 +744,684 @@ class MoviesPanel(
     private fun libraryEntries(items: List<JellyfinItem>): List<Entry> = items.map { Entry(libraryTitle(it), it, jellyfin.playbackHeaders()) }
 
     /** A row of the owner's own titles, or the offer to connect Jellyfin. */
+    // --- Letterboxd -----------------------------------------------------------------------------
+
+    @Volatile private var lbStarted = false
+    private val lb by lazy { lbStarted = true; com.example.tvlauncher.data.letterboxd.LetterboxdRepository(activity) }
+    private val lbPosterPool = Executors.newFixedThreadPool(4)
+
+    /** Display names and pictures of followed members, once their profiles have loaded. */
+    private val lbNames = HashMap<String, String>()
+
+    private fun lbName(user: String) = lbNames[user.lowercase()] ?: user
+
+    /** "2026-10-16" -> "16 Oct". */
+    private fun lbDay(iso: String?): String? {
+        if (iso == null || iso.length < 10) return null
+        val m = iso.substring(5, 7).toIntOrNull()?.takeIf { it in 1..12 } ?: return null
+        return "${iso.substring(8, 10).trimStart('0')} ${arrayOf("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")[m - 1]}"
+    }
+
+    /** Blocking: poster addresses for [films], looked up four at a time (each is remembered for good). */
+    private fun lbPosters(films: List<com.example.tvlauncher.data.letterboxd.LbFilm>): Map<String, String> {
+        val out = java.util.concurrent.ConcurrentHashMap<String, String>()
+        films.map { f -> lbPosterPool.submit { lb.posterUrl(f.slug)?.let { out[f.slug] = it } } }.forEach { runCatching { it.get(20, java.util.concurrent.TimeUnit.SECONDS) } }
+        return out
+    }
+
+    /** A Letterboxd film as a page title, until its own page says more (TMDB id, synopsis, backdrop). */
+    private fun lbTitle(f: com.example.tvlauncher.data.letterboxd.LbFilm, poster: String?) = Title(
+        key = "lb:" + f.slug, kind = Kind.MOVIE, name = f.name, year = f.year, overview = null, runtimeMin = null, genres = emptyList(),
+        age = null, imdbScore = null, posterUrl = poster, backdropUrl = null, imdbId = null, tmdbId = null)
+
+    /**
+     * Opens a Letterboxd film as an ordinary title page (Watch now, Stream now, the library badge): its Letterboxd page
+     * gives the TMDB id, synopsis, running time and backdrop.
+     */
+    private fun lbOpen(f: com.example.tvlauncher.data.letterboxd.LbFilm, poster: String?) {
+        val gen = generation
+        Toast.makeText(activity, "Opening ${f.name}…", Toast.LENGTH_SHORT).show()
+        slowPool.execute {
+            val info = lb.pageNow("/film/${f.slug}/", 7 * 24 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR)
+                ?.let { com.example.tvlauncher.data.letterboxd.Lb.film(it) }
+            if (jellyfin.isConnected) jellyfin.library()
+            activity.runOnUiThread {
+                if (gen != generation || !isVisible) return@runOnUiThread
+                val p = info?.page
+                val t = lbTitle(f, poster).copy(
+                    kind = if (info?.isTv == true) Kind.SHOW else Kind.MOVIE, tmdbId = info?.tmdbId?.toString(),
+                    overview = p?.synopsis, runtimeMin = p?.runtimeMin, genres = p?.genres.orEmpty().take(3), year = f.year ?: p?.year,
+                    // Letterboxd resizes its backdrops on request: ask for the full 1920 rather than its 1200 default.
+                    backdropUrl = info?.backdrop?.replace("-1200-1200-675-675-crop", "-1920-1920-1080-1080-crop"))
+                openDetail(entry(t), emptyList())
+            }
+        }
+    }
+
+    /** A row of Letterboxd posters under [heading]: [note] is the line a focused poster shows, [chip] its corner tag. */
+    private fun lbFilmRow(
+        heading: String, caption: String?, films: List<com.example.tvlauncher.data.letterboxd.LbFilm>, gen: Int,
+        into: LinearLayout = content, line: (com.example.tvlauncher.data.letterboxd.LbFilm) -> String? = { it.stars },
+        chip: (com.example.tvlauncher.data.letterboxd.LbFilm) -> String? = { null }, empty: String = "Nothing here yet"
+    ): Row {
+        val row = row(heading, caption, into = into)
+        row.inner.minimumHeight = Cinema.px(activity, 488)
+        if (films.isEmpty()) { row.inner.addView(note(empty)); return row }
+        // The cards go up at once; each poster's address is looked up (eight at a time, the first ones first) and its
+        // picture fills in as it arrives, so a long row never waits for all of them.
+        val shown = films.take(LB_ROW_LIMIT)
+        val posters = java.util.concurrent.ConcurrentHashMap<String, String>()
+        val cards = HashMap<String, PosterCard>()
+        shown.forEachIndexed { i, f ->
+            val v = card(Entry(lbTitle(f, null), null, emptyMap()), emptyList(), badge = false, note = line(f), chip = chip(f)) { lbOpen(f, posters[f.slug]) }
+            (v as? PosterCard)?.let { cards[f.slug] = it }
+            row.inner.addView(v, cardParams(i))
+        }
+        row.setCount(films.size)
+        lbFocusIfLost(row)
+        shelfPool.execute {
+            shown.chunked(8).forEach { chunk ->
+                if (gen != generation) return@execute
+                val found = lbPosters(chunk)
+                posters.putAll(found)
+                activity.runOnUiThread {
+                    if (gen != generation) return@runOnUiThread
+                    chunk.forEach { f -> found[f.slug]?.let { u -> images.loadShadedPoster(u, emptyMap(), 332, pageTag) { b -> cards[f.slug]?.setShadedPoster(b); frost?.refresh() } } }
+                }
+            }
+        }
+        return row
+    }
+
+    /** A row of list cards; each opens its list. */
+    private fun lbListRow(heading: String, caption: String?, lists: List<com.example.tvlauncher.data.letterboxd.LbList>, gen: Int, into: LinearLayout = content): Row {
+        val row = row(heading, caption, into = into)
+        row.inner.minimumHeight = Cinema.px(activity, 300)
+        if (lists.isEmpty()) { row.inner.addView(note("No lists yet")); return row }
+        lists.forEachIndexed { i, l ->
+            val card = ListCard(activity, posterW = 120, step = 76, widthMock = 500)
+            card.name.text = l.name
+            card.by.text = listOfNotNull(l.ownerName ?: lbName(l.owner), l.count?.let { "$it films" }, l.likes?.let { "♥ $it" }).joinToString("  ·  ")
+            card.setOnClickListener { go(Dest.LbListPage(l.path), remember = true) }
+            card.setOnFocusChangeListener { v, f -> if (f) reveal(v) }
+            row.inner.addView(card, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = Cinema.px(activity, 56) })
+        }
+        row.setCount(lists.size)
+        lbFocusIfLost(row)
+        shelfPool.execute {
+            val posters = lbPosters(lists.flatMap { it.previews })
+            activity.runOnUiThread {
+                if (gen != generation) return@runOnUiThread
+                lists.forEachIndexed { i, l -> (row.inner.getChildAt(i) as? ListCard)?.let { c ->
+                    l.previews.take(5).forEachIndexed { k, f -> posters[f.slug]?.let { u -> images.load(u, maxWidth = 240, tag = pageTag) { b -> c.posters[k].setImageBitmap(b) } } }
+                } }
+            }
+        }
+        return row
+    }
+
+    /** The page heading the Letterboxd pages share: three dots, the eyebrow words, and a big title. */
+    private fun lbHeader(eyebrow: List<String>, title: String, titleSize: Int = 84): LinearLayout {
+        val box = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false }
+        val line = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        line.addView(com.example.tvlauncher.design.cinema.LbDots.view(activity, 12), LinearLayout.LayoutParams(-2, -2).apply { marginEnd = Cinema.px(activity, 16) })
+        line.addView(Cinema.eyebrow(activity, eyebrow, mark = false))
+        box.addView(line, LinearLayout.LayoutParams(-2, -2))
+        box.addView(Cinema.title(activity, title, titleSize, maxLines = 1), LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 18) })
+        return box
+    }
+
+    /** Letterboxd home: the followed members as cards, what they watched lately, and their watchlists and likes. */
+    private fun buildLetterboxd(gen: Int) {
+        val users = lb.following
+        val head = FrameLayout(activity).apply { clipChildren = false }
+        head.addView(lbHeader(listOf("Letterboxd", "Following ${users.size}"), "Your film diary", 76), FrameLayout.LayoutParams(-2, -2).apply { leftMargin = pageStart })
+        val search = CinemaButton(activity, CinemaButton.Kind.GLASS, "Search lists", R.drawable.ic_cin_search, small = true).apply { setOnClickListener { go(Dest.LbSearch, remember = true) } }
+        head.addView(search, FrameLayout.LayoutParams(-2, Cinema.px(activity, 60), Gravity.END).apply { rightMargin = pageEnd; topMargin = Cinema.px(activity, 26) })
+        content.addView(head, LinearLayout.LayoutParams(-1, -2))
+
+        // The members, side by side, then "Follow someone".
+        val members = row(null, null)
+        members.inner.setPadding(0, Cinema.px(activity, 34), 0, Cinema.px(activity, 20))
+        val cards = users.map { u ->
+            MemberCard(activity).also { c ->
+                c.bind(lbName(u), u, null, null, null, emptyList())
+                c.setOnClickListener { go(Dest.LbPerson(u), remember = true) }
+                c.setOnFocusChangeListener { v, f -> if (f) reveal(v) }
+                members.inner.addView(c, LinearLayout.LayoutParams(Cinema.px(activity, 600), Cinema.px(activity, 300)).apply { marginEnd = Cinema.px(activity, 28) })
+            }
+        }
+        members.inner.addView(FollowCard(activity).apply {
+            setOnClickListener { go(Dest.LbFollow, remember = true) }
+            setOnFocusChangeListener { v, f -> if (f) reveal(v) }
+        }, LinearLayout.LayoutParams(Cinema.px(activity, 384), Cinema.px(activity, 300)))
+        cards.firstOrNull()?.let { first -> if (!detailOpen && overlay.findFocus() == null) requestFocusRobust(overlay as ViewGroup, first) }
+
+        val recentHolder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        content.addView(recentHolder, LinearLayout.LayoutParams(-1, -2))
+        val perPerson = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        content.addView(perPerson, LinearLayout.LayoutParams(-1, -2))
+
+        val diaries = java.util.concurrent.ConcurrentHashMap<String, List<com.example.tvlauncher.data.letterboxd.LbDiaryEntry>>()
+        var recentRow: Row? = null
+        fun drawRecent() {
+            val merged = users.flatMap { u -> diaries[u].orEmpty().map { u to it } }.sortedByDescending { it.second.date ?: "" }.take(18)
+            if (merged.isEmpty()) return
+            recentHolder.removeAllViews()
+            val owners = merged.associate { (u, d) -> d.film.slug + d.date to u }
+            recentRow = lbFilmRow("Recently watched", if (users.size > 1) "by you both" else null, merged.map { it.second.film.copy(rating = it.second.rating) }, gen, into = recentHolder,
+                line = { f -> listOfNotNull(f.stars, merged.firstOrNull { it.second.film.slug == f.slug }?.second?.date?.let { lbDay(it) }).joinToString("  ·  ").ifBlank { null } },
+                chip = { f -> merged.firstOrNull { it.second.film.slug == f.slug }?.first?.let { lbName(it).substringBefore(' ') } })
+        }
+        users.forEachIndexed { i, u ->
+            lb.load("/$u/", 2 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.profile(it, u) }) { p ->
+                if (gen != generation || p == null) return@load
+                lbNames[u.lowercase()] = p.name.substringBefore(' ').ifBlank { u }
+                lbStats[u] = p.stats.filter { it.second.lowercase() in setOf("films", "this year", "lists", "following") }.take(3)
+                val card = cards[i]
+                val last = diaries[u]?.firstOrNull()
+                card.bind(lbName(u), u, last?.film?.name ?: p.recent.firstOrNull()?.name, (last?.rating ?: p.recent.firstOrNull()?.rating)?.let { com.example.tvlauncher.data.letterboxd.Lb.stars(it) },
+                    lbDay(last?.date), p.stats.filter { it.second.lowercase() in setOf("films", "this year", "lists", "following") }.take(3).map { it.first to it.second })
+                card.avatar.set(lbName(u), null)
+                p.avatar?.let { a -> images.load(a, maxWidth = 220, tag = pageTag) { b -> card.avatar.set(lbName(u), b) } }
+                shelfPool.execute {
+                    val posters = lbPosters(p.favourites)
+                    activity.runOnUiThread {
+                        if (gen != generation) return@runOnUiThread
+                        p.favourites.forEachIndexed { k, f -> posters[f.slug]?.let { url -> images.load(url, maxWidth = 200, tag = pageTag) { b -> card.favs[k].setImageBitmap(b); if (k == 1) card.washWith(b) } } }
+                    }
+                }
+            }
+            lb.load("/$u/films/diary/", 30 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.MINUTE, { com.example.tvlauncher.data.letterboxd.Lb.diary(it) }) { d ->
+                if (gen != generation || d == null) return@load
+                diaries[u] = d
+                drawRecent()
+                d.firstOrNull()?.let { last -> cards[i].bind(lbName(u), u, last.film.name, last.rating?.let { com.example.tvlauncher.data.letterboxd.Lb.stars(it) }, lbDay(last.date), lbStats[u].orEmpty()) }
+            }
+        }
+        // Each member's watchlist and likes, in turn.
+        users.forEach { u ->
+            val watch = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+            val likes = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+            perPerson.addView(watch); perPerson.addView(likes)
+            lb.load("/$u/watchlist/", com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.films(it) }) { f ->
+                if (gen != generation || f == null) return@load
+                watch.removeAllViews(); lbFilmRow("${lbName(u)}’s watchlist", null, f.take(20), gen, into = watch, line = { null })
+            }
+            lb.load("/$u/likes/films/", com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.films(it) }) { f ->
+                if (gen != generation || f == null) return@load
+                likes.removeAllViews(); lbFilmRow("${lbName(u)} liked", null, f.take(20), gen, into = likes, line = { it.stars?.let { s -> "$s  ♥" } ?: "♥" })
+            }
+        }
+    }
+
+    /** Numbers shown on a member's card, kept from their profile so a diary refresh does not lose them. */
+    private val lbStats = HashMap<String, List<Pair<String, String>>>()
+
+    /** One member: picture, name, numbers and favourites, then tabs for their watchlist, likes, diary, reviews and lists. */
+    private fun buildLbPerson(user: String, gen: Int) {
+        val followed = lb.following.any { it.equals(user, true) }
+        val head = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
+        val left = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false }
+        val avatar = com.example.tvlauncher.design.cinema.AvatarView(activity, 180).apply { set(lbName(user), null) }
+        left.addView(avatar, LinearLayout.LayoutParams(Cinema.px(activity, 180), Cinema.px(activity, 180)))
+        val names = lbHeader(listOf(if (followed) "Following" else "Letterboxd", "@$user"), lbName(user), 104)
+        left.addView(names, LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 40) })
+        head.addView(left, FrameLayout.LayoutParams(-2, -2).apply { leftMargin = pageStart })
+        val favs = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        favs.addView(Cinema.text(activity, "Favourites", 17, Cinema.DIM, weight = 600, tracking = 0.24f, caps = true))
+        val favRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        favs.addView(favRow, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 16) })
+        head.addView(favs, FrameLayout.LayoutParams(-2, -2, Gravity.END).apply { rightMargin = pageEnd })
+        content.addView(head, LinearLayout.LayoutParams(-1, -2))
+
+        // The numbers as glass tiles, and Follow / Unfollow beside them.
+        val tiles = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false }
+        content.addView(tiles, LinearLayout.LayoutParams(-2, -2).apply { marginStart = pageStart; topMargin = Cinema.px(activity, 34) })
+        val followButton = CinemaButton(activity, if (followed) CinemaButton.Kind.GLASS else CinemaButton.Kind.PRIMARY, if (followed) "Unfollow" else "Follow", null, small = true).apply {
+            setOnClickListener {
+                if (lb.following.any { it.equals(user, true) }) { lb.unfollow(user); Toast.makeText(activity, "Stopped following ${lbName(user)}", Toast.LENGTH_SHORT).show(); current = Dest.Letterboxd; trail.clear(); styleTabs(); build() }
+                else { lb.follow(user); Toast.makeText(activity, "Following ${lbName(user)}", Toast.LENGTH_SHORT).show(); build() }
+            }
+        }
+
+        // Tabs: Fraunces words, the shown one with a stripe beneath, a focused one filled cream.
+        val tabRow = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false; clipToPadding = false }
+        content.addView(tabRow, LinearLayout.LayoutParams(-2, Cinema.px(activity, 62)).apply { marginStart = pageStart - Cinema.px(activity, 26); topMargin = Cinema.px(activity, 44) })
+        val holder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        content.addView(holder, LinearLayout.LayoutParams(-1, -2))
+        val tabNames = listOf("Watchlist", "Liked", "Diary", "Reviews", "Lists")
+        var shown = -1
+        val paints = ArrayList<() -> Unit>()
+        fun show(i: Int) {
+            if (shown == i) return
+            shown = i; paints.forEach { it() }
+            holder.removeAllViews()
+            val loading = note("Loading…").apply { setPadding(pageStart, Cinema.px(activity, 30), 0, 0) }
+            holder.addView(loading)
+            val H = com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR
+            fun ready(): Boolean = gen == generation && shown == i
+            when (i) {
+                0 -> lb.load("/$user/watchlist/", H, { com.example.tvlauncher.data.letterboxd.Lb.films(it) }) { f -> if (!ready()) return@load; holder.removeAllViews(); lbFilmRow("Watchlist", null, f.orEmpty(), gen, holder, line = { null }) }
+                1 -> lb.load("/$user/likes/films/", H, { com.example.tvlauncher.data.letterboxd.Lb.films(it) }) { f -> if (!ready()) return@load; holder.removeAllViews(); lbFilmRow("Liked films", null, f.orEmpty(), gen, holder, line = { it.stars?.let { s -> "$s  ♥" } ?: "♥" }) }
+                2 -> lb.load("/$user/films/diary/", H / 2, { com.example.tvlauncher.data.letterboxd.Lb.diary(it) }) { d -> if (!ready()) return@load; holder.removeAllViews()
+                    lbFilmRow("Diary", null, d.orEmpty().map { it.film.copy(rating = it.rating) }, gen, holder,
+                        line = { f -> listOfNotNull(f.stars, d.orEmpty().firstOrNull { it.film.slug == f.slug }?.date?.let { lbDay(it) }).joinToString("  ·  ").ifBlank { null } }) }
+                3 -> lb.load("/$user/films/reviews/", H, { com.example.tvlauncher.data.letterboxd.Lb.reviews(it) }) { r -> if (!ready()) return@load; holder.removeAllViews(); lbReviewRow("Reviews", r.orEmpty(), gen, holder, byFilm = true) }
+                4 -> lb.load("/$user/lists/", H, { com.example.tvlauncher.data.letterboxd.Lb.lists(it) }) { l -> if (!ready()) return@load; holder.removeAllViews(); lbListRow("Lists", null, l.orEmpty(), gen, holder) }
+            }
+        }
+        tabNames.forEachIndexed { i, name ->
+            val label = Cinema.text(activity, name, 34, Cinema.DIM, serif = true, tracking = -0.01f).apply { maxLines = 1 }
+            val underline = View(activity).apply { background = StripeDrawable(horizontalBands = false, radius = Cinema.pxf(activity, 3)) }
+            val tab = FrameLayout(activity).apply {
+                isFocusable = true; isClickable = true; contentDescription = name
+                setPadding(Cinema.px(activity, 26), 0, Cinema.px(activity, 26), 0)
+                addView(label, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER_VERTICAL))
+                addView(underline, FrameLayout.LayoutParams(Cinema.px(activity, 40), Cinema.px(activity, 6), Gravity.BOTTOM or Gravity.START).apply { leftMargin = Cinema.px(activity, 26); bottomMargin = Cinema.px(activity, 2) })
+            }
+            val lit = GradientDrawable().apply { cornerRadius = Cinema.pxf(activity, 31); setColor(Cinema.CREAM) }
+            paints += {
+                val focused = tab.isFocused; val on = shown == i
+                tab.background = if (focused) lit else null
+                label.setTextColor(if (focused) Cinema.INK else if (on) Cinema.CREAM else Cinema.DIM)
+                underline.visibility = if (on && !focused) View.VISIBLE else View.GONE
+            }
+            tab.setOnFocusChangeListener { v, f -> if (f) { show(i); reveal(v) }; paints[i]() }
+            tab.setOnClickListener { show(i) }
+            tabRow.addView(tab, LinearLayout.LayoutParams(-2, -1).apply { if (i > 0) marginStart = Cinema.px(activity, 10) })
+        }
+        show(0)
+
+        lb.load("/$user/", 2 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.profile(it, user) }) { p ->
+            if (gen != generation) return@load
+            if (p == null) { names.addView(note("Couldn't reach Letterboxd just now")); return@load }
+            lbNames[user.lowercase()] = p.name.substringBefore(' ').ifBlank { user }
+            ((names.getChildAt(1) as? TextView))?.text = p.name
+            avatar.set(p.name, null)
+            p.avatar?.let { a -> images.load(a, maxWidth = 360, tag = pageTag) { b -> avatar.set(p.name, b) } }
+            tiles.removeAllViews()
+            p.stats.take(4).forEachIndexed { i, (value, label) ->
+                val tile = LinearLayout(activity).apply {
+                    orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL
+                    setPadding(Cinema.px(activity, 22), 0, Cinema.px(activity, 16), 0); background = Cinema.glass(activity, 22f)
+                }
+                tile.addView(Cinema.text(activity, value, 40, Cinema.CREAM, serif = true))
+                tile.addView(Cinema.text(activity, label, 14, Cinema.DIM, weight = 600, tracking = 0.14f, caps = true).apply { maxLines = 1 })
+                tiles.addView(tile, LinearLayout.LayoutParams(Cinema.px(activity, 200), Cinema.px(activity, 96)).apply { if (i > 0) marginStart = Cinema.px(activity, 18) })
+            }
+            tiles.addView(followButton, LinearLayout.LayoutParams(-2, Cinema.px(activity, 60)).apply { marginStart = Cinema.px(activity, 30) })
+            shelfPool.execute {
+                val posters = lbPosters(p.favourites)
+                activity.runOnUiThread {
+                    if (gen != generation) return@runOnUiThread
+                    favRow.removeAllViews()
+                    p.favourites.forEachIndexed { k, f ->
+                        val v = ImageView(activity).apply {
+                            scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true; elevation = Cinema.pxf(activity, 12)
+                            background = GradientDrawable().apply { cornerRadius = Cinema.pxf(activity, 12); setColor(Cinema.PLACEHOLDER) }
+                            outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, Cinema.pxf(activity, 12)) } }
+                        }
+                        posters[f.slug]?.let { u -> images.load(u, maxWidth = 300, tag = pageTag) { b -> v.setImageBitmap(b) } }
+                        favRow.addView(v, LinearLayout.LayoutParams(Cinema.px(activity, 150), Cinema.px(activity, 225)).apply { if (k > 0) marginStart = Cinema.px(activity, 20) })
+                    }
+                }
+            }
+        }
+        tabRow.getChildAt(0)?.let { if (overlay.findFocus() == null) requestFocusRobust(overlay as ViewGroup, it) }
+    }
+
+    /** A row of review cards. [byFilm] names each card by its film (a member's reviews) rather than its author. */
+    private fun lbReviewRow(heading: String?, reviews: List<com.example.tvlauncher.data.letterboxd.LbReview>, gen: Int, into: LinearLayout, byFilm: Boolean = false, inset: Boolean = true): Row {
+        val row = row(heading, null, into = into, inset = inset)
+        if (reviews.isEmpty()) { row.inner.addView(note("No reviews yet")); return row }
+        reviews.take(16).forEachIndexed { i, r ->
+            val card = ReviewCard(activity)
+            val footer = listOfNotNull(lbDay(r.date), r.likes?.let { n -> if (n >= 1000) String.format(Locale.UK, "%.1fK likes", n / 1000.0).replace(".0K", "K") else if (n == 1) "1 like" else "$n likes" }).joinToString(" · ")
+            card.bind(if (byFilm) r.film?.name ?: r.authorName else r.authorName, r.rating?.let { com.example.tvlauncher.data.letterboxd.Lb.stars(it) }, r.liked, r.text, footer)
+            if (byFilm) card.avatar.visibility = View.GONE
+            else { card.avatar.set(r.authorName, null); r.avatar?.let { a -> images.load(a, maxWidth = 104, tag = pageTag) { b -> card.avatar.set(r.authorName, b) } } }
+            card.setOnFocusChangeListener { v, f -> if (f) reveal(v) }
+            card.setOnClickListener {
+                if (byFilm && r.film != null) lbOpen(r.film, null)
+                else infoSheet.show("REVIEW", r.authorName, listOfNotNull(r.rating?.let { com.example.tvlauncher.data.letterboxd.Lb.stars(it) }, lbDay(r.date)).joinToString(" · ").ifBlank { null }, listOf(r.text), null, listOf(SheetAction("Close") { }))
+            }
+            row.inner.addView(card, LinearLayout.LayoutParams(Cinema.px(activity, 540), Cinema.px(activity, 300)).apply { if (i > 0) marginStart = Cinema.px(activity, 32) })
+        }
+        row.setCount(reviews.size)
+        lbFocusIfLost(row)
+        return row
+    }
+
+    /** A Letterboxd page opened from a card that is gone now leaves nothing focused: give focus to [row]'s first item. */
+    private fun lbFocusIfLost(row: Row) {
+        val f = overlay.findFocus()
+        if (!detailOpen && streamLoading == null && (f == null || !f.isAttachedToWindow) && row.inner.childCount > 0)
+            row.inner.getChildAt(0)?.takeIf { it.isFocusable }?.let { requestFocusRobust(overlay as ViewGroup, it) }
+    }
+
+    /** A list: its name, owner and description, a fan of its first posters, then its films in order. */
+    private fun buildLbList(path: String, gen: Int) {
+        val head = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
+        val text = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false }
+        val owner = path.split('/').getOrNull(1).orEmpty()
+        val header = lbHeader(listOf("List", "by ${lbName(owner)}"), "…", 104)
+        text.addView(header)
+        val meta = Cinema.text(activity, "", 23, Cinema.MUTED)
+        text.addView(meta, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 26) })
+        val desc = Cinema.synopsis(activity, "", 24, maxLines = 3).apply { visibility = View.GONE }
+        text.addView(desc, LinearLayout.LayoutParams(Cinema.px(activity, 960), -2).apply { topMargin = Cinema.px(activity, 18) })
+        head.addView(text, FrameLayout.LayoutParams(Cinema.px(activity, 1080), -2).apply { leftMargin = pageStart })
+        val fan = ListCard(activity, posterW = 200, step = 96, widthMock = 600).apply { isFocusable = false; name.visibility = View.GONE; by.visibility = View.GONE }
+        head.addView(fan, FrameLayout.LayoutParams(-2, -2, Gravity.END).apply { rightMargin = pageEnd })
+        content.addView(head, LinearLayout.LayoutParams(-1, -2))
+        val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        content.addView(rows, LinearLayout.LayoutParams(-1, -2).apply { topMargin = Cinema.px(activity, 10) })
+        rows.addView(note("Loading the list…").apply { setPadding(pageStart, Cinema.px(activity, 40), 0, 0) })
+        lb.load(path, com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.listPage(it, path) }) { l ->
+            if (gen != generation) return@load
+            rows.removeAllViews()
+            if (l == null) { rows.addView(note("Couldn't load this list just now").apply { setPadding(pageStart, Cinema.px(activity, 40), 0, 0) }); return@load }
+            ((header.getChildAt(1) as? TextView))?.let { t -> t.text = l.name; Cinema.style(t, when { l.name.length > 30 -> 64; l.name.length > 16 -> 84; else -> 104 }, Cinema.CREAM, serif = true, tracking = -0.02f) }
+            meta.text = listOfNotNull(l.count?.let { "$it films" }, if (l.films().size < (l.count ?: 0)) "first ${l.films().size} shown" else null).joinToString("  ·  ")
+            l.description?.let { desc.text = it; desc.visibility = View.VISIBLE }
+            val films = l.films()
+            // Twelve to a row, each row headed by its places ("1–12"), so a long list stays easy to move through.
+            films.chunked(12).forEachIndexed { r, chunk ->
+                val from = r * 12 + 1
+                lbFilmRow(if (films.size > 12) "$from–${from + chunk.size - 1}" else "In order", null, chunk, gen, into = rows, line = { null }, chip = { f -> "${films.indexOf(f) + 1}" })
+            }
+            // The fan's five first, ahead of the rows' posters, which queue on the shelf workers.
+            slowPool.execute {
+                val posters = lbPosters(films.take(5))
+                activity.runOnUiThread { if (gen == generation) films.take(5).forEachIndexed { k, f -> posters[f.slug]?.let { u -> images.load(u, maxWidth = 400, tag = pageTag) { b -> fan.posters[k].setImageBitmap(b) } } } }
+            }
+        }
+    }
+
+    private fun com.example.tvlauncher.data.letterboxd.LbList.films() = previews
+
+    /** Typed text on the Letterboxd search and follow pages. */
+    private var lbTyped = ""
+
+    /**
+     * List search (`C`): the keyboard on the left, the best matches on the right as they arrive, every match in a row
+     * beneath, and with nothing typed, the lists of the people followed here.
+     */
+    private fun buildLbSearch(gen: Int) {
+        lbTyped = ""
+        val stage = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
+        content.addView(stage, LinearLayout.LayoutParams(-1, Cinema.px(activity, 720)))
+        val left = Cinema.px(activity, 176)
+        fun place(v: View, x: Int, y: Int, w: Int = -2, h: Int = -2) = stage.addView(v, FrameLayout.LayoutParams(w, h).apply { leftMargin = x; topMargin = y })
+        val field = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(Cinema.px(activity, 42), 0, Cinema.px(activity, 42), 0); background = Cinema.glass(activity, 56f, 0x17FFF2DE)
+        }
+        field.addView(Cinema.icon(activity, R.drawable.ic_cin_search, Cinema.SAFFRON), LinearLayout.LayoutParams(Cinema.px(activity, 40), Cinema.px(activity, 40)))
+        field.addView(com.example.tvlauncher.design.cinema.LbDots.view(activity, 12), LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 22) })
+        field.addView(Cinema.text(activity, "Lists", 20, Cinema.DIM, weight = 600, tracking = 0.2f, caps = true), LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 16) })
+        val query = Cinema.text(activity, "Search Letterboxd lists", 36, 0xFF8F8272.toInt(), weight = 300).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.START }
+        field.addView(query, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = Cinema.px(activity, 22) })
+        place(field, left, Cinema.px(activity, 12), activity.resources.displayMetrics.widthPixels - left - pageEnd, Cinema.px(activity, 112))
+        place(Cinema.eyebrow(activity, listOf("Type to search"), color = Cinema.DIM, markAlpha = 0.5f), left, Cinema.px(activity, 170))
+        val side = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        place(side, Cinema.px(activity, 1232), Cinema.px(activity, 170), Cinema.px(activity, 592))
+        val below = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        content.addView(below, LinearLayout.LayoutParams(-1, -2))
+        var pending: Runnable? = null
+        fun showResults(q: String, lists: List<com.example.tvlauncher.data.letterboxd.LbList>?) {
+            side.removeAllViews(); below.removeAllViews()
+            side.addView(Cinema.text(activity, if (lists == null) "Searching for “$q”…" else "Lists matching “$q”", 17, Cinema.DIM, weight = 600, tracking = 0.24f, caps = true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+            if (lists == null) return
+            if (lists.isEmpty()) { side.addView(note("No lists found"), LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 18) }); return }
+            lists.take(3).forEach { l ->
+                val card = GlowCard(activity, 26f).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(Cinema.px(activity, 22), 0, Cinema.px(activity, 22), 0); contentDescription = l.name }
+                val mini = ListCard(activity, posterW = 66, step = 30, widthMock = 186).apply { isFocusable = false; name.visibility = View.GONE; by.visibility = View.GONE }
+                card.addView(mini, LinearLayout.LayoutParams(Cinema.px(activity, 186), Cinema.px(activity, 99)))
+                val t = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+                t.addView(Cinema.text(activity, l.name, 28, Cinema.CREAM, serif = true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+                t.addView(Cinema.text(activity, listOfNotNull(l.ownerName ?: l.owner, l.count?.let { "$it films" }, l.likes?.let { "♥ $it" }).joinToString("  ·  "), 18, Cinema.MUTED).apply { maxLines = 1 },
+                    LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 6) })
+                card.addView(t, LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = Cinema.px(activity, 20) })
+                card.setOnClickListener { go(Dest.LbListPage(l.path), remember = true) }
+                side.addView(card, LinearLayout.LayoutParams(-1, Cinema.px(activity, 140)).apply { topMargin = Cinema.px(activity, 18) })
+                shelfPool.execute { val p = lbPosters(l.previews.take(5)); activity.runOnUiThread { l.previews.take(5).forEachIndexed { k, f -> p[f.slug]?.let { u -> images.load(u, maxWidth = 140, tag = pageTag) { b -> mini.posters[k].setImageBitmap(b) } } } } }
+            }
+            lbListRow("All matching lists", "${lists.size}", lists, gen, into = below)
+        }
+        fun showIdle() {
+            side.removeAllViews(); below.removeAllViews()
+            side.addView(Cinema.text(activity, "Try a theme, a director or a mood", 17, Cinema.DIM, weight = 600, tracking = 0.24f, caps = true))
+            listOf("a24", "comfort", "horror", "ghibli", "noir").forEachIndexed { i, s ->
+                side.addView(pill(s, accent = false).apply { setOnClickListener { lbTyped = s; query.text = s; query.setTextColor(Cinema.CREAM); lbSearchRunner?.invoke(s) } },
+                    LinearLayout.LayoutParams(-2, Cinema.px(activity, 54)).apply { topMargin = Cinema.px(activity, if (i == 0) 22 else 12) })
+            }
+            // Lists by the people followed here.
+            val holder = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+            below.addView(holder)
+            val all = java.util.concurrent.ConcurrentHashMap<String, List<com.example.tvlauncher.data.letterboxd.LbList>>()
+            lb.following.forEach { u ->
+                lb.load("/$u/lists/", com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.lists(it) }) { l ->
+                    if (gen != generation || lbTyped.isNotBlank() || l == null) return@load
+                    all[u] = l.map { it.copy(ownerName = it.ownerName ?: lbName(u)) }
+                    holder.removeAllViews(); lbListRow("Lists by the people you follow", null, all.values.flatten(), gen, into = holder)
+                }
+            }
+        }
+        fun runQuery(q: String) {
+            if (q.length < 2) { showIdle(); return }
+            showResults(q, null)
+            lb.load("/search/lists/${java.net.URLEncoder.encode(q, "UTF-8").replace("+", "%20")}/", 24 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR,
+                { com.example.tvlauncher.data.letterboxd.Lb.lists(it) }) { l -> if (gen == generation && lbTyped.trim() == q) showResults(q, l.orEmpty()) }
+        }
+        lbSearchRunner = { q -> runQuery(q) }
+        val keyboard = QwertyKeyboard(activity) { key ->
+            lbTyped = Qwerty.type(lbTyped, key)
+            query.text = lbTyped.ifEmpty { "Search Letterboxd lists" }; query.setTextColor(if (lbTyped.isEmpty()) 0xFF8F8272.toInt() else Cinema.CREAM)
+            pending?.let { ui.removeCallbacks(it) }
+            pending = Runnable { runQuery(lbTyped.trim()) }.also { ui.postDelayed(it, 700) }
+        }
+        place(keyboard, left, Cinema.px(activity, 240), Cinema.px(activity, 980), Cinema.px(activity, 476))
+        showIdle()
+        keyboard.keys.firstOrNull { it.contentDescription == "q" }?.let { requestFocusRobust(overlay as ViewGroup, it) }
+    }
+
+    /** Runs a list search for a suggestion pressed on the search page (set by [buildLbSearch]). */
+    private var lbSearchRunner: ((String) -> Unit)? = null
+
+    /**
+     * Follow someone (`F`): type a username and their profile appears beside the keyboard, favourites and all, with
+     * Follow. Beneath, the people the followed members follow, to pick from without typing.
+     */
+    private fun buildLbFollow(gen: Int) {
+        lbTyped = ""
+        val stage = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
+        content.addView(stage, LinearLayout.LayoutParams(-1, Cinema.px(activity, 800)))
+        val left = Cinema.px(activity, 176)
+        fun place(v: View, x: Int, y: Int, w: Int = -2, h: Int = -2) = stage.addView(v, FrameLayout.LayoutParams(w, h).apply { leftMargin = x; topMargin = y })
+        place(lbHeader(listOf("Follow someone"), "Who should we follow?", 76), left, 0)
+        val field = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(Cinema.px(activity, 42), 0, Cinema.px(activity, 42), 0); background = Cinema.glass(activity, 56f, 0x17FFF2DE)
+        }
+        field.addView(Cinema.text(activity, "letterboxd.com/", 30, Cinema.DIM))
+        val typed = Cinema.text(activity, "", 36, Cinema.CREAM).apply { maxLines = 1 }
+        field.addView(typed, LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 4) })
+        place(field, left, Cinema.px(activity, 170), Cinema.px(activity, 980), Cinema.px(activity, 112))
+        val preview = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(Cinema.px(activity, 40), Cinema.px(activity, 36), Cinema.px(activity, 40), Cinema.px(activity, 36))
+            background = Cinema.glass(activity, 34f); clipChildren = false; clipToPadding = false; visibility = View.INVISIBLE
+        }
+        place(preview, Cinema.px(activity, 1240), Cinema.px(activity, 170), Cinema.px(activity, 584))
+        var pending: Runnable? = null
+        fun showPreview(user: String) {
+            preview.visibility = View.VISIBLE; preview.removeAllViews()
+            preview.addView(Cinema.text(activity, "Looking for @$user…", 17, Cinema.DIM, weight = 600, tracking = 0.2f, caps = true))
+            lb.load("/$user/", 2 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { html -> if (lb.missing(html)) null else com.example.tvlauncher.data.letterboxd.Lb.profile(html, user) }) { p ->
+                if (gen != generation || lbTyped != user) return@load
+                preview.removeAllViews()
+                if (p == null) { preview.addView(Cinema.text(activity, "No member called @$user", 24, Cinema.MUTED)); return@load }
+                preview.addView(Cinema.text(activity, "Found on Letterboxd", 15, Cinema.DIM, weight = 600, tracking = 0.2f, caps = true))
+                val who = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; clipChildren = false }
+                val av = com.example.tvlauncher.design.cinema.AvatarView(activity, 120).apply { set(p.name, null) }
+                p.avatar?.let { a -> images.load(a, maxWidth = 240, tag = pageTag) { b -> av.set(p.name, b) } }
+                who.addView(av, LinearLayout.LayoutParams(Cinema.px(activity, 120), Cinema.px(activity, 120)))
+                val nm = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+                nm.addView(Cinema.title(activity, p.name, 52, maxLines = 1))
+                nm.addView(Cinema.text(activity, listOfNotNull("@$user", p.stat("Films")?.let { "$it films" }).joinToString(" · "), 20, Cinema.DIM), LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 6) })
+                who.addView(nm, LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 26) })
+                preview.addView(who, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 24) })
+                if (p.favourites.isNotEmpty()) {
+                    preview.addView(Cinema.text(activity, "Favourites", 15, Cinema.DIM, weight = 600, tracking = 0.2f, caps = true), LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 30) })
+                    val favs = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+                    preview.addView(favs, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 14) })
+                    shelfPool.execute {
+                        val posters = lbPosters(p.favourites)
+                        activity.runOnUiThread {
+                            p.favourites.forEachIndexed { k, f ->
+                                val v = ImageView(activity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true
+                                    background = GradientDrawable().apply { cornerRadius = Cinema.pxf(activity, 10); setColor(Cinema.PLACEHOLDER) }
+                                    outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, Cinema.pxf(activity, 10)) } } }
+                                posters[f.slug]?.let { u -> images.load(u, maxWidth = 240, tag = pageTag) { b -> v.setImageBitmap(b) } }
+                                favs.addView(v, LinearLayout.LayoutParams(Cinema.px(activity, 118), Cinema.px(activity, 177)).apply { if (k > 0) marginStart = Cinema.px(activity, 14) })
+                            }
+                        }
+                    }
+                }
+                val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false }
+                val already = lb.following.any { it.equals(user, true) }
+                buttons.addView(CinemaButton(activity, CinemaButton.Kind.PRIMARY, if (already) "Already following" else "Follow", null).apply {
+                    isEnabled = !already
+                    setOnClickListener { lb.follow(user); lbNames[user.lowercase()] = p.name.substringBefore(' '); Toast.makeText(activity, "Following ${p.name}", Toast.LENGTH_SHORT).show(); current = Dest.Letterboxd; trail.clear(); styleTabs(); build() }
+                }, LinearLayout.LayoutParams(-2, Cinema.px(activity, 76)))
+                preview.addView(buttons, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 34) })
+            }
+        }
+        val keyboard = QwertyKeyboard(activity) { key ->
+            // Usernames have no spaces: Space types an underscore, which they may contain.
+            lbTyped = (if (key == Qwerty.Key.Space) Qwerty.type(lbTyped, Qwerty.Key.Char('_')) else Qwerty.type(lbTyped, key)).take(30)
+            typed.text = lbTyped
+            pending?.let { ui.removeCallbacks(it) }
+            if (lbTyped.length >= 2) pending = Runnable { showPreview(lbTyped) }.also { ui.postDelayed(it, 900) } else preview.visibility = View.INVISIBLE
+        }
+        place(keyboard, left, Cinema.px(activity, 320), Cinema.px(activity, 980), Cinema.px(activity, 476))
+        // People the followed members follow, to choose without typing.
+        val suggestions = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+        content.addView(suggestions, LinearLayout.LayoutParams(-1, -2))
+        lb.following.firstOrNull()?.let { u ->
+            lb.load("/$u/following/", 12 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.members(it) }) { m ->
+                if (gen != generation || m.isNullOrEmpty()) return@load
+                suggestions.removeAllViews()
+                val r = row("People ${lbName(u)} follows", null, into = suggestions)
+                // The heading names them properly once their profile (usually saved already) is read.
+                if (lbNames[u.lowercase()] == null) lb.load("/$u/", 24 * com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR, { com.example.tvlauncher.data.letterboxd.Lb.profile(it, u) }) { p ->
+                    p ?: return@load; lbNames[u.lowercase()] = p.name.substringBefore(' ')
+                    (r.heading?.let { h -> (h as? ViewGroup)?.let { g -> (0 until g.childCount).map { g.getChildAt(it) }.filterIsInstance<TextView>().firstOrNull() } })?.text = "People ${lbName(u)} follows"
+                }
+                m.filterNot { x -> lb.following.any { it.equals(x.user, true) } }.take(20).forEachIndexed { i, x ->
+                    val chip = GlowCard(activity, 40f).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(Cinema.px(activity, 14), 0, Cinema.px(activity, 28), 0); contentDescription = x.name }
+                    val av = com.example.tvlauncher.design.cinema.AvatarView(activity, 56).apply { set(x.name, null) }
+                    x.avatar?.let { a -> images.load(a, maxWidth = 112, tag = pageTag) { b -> av.set(x.name, b) } }
+                    chip.addView(av, LinearLayout.LayoutParams(Cinema.px(activity, 56), Cinema.px(activity, 56)))
+                    chip.addView(Cinema.text(activity, x.name, 22, Cinema.CREAM, weight = 500).apply { maxLines = 1 }, LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 14) })
+                    chip.setOnClickListener { lbTyped = x.user; typed.text = x.user; showPreview(x.user) }
+                    chip.onFocus = { lit -> if (lit) reveal(chip) }
+                    r.inner.addView(chip, LinearLayout.LayoutParams(-2, Cinema.px(activity, 80)).apply { if (i > 0) marginStart = Cinema.px(activity, 18) })
+                }
+            }
+        }
+        keyboard.keys.firstOrNull { it.contentDescription == "q" }?.let { requestFocusRobust(overlay as ViewGroup, it) }
+    }
+
+    /** "2906266" -> "2.9M", "412000" -> "412K". */
+    private fun lbCount(n: Long): String = when {
+        n >= 1_000_000 -> String.format(Locale.UK, "%.1fM", n / 1e6).replace(".0M", "M")
+        n >= 1_000 -> "${n / 1000}K"
+        else -> "$n"
+    }
+
+    /**
+     * "On Letterboxd" on a film's page (`E`): the average with its chart, what the followed members made of it, and
+     * the reviews people are liking this week. It appears once its page has been read; nothing shows for a title
+     * Letterboxd does not know.
+     */
+    private fun lbFilmSection(column: LinearLayout, e: Entry) {
+        val t = e.title
+        val slugHint = t.key.removePrefix("lb:").takeIf { t.key.startsWith("lb:") }
+        val tmdb = t.tmdbId?.toLongOrNull()
+        if (slugHint == null && (tmdb == null || t.kind == Kind.SHOW)) return   // Letterboxd is about films
+        val box = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false; visibility = View.GONE }
+        column.addView(box, LinearLayout.LayoutParams(-1, -2).apply { topMargin = Cinema.px(activity, 64) })
+        val H = com.example.tvlauncher.data.letterboxd.LetterboxdRepository.HOUR
+        slowPool.execute {
+            val info = lb.pageNow(slugHint?.let { "/film/$it/" } ?: "/tmdb/$tmdb/", 72 * H)?.let { com.example.tvlauncher.data.letterboxd.Lb.film(it) } ?: return@execute
+            activity.runOnUiThread {
+                if (!detailOpen || !box.isAttachedToWindow) return@runOnUiThread
+                box.visibility = View.VISIBLE
+                val head = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                head.addView(Cinema.rowHeading(activity, "On Letterboxd", sizePx = 46))
+                head.addView(com.example.tvlauncher.design.cinema.LbDots.view(activity, 12), LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 18) })
+                box.addView(head)
+                val panels = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false }
+                box.addView(panels, LinearLayout.LayoutParams(-1, Cinema.px(activity, 250)).apply { topMargin = Cinema.px(activity, 28) })
+
+                // The average, its chart, and how many have rated and reviewed it.
+                val avg = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(Cinema.px(activity, 34), Cinema.px(activity, 30), Cinema.px(activity, 34), 0); background = Cinema.glass(activity, 30f) }
+                avg.addView(Cinema.text(activity, "Average rating", 15, Cinema.DIM, weight = 600, tracking = 0.2f, caps = true))
+                val figures = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
+                figures.addView(Cinema.text(activity, info.average?.let { String.format(Locale.UK, "%.1f", it) } ?: "–", 96, Cinema.CREAM, serif = true))
+                val chart = com.example.tvlauncher.design.cinema.LbHistogram(activity)
+                figures.addView(chart, LinearLayout.LayoutParams(Cinema.px(activity, 260), Cinema.px(activity, 90)).apply { marginStart = Cinema.px(activity, 26); bottomMargin = Cinema.px(activity, 14) })
+                avg.addView(figures, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 6) })
+                avg.addView(Cinema.text(activity, listOfNotNull(info.ratings?.let { "from ${lbCount(it)} ratings" }, info.reviews?.let { "${lbCount(it)} reviews" }).joinToString(" · "), 19, Cinema.MUTED),
+                    LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 8) })
+                panels.addView(avg, LinearLayout.LayoutParams(Cinema.px(activity, 520), -1))
+                lb.load("/csi/film/${info.slug}/rating-histogram/", 24 * H, { com.example.tvlauncher.data.letterboxd.Lb.histogram(it) }) { c -> c?.let { chart.counts = it } }
+
+                // The followed members: their stars, a like, and the start of their review, or that they have not logged it.
+                val circle = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; setPadding(Cinema.px(activity, 34), Cinema.px(activity, 30), Cinema.px(activity, 34), 0); background = Cinema.glass(activity, 30f); clipChildren = false }
+                circle.addView(Cinema.text(activity, "Your circle", 15, Cinema.DIM, weight = 600, tracking = 0.2f, caps = true))
+                val people = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false }
+                circle.addView(people, LinearLayout.LayoutParams(-1, -2).apply { topMargin = Cinema.px(activity, 22) })
+                panels.addView(circle, LinearLayout.LayoutParams(0, -1, 1f).apply { marginStart = Cinema.px(activity, 40) })
+                lb.following.forEachIndexed { i, u ->
+                    val person = GlowCard(activity, 24f).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(Cinema.px(activity, 14), Cinema.px(activity, 10), Cinema.px(activity, 24), Cinema.px(activity, 10)); background = null }
+                    val av = com.example.tvlauncher.design.cinema.AvatarView(activity, 84).apply { set(lbName(u), null) }
+                    person.addView(av, LinearLayout.LayoutParams(Cinema.px(activity, 84), Cinema.px(activity, 84)))
+                    val lines = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+                    val nameView = Cinema.text(activity, lbName(u), 26, Cinema.CREAM, weight = 600)
+                    val starsView = Cinema.text(activity, "…", 24, Cinema.SAFFRON, tracking = 0.06f)
+                    val said = Cinema.text(activity, "", 18, Cinema.DIM).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }
+                    lines.addView(nameView); lines.addView(starsView, LinearLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 2) }); lines.addView(said, LinearLayout.LayoutParams(Cinema.px(activity, 330), -2))
+                    person.addView(lines, LinearLayout.LayoutParams(-2, -2).apply { marginStart = Cinema.px(activity, 20) })
+                    person.setOnClickListener { closeDetail(restoreFocus = false); go(Dest.LbPerson(u), remember = true) }
+                    people.addView(person, LinearLayout.LayoutParams(-2, -2).apply { if (i > 0) marginStart = Cinema.px(activity, 30) })
+                    lb.load("/$u/", 2 * H, { com.example.tvlauncher.data.letterboxd.Lb.profile(it, u) }) { p ->
+                        p ?: return@load
+                        lbNames[u.lowercase()] = p.name.substringBefore(' ').ifBlank { u }; nameView.text = lbName(u); av.set(lbName(u), null)
+                        p.avatar?.let { a -> images.load(a, maxWidth = 168, tag = pageTag) { b -> av.set(lbName(u), b) } }
+                    }
+                    lb.load("/$u/film/${info.slug}/", 6 * H, { h -> if (lb.missing(h)) com.example.tvlauncher.data.letterboxd.LbMemberFilm(u, null, false, null) else com.example.tvlauncher.data.letterboxd.Lb.memberFilm(h, u) }) { m ->
+                        if (m == null || (m.rating == null && m.review == null && !m.liked)) { starsView.text = "Not logged yet"; starsView.setTextColor(Cinema.MUTED); Cinema.style(starsView, 22, Cinema.MUTED); return@load }
+                        starsView.text = android.text.SpannableStringBuilder(m.rating?.let { com.example.tvlauncher.data.letterboxd.Lb.stars(it) } ?: "Watched").apply {
+                            if (m.liked) { val at = length; append("  ♥"); setSpan(android.text.style.ForegroundColorSpan(0xFFFF6F61.toInt()), at, length, 0) }
+                        }
+                        said.text = m.review?.let { "“$it”" }.orEmpty()
+                    }
+                }
+
+                // What people are reading about it this week.
+                val reviews = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
+                box.addView(reviews, LinearLayout.LayoutParams(-1, -2))
+                lb.load("/film/${info.slug}/reviews/by/activity/", 24 * H, { com.example.tvlauncher.data.letterboxd.Lb.reviews(it) }) { r ->
+                    if (!detailOpen || r.isNullOrEmpty()) return@load
+                    reviews.removeAllViews(); lbReviewRow("Popular reviews", r.take(12), generation, into = reviews, inset = false)
+                }
+            }
+        }
+    }
+
     // --- Picked for you ----------------------------------------------------------------------------
 
     /** A pick as a page title: TMDB's poster for the row, its full-size backdrop for the featured title. */
@@ -1717,6 +2436,7 @@ class MoviesPanel(
         column.addView(topRow, LinearLayout.LayoutParams(-1, -2))
 
         if (t.kind == Kind.SHOW) seasonSection(column, e, primary)
+        lbFilmSection(column, e)
         val more = related.filter { it.key != t.key }.take(14)
         var moreHeading: View? = null
         var moreRow: Row? = null
@@ -2367,14 +3087,15 @@ class MoviesPanel(
     }
 
     /** A poster with its name beneath; grows and glows on focus; a badge says when it is already in the library. */
-    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true, defer: Row? = null, note: String? = null): View {
+    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true, defer: Row? = null, note: String? = null, chip: String? = null, onSelect: (() -> Unit)? = null): View {
         val card = PosterCard(activity, if (small) 200 else 260, if (small) 300 else 390)
         card.contentDescription = e.title.name
         card.title?.text = e.title.name
         card.subline?.text = note ?: subline(e.title)
         dress(card, e, badge, defer)
-        card.onFocus = { lit -> if (lit) { reveal(card); prefetchOnRest(card, e) } }
-        card.setOnClickListener { if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }
+        chip?.let { card.chip(it) }
+        card.onFocus = { lit -> if (lit) { reveal(card); if (onSelect == null) prefetchOnRest(card, e) } }
+        card.setOnClickListener { if (onSelect != null) onSelect() else if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }
         return card
     }
 
@@ -2451,7 +3172,8 @@ class MoviesPanel(
         const val RAIL_WIDTH_OPEN = 420  // mockup px, with labels while the rail has focus
         const val PREWARM_SHELVES = 4
         const val CARDS_PER_FRAME = 4
-        const val EAGER_POSTERS = 9      // a screen and a half of posters per row; the rest load as the row scrolls
+        const val EAGER_POSTERS = 9
+        const val LB_ROW_LIMIT = 40     // a Letterboxd row shows at most this many; the page itself holds more      // a screen and a half of posters per row; the rest load as the row scrolls
         const val HERO_BACKDROP_PX = 1920
         const val REST_PREFETCH_MS = 350L   // how long focus rests on a poster before its backdrop is fetched
         const val RETURN_REFRESH_DELAY_MS = 1_500L

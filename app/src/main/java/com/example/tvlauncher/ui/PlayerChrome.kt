@@ -113,7 +113,7 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
 
     // --- Paused (33) ---
     private val paused = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
-    private val pausedFrame = ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+
     private val pausedTitle = Cinema.title(context, "", 104)
     private val pausedMeta = FrameLayout(context)
     private val pausedSynopsis = Cinema.synopsis(context, "", 24, maxLines = 3)
@@ -127,6 +127,9 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
     private val bitrateHead = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
     private val bitratePeak = Cinema.text(context, "", 14, Cinema.SAFFRON, weight = 600, tracking = 0.16f)
     private val sparkline = BitrateSparkline(context)
+    // The Letterboxd card, in the Stream card's place when Letterboxd knows the film.
+    private val lbCard = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; visibility = GONE }
+    private var lbShown = false
     private val chaptersHeading = Cinema.rowHeading(context, "Chapters")
     private val chapterRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; clipChildren = false; clipToPadding = false }
     private val chapterScroller = CalmHorizontalScrollView(context).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(chapterRow) }
@@ -196,11 +199,10 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
     }
 
     private fun buildPaused() {
-        paused.setBackgroundColor(Cinema.BG)
-        paused.addView(pausedFrame, LayoutParams(-1, -1))
+        // The paused picture itself shows through, sharp, with only a light dim: deeper behind the words on the left
+        // and the chapters at the foot, barely there on the right.
         paused.addView(View(context).apply { background = com.example.tvlauncher.design.cinema.Scrim(
-            listOf(0f to 0.92f, 0.45f to 0.7f, 1f to 0.4f), listOf(0f to 0.5f, 0.22f to 0f, 0.5f to 0f, 1f to 0.96f)) }, LayoutParams(-1, -1))
-        paused.addView(ArchesView(context), LayoutParams(-1, -1))
+            listOf(0f to 0.80f, 0.30f to 0.62f, 0.58f to 0.22f, 1f to 0.10f), listOf(0f to 0.30f, 0.18f to 0f, 0.48f to 0f, 0.76f to 0.72f, 1f to 0.90f)) }, LayoutParams(-1, -1))
 
         val left = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
         val eyebrow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -238,6 +240,9 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
         streamCard.addView(bitrateHead, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p(40) })
         streamCard.addView(sparkline, LinearLayout.LayoutParams(-1, p(62)).apply { topMargin = p(12) })
         place(paused, streamCard, 1130, 70, p(694))
+        lbCard.background = Cinema.glass(context, 34f, 0xB8120D0A.toInt())
+        lbCard.setPadding(p(38), p(34), p(38), p(30))
+        place(paused, lbCard, 1130, 70, p(694), p(544))
 
         place(paused, chaptersHeading, 96, 600)
         place(paused, chapterScroller, 96, 668, p(1824 - 96), p(240))
@@ -306,8 +311,6 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
     }
 
     private fun enterPaused() {
-        pausedFrame.setImageBitmap(backdrop?.let { blur(it) })
-        captureFrame { frame -> frame?.let { pausedFrame.setImageBitmap(blur(it)) } }
         resumeButton.requestFocus()
         refreshStream()
         // Scroll the chapter row to the one playing.
@@ -474,7 +477,68 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
         val showBitrate = samples.size >= 2
         bitrateHead.visibility = if (showBitrate) VISIBLE else GONE; sparkline.visibility = bitrateHead.visibility
         if (showBitrate) { sparkline.set(samples); bitratePeak.text = "PEAK ${PlayerMath.bitrate(samples.max())?.uppercase() ?: ""}" }
-        streamCard.visibility = if (specs.isEmpty() && !showBitrate) GONE else VISIBLE
+        streamCard.visibility = if (lbShown || (specs.isEmpty() && !showBitrate)) GONE else VISIBLE
+    }
+
+    /**
+     * What Letterboxd knows of the film: the average and its chart, the tagline, who made it, who is in it, and what
+     * the followed members thought ([circle], each a display name and their stars, or null when not logged). It takes
+     * the Stream card's place; without it (a TV episode, a film Letterboxd does not have) the Stream card stays.
+     */
+    fun setLetterboxd(info: com.example.tvlauncher.data.letterboxd.LbFilmInfo, circle: List<Pair<String, String?>>) {
+        val page = info.page
+        lbCard.removeAllViews()
+        val head = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        head.addView(com.example.tvlauncher.design.cinema.LbDots.view(context, 12))
+        head.addView(Cinema.text(context, "Letterboxd", 16, Cinema.SAFFRON, weight = 600, tracking = 0.24f, caps = true), LinearLayout.LayoutParams(0, -2, 1f).apply { marginStart = p(14) })
+        if (info.histogram.size == 10) head.addView(com.example.tvlauncher.design.cinema.LbHistogram(context).apply { counts = info.histogram }, LinearLayout.LayoutParams(p(118), p(38)).apply { marginEnd = p(16) })
+        info.average?.let { a ->
+            head.addView(Cinema.text(context, String.format(java.util.Locale.UK, "%.1f", a), 44, Cinema.CREAM, serif = true))
+            head.addView(Cinema.text(context, "Average", 14, Cinema.DIM, weight = 600, tracking = 0.16f, caps = true), LinearLayout.LayoutParams(-2, -2).apply { marginStart = p(12) })
+        }
+        lbCard.addView(head)
+        page.tagline?.let { t ->
+            lbCard.addView(Cinema.text(context, "“$t”", 38, 0xFFF1E4CF.toInt(), serif = true, weight = 300).apply {
+                setTypeface(typeface, android.graphics.Typeface.ITALIC); maxLines = 1; ellipsize = TextUtils.TruncateAt.END
+            }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p(20) })
+        }
+        fun crew(vararg roles: String) = page.crew.firstOrNull { g -> roles.any { r -> g.role.equals(r, ignoreCase = true) } }?.names.orEmpty()
+        val credits = listOfNotNull(
+            (page.director?.let { listOf(it) } ?: crew("Director", "Directors")).takeIf { it.isNotEmpty() }?.let { "Directed by" to it },
+            crew("Writer", "Writers", "Screenplay").takeIf { it.isNotEmpty() }?.let { "Written by" to it },
+            crew("Composer", "Composers").takeIf { it.isNotEmpty() }?.let { "Music" to it },
+            crew("Cinematography").takeIf { it.isNotEmpty() }?.let { "Cinematography" to it })
+        credits.chunked(2).forEachIndexed { r, pair ->
+            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
+            pair.forEachIndexed { i, (label, names) ->
+                val cell = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+                cell.addView(Cinema.text(context, label, 14, Cinema.DIM, weight = 600, tracking = 0.2f, caps = true))
+                cell.addView(Cinema.text(context, names.take(2).joinToString(", "), 22, Cinema.CREAM).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p(6) })
+                row.addView(cell, LinearLayout.LayoutParams(if (i == 0) p(230) else 0, -2, if (i == 0) 0f else 1f).apply { if (i > 0) marginStart = p(30) })
+            }
+            lbCard.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p(if (r == 0) 22 else 18) })
+        }
+        fun line(label: String, value: String) {
+            lbCard.addView(Cinema.text(context, label, 14, Cinema.DIM, weight = 600, tracking = 0.2f, caps = true), LinearLayout.LayoutParams(-2, -2).apply { topMargin = p(18) })
+            lbCard.addView(Cinema.text(context, value, 22, 0xFFE6D9C6.toInt()).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p(6) })
+        }
+        page.cast.take(4).takeIf { it.isNotEmpty() }?.let { c -> line("Starring", c.joinToString(" · ") { it.name }) }
+        page.studios.firstOrNull()?.let { line("Studio", it) }
+        // The followed members, at the foot.
+        lbCard.addView(View(context), LinearLayout.LayoutParams(1, 0, 1f))
+        lbCard.addView(View(context).apply { setBackgroundColor(0x1FF6ECDB) }, LinearLayout.LayoutParams(-1, p(1)))
+        val logged = circle.filter { it.second != null }
+        lbCard.addView(Cinema.text(context, android.text.SpannableStringBuilder().apply {
+            if (logged.isEmpty()) append("Not logged by ${circle.joinToString(" or ") { it.first }} yet")
+            else logged.forEachIndexed { i, (name, stars) ->
+                if (i > 0) append("   ·   ")
+                append("$name  "); val at = length; append(stars ?: "watched")
+                setSpan(android.text.style.ForegroundColorSpan(Cinema.SAFFRON), at, length, 0)
+            }
+        }, 19, Cinema.MUTED).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = p(16) })
+        lbShown = true
+        lbCard.visibility = VISIBLE
+        streamCard.visibility = GONE
     }
 
     private fun refreshChapterCards(pos: Long, dur: Long) {
