@@ -36,12 +36,16 @@ class PosterCard(context: Context, posterW: Int, posterH: Int, titled: Boolean =
 
     private val radius = Cinema.pxf(context, radiusPx)
     // No outlines in the Cinema language: focus is a soft saffron glow behind the poster, never a ring.
-    private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Cinema.alpha(Cinema.SAFFRON, 0.42f)
-        if (android.os.Build.VERSION.SDK_INT >= 28) maskFilter = android.graphics.BlurMaskFilter(Cinema.pxf(context, 34), android.graphics.BlurMaskFilter.Blur.NORMAL)
-    }
-    private val box = RectF()
+    private val posterWidth = Cinema.px(context, posterW)
     private val posterHeight = Cinema.px(context, posterH)
+    // The focus bloom and the resting shadow are painted once per size (Glows) and drawn as bitmaps: as a live blur and
+    // an elevation shadow on every card they were most of the GPU's work while a row scrolled.
+    private val bloomSpread = Cinema.pxf(context, 6)
+    private val bloom = Glows.roundRect(posterWidth + 2 * bloomSpread.toInt(), posterHeight + 2 * bloomSpread.toInt(), radius + bloomSpread,
+        Cinema.pxf(context, 34), Cinema.alpha(Cinema.SAFFRON, 0.42f))
+    private val restElevation = Cinema.pxf(context, 14)
+    private val shadow = Glows.shadow(posterWidth, posterHeight, radius, restElevation)
+    private val shadowPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     init {
         orientation = VERTICAL
@@ -52,7 +56,7 @@ class PosterCard(context: Context, posterW: Int, posterH: Int, titled: Boolean =
             background = GradientDrawable().apply { cornerRadius = radius; setColor(Cinema.PLACEHOLDER) }
             outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, radius) } }
             clipToOutline = true
-            elevation = Cinema.pxf(context, 14)
+            elevation = 0f   // the resting shadow is drawn by the card; only the focused card gets a real one
             // The poster's lower edge darkens a touch (`.card .p::after`), so a badge or the next row reads against it.
             foreground = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0, 0, 0x40000000))
         }
@@ -91,13 +95,18 @@ class PosterCard(context: Context, posterW: Int, posterH: Int, titled: Boolean =
         pivotY = posterHeight * 0.35f
     }
 
+    /** The picture, already shaded at its foot (RemoteImages' poster variant), so the live gradient over it can go. */
+    fun setShadedPoster(bitmap: android.graphics.Bitmap) { image.setImageBitmap(bitmap); poster.foreground = null }
+
     override fun onFocusChanged(gainFocus: Boolean, direction: Int, previouslyFocusedRect: Rect?) {
         super.onFocusChanged(gainFocus, direction, previouslyFocusedRect)
         val scale = if (gainFocus) 1.1f else 1f
         val duration = if (gainFocus) Motion.FOCUS_IN_MS else Motion.FOCUS_OUT_MS
-        if (Motion.animationsOn(this)) animate().scaleX(scale).scaleY(scale).translationZ(if (gainFocus) Cinema.pxf(context, 20) else 0f).setDuration(duration).setInterpolator(Motion.SETTLE).start()
+        // Scale animates; depth is set once (an animated translationZ re-shadowed the card every frame).
+        translationZ = if (gainFocus) Cinema.pxf(context, 20) else 0f
+        if (Motion.animationsOn(this)) animate().scaleX(scale).scaleY(scale).setDuration(duration).setInterpolator(Motion.SETTLE).start()
         else { scaleX = scale; scaleY = scale }
-        poster.elevation = Cinema.pxf(context, if (gainFocus) 34 else 14)
+        poster.elevation = if (gainFocus) Cinema.pxf(context, 34) else 0f
         title?.let { t -> t.setTextColor(if (gainFocus) Cinema.CREAM else Cinema.CARD_TITLE); Cinema.weight(t, 21, serif = false, weight = if (gainFocus) 600 else 500) }
         subline?.animate()?.alpha(if (gainFocus && !subline.text.isNullOrEmpty()) 1f else 0f)?.setDuration(duration)?.start()
         invalidate()
@@ -105,11 +114,12 @@ class PosterCard(context: Context, posterW: Int, posterH: Int, titled: Boolean =
     }
 
     override fun dispatchDraw(canvas: Canvas) {
-        if (isFocused && android.os.Build.VERSION.SDK_INT >= 28) {
+        if (isFocused) {
             // A warm bloom behind the poster, a little larger than it, so the focused card seems lit from behind.
-            val s = Cinema.pxf(context, 6)
-            box.set(poster.left - s, poster.top - s, poster.right + s, poster.bottom + s)
-            canvas.drawRoundRect(box, radius + s, radius + s, glow)
+            val s = bloomSpread.toInt()
+            canvas.drawBitmap(bloom.bitmap, (poster.left - s - bloom.pad).toFloat(), (poster.top - s - bloom.pad).toFloat(), shadowPaint)
+        } else {
+            canvas.drawBitmap(shadow.bitmap, (poster.left - shadow.pad).toFloat(), poster.top - shadow.pad + Glows.shadowOffset(restElevation), shadowPaint)
         }
         super.dispatchDraw(canvas)
     }

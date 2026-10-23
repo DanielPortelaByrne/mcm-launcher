@@ -20,7 +20,7 @@ class ImageCacheTest {
     private fun cache(dir: java.io.File? = folder.root, cap: Long = 1_000_000, workers: Int = 1) = ImageCache(
         dir, cap, 1_000_000,
         fetch = { url, _ -> gate.await(5, TimeUnit.SECONDS); fetches += url; if (network) "bytes of $url".toByteArray() else null },
-        decode = { bytes, width -> "${String(bytes)} @$width" },
+        decode = { bytes, width, _ -> "${String(bytes)} @$width" },
         sizeOf = { it.length },
         deliver = { it.run() },
         workers = workers

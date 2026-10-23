@@ -130,6 +130,17 @@ class MoviesPanel(
 
     /** A heading with its scrolling row. Hidden when the row turns out to be empty. */
     private class Row(val heading: View?, val scroller: View, val inner: LinearLayout) {
+        /** Posters not loaded yet because they sit far along the row; loaded as the row scrolls towards them. */
+        val deferred = ArrayList<Pair<View, () -> Unit>>()
+
+        /** Loads the deferred posters within one and a half screens of what the row shows. */
+        fun loadNear() {
+            if (deferred.isEmpty()) return
+            val limit = scroller.scrollX + scroller.width * 3 / 2
+            val due = deferred.filter { (v, _) -> v.left < limit || scroller.width == 0 }
+            deferred.removeAll(due.toSet()); due.forEach { it.second() }
+        }
+
         fun hide() { heading?.visibility = View.GONE; scroller.visibility = View.GONE }
         /** Shows how many titles the row holds beside its heading ("History films  9"). */
         fun setCount(n: Int) { (heading?.findViewWithTag<TextView>(Cinema.COUNT_TAG))?.let { it.text = "$n"; it.visibility = View.VISIBLE } }
@@ -629,17 +640,26 @@ class MoviesPanel(
                 if (entries.isNotEmpty()) Perf.end("movies.open->firstRow", spec.heading)
                 if (entries.isEmpty()) { row.hide(); return@runOnUiThread }
                 val related = entries.map { it.title }
-                entries.forEachIndexed { i, e ->
-                    val ranked = spec.ranked && i < 10
-                    row.inner.addView(if (ranked) rankCard(i + 1, e, related) else card(e, related), cardParams(i, wide = ranked))
-                }
                 row.setCount(entries.size)
-                Perf.took("shelf '${spec.heading}' ui add ${entries.size}", Perf.now() - uiAt)
                 if (!heroSet) {
                     val featured = entries.withIndex().filter { it.value.title.backdropUrl != null }.take(3)
                     setHero(featured.map { it.value }, related, featured.map { rankLabel(spec.heading, spec.ranked, it.index) })
                 }
-                page.post { fillNear() }
+                // A few cards a frame, not sixteen in one go (each is a small tree of views): the page keeps moving while a
+                // row fills. Posters further along than the screen wait until the row scrolls near them.
+                fun addFrom(from: Int) {
+                    if (gen != generation) return
+                    val to = minOf(from + CARDS_PER_FRAME, entries.size)
+                    for (i in from until to) {
+                        val e = entries[i]
+                        val ranked = spec.ranked && i < 10
+                        val defer = if (i >= EAGER_POSTERS) row else null
+                        row.inner.addView(if (ranked) rankCard(i + 1, e, related, defer) else card(e, related, defer = defer), cardParams(i, wide = ranked))
+                    }
+                    if (to < entries.size) android.view.Choreographer.getInstance().postFrameCallback { addFrom(to) }
+                    else { Perf.took("shelf '${spec.heading}' ui add ${entries.size} (spread)", Perf.now() - uiAt); row.scroller.post { row.loadNear() }; page.post { fillNear() } }
+                }
+                addFrom(0)
             }
         }
     }
@@ -2188,13 +2208,17 @@ class MoviesPanel(
             isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false
             setPadding(margin, 0, end, 0)
             isHorizontalFadingEdgeEnabled = false
-            setOnScrollChangeListener { _, _, _, _, _ -> frost?.refresh() }   // posters slide beneath the frosted rail
+            // Posters slide beneath the frosted rail; the row's far posters load as it nears them.
+            setOnScrollChangeListener { _, _, _, _, _ -> frost?.refresh(); rowOf[this]?.loadNear() }
             leftLeavesToRail = inset   // a page row hands Left at its start to the rail (title pages have no rail)
             addView(inner)
         }
         into.addView(scroller, LinearLayout.LayoutParams(-1, -2))
-        return Row(head, scroller, inner)
+        return Row(head, scroller, inner).also { rowOf[scroller] = it }
     }
+
+    /** Each row's scroller to its row, for loading far posters as it scrolls. Weak, so a dropped page frees its rows. */
+    private val rowOf = java.util.WeakHashMap<View, Row>()
 
     /** Card spacing from the mockup: posters 28px apart (64px for the small ones on a title page); Top 10 items abut. */
     private fun cardParams(index: Int, small: Boolean = false, wide: Boolean = false) =
@@ -2229,27 +2253,30 @@ class MoviesPanel(
     }
 
     /** Fills [card]'s poster: the picture, initials when there is none, and the IN LIBRARY badge. */
-    private fun dress(card: PosterCard, e: Entry, badge: Boolean = true) {
+    private fun dress(card: PosterCard, e: Entry, badge: Boolean = true, defer: Row? = null, holder: View = card) {
         if (e.title.posterUrl == null) card.placeholder(e.title.name)
         if (badge && e.library != null) card.badge()
         else if (badge) whenInLibrary(e) { card.badge() }
-        e.title.posterUrl?.let { u -> images.load(u, e.posterHeaders, maxWidth = 332, tag = pageTag) { b: Bitmap -> card.image.setImageBitmap(b); frost?.refresh(); Perf.end("movies.open->firstPoster") } }
+        e.title.posterUrl?.let { u ->
+            val load = { images.loadShadedPoster(u, e.posterHeaders, 332, pageTag) { b: Bitmap -> card.setShadedPoster(b); frost?.refresh(); Perf.end("movies.open->firstPoster") } }
+            if (defer != null) defer.deferred += holder to load else load()
+        }
     }
 
     /** A poster with its name beneath; grows and glows on focus; a badge says when it is already in the library. */
-    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true): View {
+    private fun card(e: Entry, related: List<Title>, small: Boolean = false, nested: Boolean = true, badge: Boolean = true, defer: Row? = null): View {
         val card = PosterCard(activity, if (small) 200 else 260, if (small) 300 else 390)
         card.contentDescription = e.title.name
         card.title?.text = e.title.name
         card.subline?.text = subline(e.title)
-        dress(card, e, badge)
+        dress(card, e, badge, defer)
         card.onFocus = { lit -> if (lit) reveal(card) }
         card.setOnClickListener { if (nested) openDetail(e, related) else { closeDetail(restoreFocus = false); openDetail(e, related) } }
         return card
     }
 
     /** A Top 10 item: an outlined Fraunces numeral tucked behind the left of the poster (`.top10`). */
-    private fun rankCard(rank: Int, e: Entry, related: List<Title>): View {
+    private fun rankCard(rank: Int, e: Entry, related: List<Title>, defer: Row? = null): View {
         val box = FrameLayout(activity).apply { clipChildren = false; clipToPadding = false }
         val numeral = Cinema.text(activity, "$rank", 210, Cinema.alpha(Cinema.SAFFRON, 0.6f), serif = true, weight = 600, tracking = -0.06f).apply {
             paint.style = Paint.Style.STROKE; paint.strokeWidth = Cinema.pxf(activity, 2.5f); maxLines = 1
@@ -2257,7 +2284,7 @@ class MoviesPanel(
         box.addView(numeral, FrameLayout.LayoutParams(-2, -2).apply { topMargin = Cinema.px(activity, 28) })
         val card = PosterCard(activity, 224, 336, titled = false)
         card.contentDescription = "$rank. ${e.title.name}"
-        dress(card, e)
+        dress(card, e, defer = defer, holder = box)
         card.onFocus = { lit -> if (lit) reveal(card) }
         card.setOnClickListener { openDetail(e, related) }
         box.addView(card, FrameLayout.LayoutParams(-2, -2).apply { leftMargin = Cinema.px(activity, 118) })
@@ -2320,6 +2347,8 @@ class MoviesPanel(
         const val RAIL_WIDTH = 92        // mockup px, collapsed
         const val RAIL_WIDTH_OPEN = 420  // mockup px, with labels while the rail has focus
         const val PREWARM_SHELVES = 4
+        const val CARDS_PER_FRAME = 4
+        const val EAGER_POSTERS = 9      // a screen and a half of posters per row; the rest load as the row scrolls
         const val HALF_BACKDROP_PX = 640
         const val LOADING_BACKDROP_PX = 960   // the stream loading screen's backdrop is screen-wide, drawn at half
         const val RETURN_REFRESH_DELAY_MS = 1_500L

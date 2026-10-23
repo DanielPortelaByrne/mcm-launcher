@@ -32,10 +32,20 @@ class RemoteImages private constructor(context: Context) {
      * widest it will be shown; it is decoded to that width, not to the size it was stored at. [tag] groups requests
      * that [cancel] can drop together.
      */
-    fun load(url: String, headers: Map<String, String> = emptyMap(), maxWidth: Int = 0, tag: Any? = null, done: (Bitmap) -> Unit) {
+    fun load(url: String, headers: Map<String, String> = emptyMap(), maxWidth: Int = 0, tag: Any? = null, done: (Bitmap) -> Unit) =
+        load(url, headers, maxWidth, tag, "", done)
+
+    /**
+     * A poster with the card's foot shading (transparent to 25 % black over its lower half, the old live foreground
+     * gradient) painted into the picture once, so the card has one layer less to draw every frame.
+     */
+    fun loadShadedPoster(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, done: (Bitmap) -> Unit) =
+        load(url, headers, maxWidth, tag, SHADED, done)
+
+    private fun load(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, variant: String, done: (Bitmap) -> Unit) {
         // Already decoded: draw it now, in this frame, rather than one post later.
-        if (Looper.myLooper() == Looper.getMainLooper()) core.cached(url, maxWidth)?.let { done(it); return }
-        core.load(url, headers, maxWidth, tag, done)
+        if (Looper.myLooper() == Looper.getMainLooper()) core.cached(url, maxWidth, variant)?.let { done(it); return }
+        core.load(url, headers, maxWidth, tag, variant, done)
     }
 
     /** Drops every waiting request made with [tag] (a page that has been replaced). */
@@ -46,6 +56,7 @@ class RemoteImages private constructor(context: Context) {
 
     companion object {
         @Volatile private var shared: RemoteImages? = null
+        private const val SHADED = "shaded"
 
         fun shared(context: Context): RemoteImages = shared ?: synchronized(this) {
             shared ?: RemoteImages(context.applicationContext).also { shared = it }
@@ -62,7 +73,7 @@ class RemoteImages private constructor(context: Context) {
          * Decodes straight to [maxWidth]: a power-of-two subsample first (cheap), then the decoder's own scaling for the
          * rest, so a 1440-pixel picture shown 615 wide is not kept at 720.
          */
-        private fun decodeTo(bytes: ByteArray, maxWidth: Int): Bitmap? {
+        private fun decodeTo(bytes: ByteArray, maxWidth: Int, variant: String): Bitmap? {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
             if (bounds.outWidth <= 0) return null
@@ -74,7 +85,17 @@ class RemoteImages private constructor(context: Context) {
                 val sampled = bounds.outWidth / sample
                 if (sampled > maxWidth) { o.inScaled = true; o.inDensity = sampled; o.inTargetDensity = maxWidth }
             }
-            return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o)
+            if (variant == SHADED) o.inMutable = true
+            val bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, o) ?: return null
+            if (variant == SHADED && bmp.isMutable) {
+                val h = bmp.height.toFloat()
+                android.graphics.Canvas(bmp).drawRect(0f, 0f, bmp.width.toFloat(), h, android.graphics.Paint().apply { isDither = true
+                    shader = android.graphics.LinearGradient(0f, 0f, 0f, h, intArrayOf(0, 0, 0x40000000), null, android.graphics.Shader.TileMode.CLAMP)
+                })
+            }
+            // Hand the texture upload to the render thread ahead of the first draw, instead of inside a scrolling frame.
+            bmp.prepareToDraw()
+            return bmp
         }
     }
 }

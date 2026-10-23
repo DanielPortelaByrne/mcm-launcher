@@ -17,7 +17,7 @@ class ImageCache<T : Any>(
     private val diskCapBytes: Long,
     memoryCapBytes: Int,
     private val fetch: (url: String, headers: Map<String, String>) -> ByteArray?,
-    private val decode: (bytes: ByteArray, maxWidth: Int) -> T?,
+    private val decode: (bytes: ByteArray, maxWidth: Int, variant: String) -> T?,
     private val sizeOf: (T) -> Int,
     private val deliver: (Runnable) -> Unit,
     workers: Int = 3,
@@ -26,7 +26,7 @@ class ImageCache<T : Any>(
     private val memory = ByteLru<T>(memoryCapBytes.toLong(), sizeOf)
 
     private class Waiter<T>(val tag: Any?, val done: (T) -> Unit)
-    private inner class Job(val key: String, val url: String, val headers: Map<String, String>, val maxWidth: Int) {
+    private inner class Job(val key: String, val url: String, val headers: Map<String, String>, val maxWidth: Int, val variant: String) {
         val waiters = ArrayList<Waiter<T>>()
         var running = false
     }
@@ -42,14 +42,14 @@ class ImageCache<T : Any>(
     }
 
     /** The decoded image if it is in memory now, without any work. */
-    fun cached(url: String, maxWidth: Int): T? = memory.get(key(url, maxWidth))
+    fun cached(url: String, maxWidth: Int, variant: String = ""): T? = memory.get(key(url, maxWidth, variant))
 
     /**
      * Calls [done] (via [deliver]) with the image at [maxWidth] (0 = as stored), or never when it cannot be had. A
      * second request for the same image while it loads joins the first. [tag] groups requests for [cancel].
      */
-    fun load(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, done: (T) -> Unit) {
-        val k = key(url, maxWidth)
+    fun load(url: String, headers: Map<String, String>, maxWidth: Int, tag: Any?, variant: String = "", done: (T) -> Unit) {
+        val k = key(url, maxWidth, variant)
         memory.get(k)?.let { hit -> deliver(Runnable { done(hit) }); return }
         synchronized(lock) {
             val job = jobs[k]
@@ -59,7 +59,7 @@ class ImageCache<T : Any>(
                 if (!job.running && queue.remove(job)) queue.addFirst(job)
                 return
             }
-            val fresh = Job(k, url, headers, maxWidth).also { it.waiters += Waiter(tag, done) }
+            val fresh = Job(k, url, headers, maxWidth, variant).also { it.waiters += Waiter(tag, done) }
             jobs[k] = fresh
             queue.addFirst(fresh)
             lock.notify()
@@ -107,12 +107,12 @@ class ImageCache<T : Any>(
             val bytes = try { file.readBytes() } catch (_: Exception) { null }
             if (bytes != null) {
                 file.setLastModified(clock())
-                decode(bytes, job.maxWidth)?.let { return it }
+                decode(bytes, job.maxWidth, job.variant)?.let { return it }
                 file.delete()   // unreadable: fetch it again
             }
         }
         val bytes = fetch(job.url, job.headers) ?: return null
-        val image = decode(bytes, job.maxWidth) ?: return null
+        val image = decode(bytes, job.maxWidth, job.variant) ?: return null
         if (file != null) store(file, bytes)
         return image
     }
@@ -142,7 +142,7 @@ class ImageCache<T : Any>(
         diskBytes = total
     }
 
-    private fun key(url: String, maxWidth: Int) = "$maxWidth|$url"
+    private fun key(url: String, maxWidth: Int, variant: String) = "$maxWidth|$variant|$url"
 
     companion object {
         fun sha1(text: String): String = MessageDigest.getInstance("SHA-1").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
