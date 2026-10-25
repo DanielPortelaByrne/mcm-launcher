@@ -93,7 +93,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var accountMenu: AccountMenu
     private lateinit var whoPicker: WhoPicker
     private lateinit var infoSheet: InfoSheet
-    private lateinit var homeRoom: HomeRoom
+    private var homeRoom: HomeRoom? = null
     private lateinit var continueRow: com.example.tvlauncher.ui.ContinueRow
     private var screenOffAt = 0L
     private lateinit var accountIcon: ImageView
@@ -277,7 +277,7 @@ class MainActivity : AppCompatActivity() {
             com.example.tvlauncher.data.ContinueWatching(this), ::resumeItem
         )
         bootMark("collection")
-        homeRoom = HomeRoom(this, infoSheet)
+        if (com.example.tvlauncher.data.home.HomeFeatures.roomEnabled) homeRoom = HomeRoom(this, infoSheet)
         bootMark("room")
         backdrop = HomeBackdrop(findViewById(R.id.homePainting), artModeOverlay.library)
         // The painting covers the whole window once it is up, so the window's own ink ground is just overdraw.
@@ -388,8 +388,8 @@ class MainActivity : AppCompatActivity() {
         if (hasResumedOnce && !artModeOverlay.isVisible) backdrop.advance()
         hasResumedOnce = true
         bootMark("homeReturned+picker")
-        homeRoom.refresh()
-        homeRoom.start()
+        homeRoom?.refresh()
+        homeRoom?.start()
         ensureWatcherBound()
         ensureRemoteKeysEnabled()
         bootMark("room+watcher")
@@ -408,7 +408,7 @@ class MainActivity : AppCompatActivity() {
         networkMonitor.stop()
         artModeOverlay.pause()
         backdrop.stop()
-        homeRoom.stop()
+        homeRoom?.stop()
     }
 
     override fun onDestroy() {
@@ -418,7 +418,7 @@ class MainActivity : AppCompatActivity() {
         continueRow.close()
         liveTvPanel.close()
         moviesPanel.close()
-        homeRoom.close()
+        homeRoom?.close()
         unregisterReceiver(screenReceiver)
         artModeOverlay.pause()
         super.onDestroy()

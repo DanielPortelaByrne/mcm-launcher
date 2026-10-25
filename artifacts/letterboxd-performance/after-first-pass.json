@@ -1,0 +1,26 @@
+{
+  "label": "after",
+  "runs": [
+    {
+      "iteration": 1,
+      "buildMs": 251,
+      "members": 2,
+      "memberDataMs": 3510,
+      "memberArtworkMs": 3949
+    },
+    {
+      "iteration": 2,
+      "buildMs": 399,
+      "members": 2,
+      "memberDataMs": 614,
+      "memberArtworkMs": 1168
+    },
+    {
+      "iteration": 3,
+      "buildMs": 136,
+      "members": 2,
+      "memberDataMs": 262,
+      "memberArtworkMs": 626
+    }
+  ]
+}

@@ -113,12 +113,7 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
 
     // --- Paused (33) ---
     private val paused = FrameLayout(context).apply { clipChildren = false; clipToPadding = false }
-    // After a while paused, the picture turns to backlit hammered glass behind the paused screen.
-    private val glass = com.example.tvlauncher.design.cinema.HammeredGlassView(context) { blur(it) }
     private val pausedScrim = View(context)
-    private val glassAfterPause = Runnable {
-        if (state == PlayerUi.Paused && !isPlaying()) captureFrame { f -> if (f != null && state == PlayerUi.Paused && !isPlaying()) glass.start(f) }
-    }
 
     private val pausedTitle = Cinema.title(context, "", 104)
     private val pausedMeta = FrameLayout(context)
@@ -205,9 +200,6 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
     }
 
     private fun buildPaused() {
-        paused.addView(glass, LayoutParams(-1, -1))
-        // The glass is its own shade: the dimming over it eases back by a third as it forms, so it glows.
-        glass.onAmount = { a -> pausedScrim.alpha = 1f - 0.35f * a }
         // The paused picture itself shows through, sharp, with only a light dim: deeper behind the words on the left
         // and the chapters at the foot, barely there on the right.
         paused.addView(pausedScrim.apply { background = com.example.tvlauncher.design.cinema.Scrim(
@@ -301,7 +293,7 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
         val showControls = next == PlayerUi.Controls || next is PlayerUi.Scrubbing
         controls.visibility = if (showControls) VISIBLE else GONE
         paused.visibility = if (next == PlayerUi.Paused) VISIBLE else GONE
-        if (next != PlayerUi.Paused) { ui.removeCallbacks(glassAfterPause); glass.stop(); pausedScrim.alpha = 1f }
+        if (next != PlayerUi.Paused) pausedScrim.alpha = 1f
         val scrubbing = next is PlayerUi.Scrubbing
         transport.visibility = if (scrubbing) INVISIBLE else VISIBLE
         chips.visibility = if (scrubbing) INVISIBLE else VISIBLE
@@ -322,7 +314,6 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
 
     private fun enterPaused() {
         resumeButton.requestFocus()
-        ui.removeCallbacks(glassAfterPause); ui.postDelayed(glassAfterPause, GLASS_AFTER_MS)
         refreshStream()
         // Scroll the chapter row to the one playing.
         PlayerMath.chapterAt(chapters, positionMs())?.let { c -> chapterRow.getChildAt(c.index)?.let { v -> chapterScroller.post { chapterScroller.scrollTo((v.left - p(300)).coerceAtLeast(0), 0) } } }
@@ -726,36 +717,4 @@ class PlayerChrome(context: Context) : FrameLayout(context) {
         override fun onDraw(canvas: Canvas) { cache?.let { canvas.drawBitmap(it, null, Rect(0, 0, width, height), Paint(Paint.FILTER_BITMAP_FLAG)) } }
     }
 
-    companion object {
-        /** How long a pause lasts before the picture starts turning to glass. */
-        const val GLASS_AFTER_MS = 5_000L
-
-        /** A soft, cheap blur for the paused background: shrink hard, box-blur three times, let the view scale it back up. */
-        fun blur(src: Bitmap): Bitmap {
-            val w = (src.width / 8).coerceAtLeast(8); val h = (src.height / 8).coerceAtLeast(8)
-            val small = Bitmap.createScaledBitmap(src, w, h, true).copy(Bitmap.Config.ARGB_8888, true)
-            val px = IntArray(w * h); small.getPixels(px, 0, w, 0, 0, w, h)
-            repeat(3) { boxBlur(px, w, h, 2) }
-            small.setPixels(px, 0, w, 0, 0, w, h)
-            return small
-        }
-
-        private fun boxBlur(px: IntArray, w: Int, h: Int, r: Int) {
-            val out = IntArray(px.size)
-            fun pass(horizontal: Boolean, src: IntArray, dst: IntArray) {
-                val outer = if (horizontal) h else w; val inner = if (horizontal) w else h
-                for (o in 0 until outer) for (i in 0 until inner) {
-                    var a = 0; var rr = 0; var g = 0; var b = 0; var n = 0
-                    for (k in -r..r) {
-                        val j = (i + k).coerceIn(0, inner - 1)
-                        val c = if (horizontal) src[o * w + j] else src[j * w + o]
-                        a += c ushr 24; rr += (c shr 16) and 0xFF; g += (c shr 8) and 0xFF; b += c and 0xFF; n++
-                    }
-                    val idx = if (horizontal) o * w + i else i * w + o
-                    dst[idx] = ((a / n) shl 24) or ((rr / n) shl 16) or ((g / n) shl 8) or (b / n)
-                }
-            }
-            pass(true, px, out); pass(false, out, px)
-        }
-    }
 }

@@ -1,0 +1,35 @@
+{
+  "label": "new-cache",
+  "runs": [
+    {
+      "iteration": 1,
+      "buildMs": 376,
+      "members": 2,
+      "memberDataMs": 2997,
+      "memberArtworkMs": 3403,
+      "firstRowDataMs": 4167,
+      "firstRowArtworkMs": 5827
+    },
+    {
+      "iteration": 2,
+      "buildMs": 268,
+      "members": 2,
+      "memberDataMs": 707,
+      "memberArtworkMs": 707,
+      "firstRowDataMs": 703,
+      "firstRowArtworkMs": 1269
+    },
+    {
+      "iteration": 3,
+      "buildMs": 152,
+      "members": 2,
+      "memberDataMs": 277,
+      "memberArtworkMs": 727,
+      "firstRowDataMs": 724,
+      "firstRowArtworkMs": 1171
+    }
+  ],
+  "frames": 92,
+  "framesOver100Ms": 43,
+  "frameP95Ms": 488
+}
