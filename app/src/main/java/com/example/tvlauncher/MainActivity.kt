@@ -665,6 +665,11 @@ class MainActivity : AppCompatActivity() {
 
     /** Opens the app's own deep link for a part-watched title; the app decides where to pick up. */
     private fun resumeItem(item: com.example.tvlauncher.data.ResumeItem) {
+        if (item.packageName == com.example.tvlauncher.data.CinemaContinueWatching.PACKAGE) {
+            item.mediaId?.let { key -> if (com.example.tvlauncher.data.CinemaContinueWatching.resume(this, key)) return }
+            Toast.makeText(this, "Couldn't open ${item.title} in Cinema", Toast.LENGTH_SHORT).show()
+            return
+        }
         item.payload?.let { if (com.example.tvlauncher.ui.PlayerActivity.resume(this, it)) return }
         // A video or film we know the id of opens directly (YouTube apps at the saved time; Stremio on the film's page).
         com.example.tvlauncher.data.ResumeLinks.target(item)?.let { link ->
@@ -730,8 +735,8 @@ class MainActivity : AppCompatActivity() {
                 liveTvPanel.show(repository.loadLaunchableApps(ownedOnly = false))
             }
             NavTab.MOVIES -> {
-                headerBar.setSelected(NavTab.MOVIES)
-                moviesPanel.show()
+                // Movies is the Cinema app now, installed beside the launcher.
+                if (!com.example.tvlauncher.data.CinemaContinueWatching.open(this)) Toast.makeText(this, "Install Cinema to see Movies", Toast.LENGTH_LONG).show()
             }
             NavTab.ART -> enterArtMode()
         }
