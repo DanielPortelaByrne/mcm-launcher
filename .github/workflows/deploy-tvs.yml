@@ -34,6 +34,8 @@ jobs:
         run: |
           mkdir -p "$HOME/.android"
           echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
+      - name: Make the Gradle wrapper executable
+        run: chmod +x gradlew
       - name: Build the launcher
         run: ./gradlew --no-daemon :app:assembleDebug
       - uses: actions/upload-artifact@v4
