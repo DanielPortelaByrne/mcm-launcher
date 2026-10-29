@@ -1,0 +1,59 @@
+name: Deploy to the TVs
+
+# Keeps the launcher on the TVs in step with the default branch. A merge builds the launcher and installs it on each TV
+# in the quiet hours (01:00 to 06:00 London time). A TV that is offline or playing is retried by the hourly schedule.
+# The launcher is signed with the same debug key as the copy already on the TVs, so the installs update in place.
+on:
+  push:
+    branches: [master]
+  schedule:
+    - cron: "0 0-5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tv-deploy-launcher
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Signing key shared with the TVs
+        env:
+          DEBUG_KEYSTORE_B64: ${{ secrets.LAUNCHER_DEBUG_KEYSTORE_B64 }}
+        run: |
+          mkdir -p "$HOME/.android"
+          echo "$DEBUG_KEYSTORE_B64" | base64 -d > "$HOME/.android/debug.keystore"
+      - name: Build the launcher
+        run: ./gradlew --no-daemon :app:assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launcher-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
+  deploy:
+    needs: build
+    runs-on: [self-hosted, cinema-devices, steamdeck]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: launcher-apk
+          path: artifacts
+      - name: Install on the TVs in the quiet hours
+        env:
+          TV_ADDRESSES: ${{ vars.TV_ADDRESSES }}
+        run: scripts/ci/deploy-tvs.sh artifacts/app-debug.apk launcher "$GITHUB_EVENT_NAME"
