@@ -43,7 +43,9 @@ class ContinueRow(
     fun refresh(apps: List<AppEntry>) {
         lastApps = apps
         worker.execute {
-            val items = source.load()
+            // Cinema's own list joins the launcher's: most recent first, the same card for both.
+            val items = (source.load() + com.example.tvlauncher.data.CinemaContinueWatching.read(context))
+                .sortedByDescending { it.lastEngagedMs }.take(12)
             handler.post { render(items, apps) }
             backfillYouTubeThumbnails(items)
         }

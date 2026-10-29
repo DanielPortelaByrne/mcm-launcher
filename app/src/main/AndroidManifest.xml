@@ -13,8 +13,11 @@
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <!-- Voice search in Cinema (asked for at runtime, the first time the mic is used). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Movies and Continue watching are the Cinema app's (installed separately); see CinemaContinueWatching. -->
+    <uses-permission android:name="com.danielportelabyrne.cinema.permission.CONTINUE_WATCHING" />
 
     <queries>
+        <package android:name="com.danielportelabyrne.cinema" />
         <package android:name="com.google.android.apps.tv.launcherx" />
         <intent><action android:name="android.settings.SETTINGS" /></intent>
         <package android:name="com.android.tv.settings" />
