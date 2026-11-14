@@ -16,6 +16,12 @@
     <!-- Movies and Continue watching are the Cinema app's (installed separately); see CinemaContinueWatching. -->
     <uses-permission android:name="com.danielportelabyrne.cinema.permission.CONTINUE_WATCHING" />
 
+    <!-- Lets Cinema read who was picked on "Who's watching?" (CurrentProfileProvider). -->
+    <permission
+        android:name="${applicationId}.permission.CURRENT_PROFILE"
+        android:label="Read who is watching"
+        android:protectionLevel="normal" />
+
     <queries>
         <package android:name="com.danielportelabyrne.cinema" />
         <package android:name="com.google.android.apps.tv.launcherx" />
@@ -84,6 +90,12 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/remote_key_service" />
         </service>
+
+        <provider
+            android:name=".system.CurrentProfileProvider"
+            android:authorities="${applicationId}.profile"
+            android:exported="true"
+            android:readPermission="${applicationId}.permission.CURRENT_PROFILE" />
 
         <!-- Full-screen player behind PLAY. -->
         <activity
