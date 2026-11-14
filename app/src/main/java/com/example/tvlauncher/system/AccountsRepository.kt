@@ -76,8 +76,14 @@ class AccountsRepository(private val context: Context) {
     fun setCurrent(account: TvAccount) {
         val known = accounts().firstOrNull { it.email == account.email }
         remember(if (account.name == null && known != null) known else account)
-        prefs.edit().putString("current", account.email).apply()
+        prefs.edit().putString("current", account.email).putLong("currentAt", System.currentTimeMillis()).apply()
     }
+
+    /** The account actually picked on "Who's watching?" (not the first-account fallback), for CurrentProfileProvider. */
+    fun picked(): TvAccount? = prefs.getString("current", null)?.let { saved -> accounts().firstOrNull { it.email == saved } }
+
+    /** When [picked] was chosen (0 when unknown). */
+    val pickedAt: Long get() = prefs.getLong("currentAt", 0L)
 
     /** Boot count of the last time the "Who's watching?" picker was shown. */
     var pickerBoot: Int
